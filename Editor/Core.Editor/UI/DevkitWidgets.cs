@@ -288,6 +288,142 @@ namespace Pitech.XR.Core.Editor
 
             return card;
         }
+        public static VisualElement CardGridTwoCol(out VisualElement left, out VisualElement right)
+        {
+            var grid = new VisualElement();
+            grid.style.flexDirection = FlexDirection.Row;
+            grid.style.flexGrow = 1;
+
+            left = new VisualElement();
+            left.style.flexGrow = 1;
+
+            right = new VisualElement();
+            right.style.flexGrow = 1;
+            right.style.marginLeft = 10; // gutter
+
+            grid.Add(left);
+            grid.Add(right);
+            return grid;
+        }
+
+        // === Pills (chip-style) ======================================================
+        public enum PillKind { Success, Warning, Error, Neutral }
+
+        public static VisualElement Pill(string text, PillKind kind)
+        {
+            Color bg, fg;
+            switch (kind)
+            {
+                case PillKind.Success: bg = new Color(0.12f, 0.32f, 0.22f, 1f); fg = new Color(0.76f, 0.95f, 0.85f, 1f); break;
+                case PillKind.Warning: bg = new Color(0.32f, 0.28f, 0.10f, 1f); fg = new Color(0.95f, 0.90f, 0.70f, 1f); break;
+                case PillKind.Error: bg = new Color(0.35f, 0.12f, 0.14f, 1f); fg = new Color(0.98f, 0.78f, 0.82f, 1f); break;
+                default: bg = new Color(0.20f, 0.22f, 0.26f, 1f); fg = new Color(0.84f, 0.88f, 0.94f, 1f); break;
+            }
+
+            var pill = new VisualElement();
+            pill.style.backgroundColor = bg;
+            pill.style.borderTopLeftRadius = 999; pill.style.borderTopRightRadius = 999;
+            pill.style.borderBottomLeftRadius = 999; pill.style.borderBottomRightRadius = 999;
+            pill.style.paddingLeft = 8; pill.style.paddingRight = 8; pill.style.paddingTop = 4; pill.style.paddingBottom = 4;
+
+            var label = new Label(text) { style = { color = fg } };
+            pill.Add(label);
+            return pill;
+        }
+
+        public static VisualElement PillsRow(params (PillKind kind, string text)[] items)
+        {
+            var row = DevkitTheme.Row();
+            for (int i = 0; i < items.Length; i++)
+            {
+                row.Add(Pill(items[i].text, items[i].kind));
+                if (i < items.Length - 1) row.Add(DevkitTheme.VSpace(8));
+            }
+            return row;
+        }
+
+        // === Fancy progress with shine + percent label ===============================
+        public static VisualElement ProgressBarPro(float value01, string rightLabel = null, float height = 16)
+        {
+            value01 = Mathf.Clamp01(value01);
+
+            var row = new VisualElement { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
+
+            // Track
+            var track = new VisualElement();
+            track.style.backgroundColor = new Color(0.12f, 0.14f, 0.18f, 1);
+            track.style.flexGrow = 1;
+            track.style.height = height;
+            track.style.borderTopLeftRadius = 999; track.style.borderTopRightRadius = 999;
+            track.style.borderBottomLeftRadius = 999; track.style.borderBottomRightRadius = 999;
+            track.style.position = Position.Relative;
+
+            // Fill
+            var fill = new VisualElement();
+            fill.style.backgroundColor = Accent;
+            fill.style.height = height;
+            fill.style.width = Length.Percent(value01 * 100f);
+            fill.style.borderTopLeftRadius = 999; fill.style.borderTopRightRadius = 999;
+            fill.style.borderBottomLeftRadius = 999; fill.style.borderBottomRightRadius = 999;
+            track.Add(fill);
+
+            // Shine overlay
+            var shine = new VisualElement();
+            shine.style.position = Position.Absolute;
+            shine.style.left = 0; shine.style.right = 0; shine.style.top = 0;
+            shine.style.height = height * 0.45f;
+            shine.style.backgroundColor = new Color(1, 1, 1, 0.06f);
+            shine.style.borderTopLeftRadius = 999; shine.style.borderTopRightRadius = 999;
+            shine.style.borderBottomLeftRadius = 999; shine.style.borderBottomRightRadius = 999;
+            track.Add(shine);
+
+            row.Add(track);
+
+            if (!string.IsNullOrEmpty(rightLabel))
+            {
+                var percent = new Label(rightLabel)
+                {
+                    style =
+            {
+                color = new Color(0.84f, 0.88f, 0.94f, 1),
+                unityFontStyleAndWeight = FontStyle.Bold,
+                marginLeft = 10
+            }
+                };
+                row.Add(percent);
+            }
+
+            return row;
+        }
+
+        // === Status header card (pills + progress + caption) =========================
+        public static VisualElement StatusHeader(VisualElement pillsRow, float progress01, string caption)
+        {
+            var root = new VisualElement
+            {
+                style =
+        {
+            backgroundColor = new Color(0.13f, 0.16f, 0.20f, 1),
+            borderTopLeftRadius = 18, borderTopRightRadius = 18,
+            borderBottomLeftRadius = 18, borderBottomRightRadius = 18,
+            paddingLeft = 14, paddingRight = 14, paddingTop = 12, paddingBottom = 12
+        }
+            };
+
+            root.Add(pillsRow);
+            root.Add(DevkitTheme.VSpace(10));
+            root.Add(ProgressBarPro(progress01, $"{Mathf.RoundToInt(progress01 * 100)}%"));
+            root.Add(DevkitTheme.VSpace(6));
+            root.Add(DevkitTheme.Body(caption, dim: true));
+            return root;
+        }
+
+        // === Two-column grid you already added earlier (keep) ========================
+        // public static VisualElement CardGridTwoCol(out VisualElement left, out VisualElement right) { ... }
+
+        // === Card helper (rounded, soft border) you already added earlier (keep) =====
+        // public static VisualElement Card(string title, string subtitle, VisualElement actions, VisualElement body = null) { ... }
+
 
     }
 }
