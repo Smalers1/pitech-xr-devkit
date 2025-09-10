@@ -1,21 +1,28 @@
-#if UNITY_EDITOR
+// Packages/com.pitech.xr.devkit/Editor/Core.Editor/Pages/ToolsPage.cs
 using UnityEngine;
 using UnityEngine.UIElements;
 
-namespace Pitech.XR.Core.Editor
+namespace Pitech.XR.Core.Editor.Pages
 {
-    public sealed class ToolsPage : IDevkitPage
+    internal sealed class ToolsPage : IDevkitPage
     {
         public string Title => "Tools";
 
-        public void BuildUI(VisualElement root)
+        public void Build(VisualElement root)
         {
-            root.Add(DevkitTheme.Section("Utilities", el =>
-            {
-                el.Add(new Label("Project scaffolding, addressables helpers, prefabs, etc. (coming soon)."));
-            }));
-        }
+            root.Clear();
 
+            root.Add(new Label("Tools")
+            {
+                style =
+                {
+                    unityFontStyleAndWeight = FontStyle.Bold,
+                    fontSize = 16,
+                    marginBottom = 8
+                }
+            });
+
+            root.Add(new Label("Add utilities like addressables helpers, scene templates, networking setup, etc."));
+        }
     }
 }
-#endif
