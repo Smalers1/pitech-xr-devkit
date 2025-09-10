@@ -2,6 +2,7 @@
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using ScenarioSceneManager = Pitech.XR.Scenario.SceneManager;
 
 namespace Pitech.XR.Core.Editor
 {
@@ -27,6 +28,7 @@ namespace Pitech.XR.Core.Editor
             root.Add(Section("Quick Actions", el =>
             {
                 el.Add(WideButton("Create StatsConfig asset", CreateStatsConfigAsset));
+                el.Add(WideButton("Create Scene Manager", CreateSceneManager));
                 var row = new VisualElement { style = { flexDirection = FlexDirection.Row } };
                 row.Add(Button("Create Scenario GameObject", CreateScenarioGO));
                 row.Add(new Label("  Scenario Graph available") { style = { color = new Color(0.4f, 1f, 0.5f) } });
@@ -115,6 +117,13 @@ namespace Pitech.XR.Core.Editor
             }
         }
         static void CreateScenarioGO() { EditorApplication.ExecuteMenuItem("GameObject/Create Empty"); }
+        static void CreateSceneManager()
+        {
+            var go = new GameObject("Scene Manager");
+            go.AddComponent<ScenarioSceneManager>();
+            Undo.RegisterCreatedObjectUndo(go, "Create Scene Manager");
+            Selection.activeGameObject = go;
+        }
         static void OpenScenarioGraph() { EditorApplication.ExecuteMenuItem("Window/General/Inspector"); }
     }
 }

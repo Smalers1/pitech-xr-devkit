@@ -18,7 +18,7 @@ namespace Pitech.XR.Scenario
         public bool autoStart = true;
 
         public int StepIndex { get; private set; } = -1;
-        public StatsRuntime Runtime { get; private set; } = new();
+        public StatsRuntime Runtime { get; private set; } = new StatsRuntime();
 
         void Awake()
         {
@@ -100,7 +100,7 @@ namespace Pitech.XR.Scenario
                 if (s.cueTimes == null || s.cueTimes.Length == 0) return 9999f;
                 if (s.cueTimes.Length == 1) return Mathf.Max(0f, s.cueTimes[0]);
                 if (idx >= 0 && idx < s.cueTimes.Length) return Mathf.Max(0f, s.cueTimes[idx]);
-                return s.cueTimes[^1];
+                return s.cueTimes[s.cueTimes.Length - 1];
             }
 
             IEnumerator FadeIn(int idx)
