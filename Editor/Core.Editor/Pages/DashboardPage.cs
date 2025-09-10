@@ -54,44 +54,7 @@ namespace Pitech.XR.Core.Editor
                 style =
                 {
                     backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
-                    paddingTop = 10, paddingBottom = 10, paddingLeft = 10, paddingRight = 10,
-                    marginBottom = 10, borderTopLeftRadius = 6, borderTopRightRadius = 6,
-                    borderBottomLeftRadius = 6, borderBottomRightRadius = 6
-                }
-            };
-            var label = new Label(title);
-            label.style.unityFontStyleAndWeight = FontStyle.Bold;
-            label.style.marginBottom = 6;
-            box.Add(label);
-
-            var content = new VisualElement();
-            content.style.flexDirection = FlexDirection.Column;
-            box.Add(content);
-            fill?.Invoke(content);
-            return box;
-        }
-
-        static Button Button(string text, System.Action onClick)
-        {
-            var b = new Button(onClick) { text = text };
-            b.style.marginRight = 8;
-            return b;
-        }
-
-        static VisualElement WideButton(string text, System.Action onClick)
-        {
-            var b = new Button(onClick) { text = text };
-            b.style.width = Length.Percent(100);
-            b.style.marginBottom = 8;
-            return b;
-        }
-
-        static VisualElement Badge(bool ok, string label)
-        {
-            var row = new VisualElement { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
-            var dot = new VisualElement
-            {
-                style =
+@@ -93,29 +95,36 @@ namespace Pitech.XR.Core.Editor
                 {
                     width = 10, height = 10, borderTopLeftRadius = 5, borderBottomLeftRadius = 5,
                     borderTopRightRadius = 5, borderBottomRightRadius = 5,
