@@ -7,204 +7,115 @@ using UnityEngine.UIElements;
 
 namespace Pitech.XR.Core.Editor
 {
-    /// <summary>Pi tech XR DevKit – Hub Window (clean: no stub types, no forward refs).</summary>
     public sealed class DevkitHubWindow : EditorWindow
     {
-        const string kWindowTitle = "Pi tech XR DevKit";
+        enum PageKind { Dashboard, Modules, Tools, Settings }
 
-        VisualElement _root;
-        VisualElement _sidebar;
+        readonly Dictionary<PageKind, IDevkitPage> _pages = new()
+        {
+            { PageKind.Dashboard, new DashboardPage() },
+            { PageKind.Modules,   new ModulesPage() },
+            { PageKind.Tools,     new ToolsPage() },
+            { PageKind.Settings,  new SettingsPage() },
+        };
+
         VisualElement _content;
+        PageKind _current = PageKind.Dashboard;
 
-        // Registered pages
-        readonly Dictionary<string, IDevkitPage> _pages = new();
-        string _currentKey;
-
-        [MenuItem("Pi tech/DevKit Hub", priority = 0)]
-        public static void Open() => GetWindow<DevkitHubWindow>();
-
-        void OnEnable()
+        [MenuItem("Pi tech/DevKit")]
+        public static void Open()
         {
-            titleContent = new GUIContent(kWindowTitle, DevkitContext.TitleIcon);
-
-            _root = rootVisualElement;
-            _root.style.flexGrow = 1;
-            _root.style.flexDirection = FlexDirection.Column;
-            _root.style.paddingLeft = 8;
-            _root.style.paddingRight = 8;
-            _root.style.paddingTop = 6;
-            _root.style.paddingBottom = 8;
-
-            BuildHeader();
-            BuildMainArea();
-            RegisterPages();
-            ShowPage("Dashboard");
+            var w = GetWindow<DevkitHubWindow>();
+            w.titleContent = new GUIContent("Pi tech XR DevKit", DevkitContext.TitleIcon);
+            w.minSize = new Vector2(860, 520);
+            w.Show();
         }
 
-        void BuildHeader()
+        void OnEnable() => BuildUI();
+
+        void BuildUI()
         {
-            var header = new VisualElement
-            {
-                style =
-                {
-                    flexDirection = FlexDirection.Row,
-                    alignItems = Align.Center
-                }
-            };
+            rootVisualElement.Clear();
+            rootVisualElement.style.backgroundColor = DevkitTheme.Bg;
 
-            var title = new Label(kWindowTitle);
-            title.style.unityFontStyleAndWeight = FontStyle.Bold;
-            title.style.fontSize = 16;
-            title.style.marginLeft = 2;
-
-            header.Add(title);
-            header.Add(new VisualElement { style = { flexGrow = 1 } }); // spacer
-            header.Add(MakeLinkButton("Docs", () => Application.OpenURL("https://pitech.gr")));
-            header.Add(MakeLinkButton("Community", () => Application.OpenURL("https://pitech.gr")));
-
-            _root.Clear();
-            _root.Add(header);
-            _root.Add(MakeSpacer(6));
-        }
-
-        void BuildMainArea()
-        {
-            var main = new VisualElement
-            {
-                style =
-                {
-                    flexDirection = FlexDirection.Row,
-                    flexGrow = 1
-                }
-            };
-            _root.Add(main);
+            var row = new VisualElement { style = { flexDirection = FlexDirection.Row, flexGrow = 1 } };
+            rootVisualElement.Add(row);
 
             // Sidebar
-            _sidebar = new VisualElement
-            {
-                style =
-                {
-                    width = 260,
-                    minWidth = 220,
-                    maxWidth = 320,
-                    marginRight = 10,
-                    paddingLeft = 8,
-                    paddingRight = 8,
-                    paddingTop = 12,
-                    paddingBottom = 12,
-                    flexDirection = FlexDirection.Column,
-                    backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
-                    borderTopLeftRadius = 6,
-                    borderBottomLeftRadius = 6,
-                    borderTopRightRadius = 6,
-                    borderBottomRightRadius = 6
-                }
-            };
-            main.Add(_sidebar);
+            var side = new VisualElement();
+            side.style.width = 220;
+            side.style.backgroundColor = DevkitTheme.Panel2;
+            side.style.paddingLeft = 12;
+            side.style.paddingRight = 12;
+            side.style.paddingTop = 12;
+            side.style.paddingBottom = 12;
+            side.style.flexShrink = 0;
 
-            // Sidebar logo
+            // Logo + title
+            var logoRow = DevkitTheme.Row();
             if (DevkitContext.SidebarLogo != null)
             {
-                var img = new Image { image = DevkitContext.SidebarLogo };
-                img.style.unityBackgroundScaleMode = ScaleMode.ScaleToFit;
-                img.style.height = 60;
-                img.style.marginBottom = 12;
-                _sidebar.Add(img);
+                var logo = new Image { image = DevkitContext.SidebarLogo };
+                logo.style.width = 20; logo.style.height = 20; logo.style.marginRight = 8;
+                logoRow.Add(logo);
             }
+            var title = new Label("XR DevKit") { style = { color = DevkitTheme.Text, unityFontStyleAndWeight = FontStyle.Bold } };
+            logoRow.Add(title);
+            side.Add(logoRow);
+            side.Add(DevkitTheme.VSpace(8));
+            side.Add(DevkitTheme.Divider());
+            side.Add(DevkitTheme.VSpace(8));
 
-            _sidebar.Add(MakeSectionLabel("Navigate"));
-            _sidebar.Add(MakeNavButton("Dashboard", () => ShowPage("Dashboard")));
-            _sidebar.Add(MakeNavButton("Modules", () => ShowPage("Modules")));
-            _sidebar.Add(MakeNavButton("Tools", () => ShowPage("Tools")));
-            _sidebar.Add(MakeNavButton("Settings", () => ShowPage("Settings")));
-            _sidebar.Add(new VisualElement { style = { flexGrow = 1 } });
-            _sidebar.Add(MakeNavButton("About", () => ShowPage("About")));
+            // Nav buttons
+            side.Add(NavButton("Dashboard", PageKind.Dashboard));
+            side.Add(DevkitTheme.VSpace(6));
+            side.Add(NavButton("Modules", PageKind.Modules));
+            side.Add(DevkitTheme.VSpace(6));
+            side.Add(NavButton("Tools", PageKind.Tools));
+            side.Add(DevkitTheme.VSpace(6));
+            side.Add(NavButton("Settings", PageKind.Settings));
+
+            // Top bar
+            var top = DevkitTheme.Row();
+            top.style.paddingLeft = 12; top.style.paddingRight = 12;
+            top.style.paddingTop = 8; top.style.paddingBottom = 8;
+            var hdr = new Label($"Pi tech XR DevKit — {DevkitContext.Version}")
+            {
+                style = { color = DevkitTheme.Text, unityFontStyleAndWeight = FontStyle.Bold }
+            };
+            top.Add(hdr);
+            top.Add(DevkitTheme.Flex());
+            top.Add(DevkitTheme.Secondary("Docs", () => EditorApplication.ExecuteMenuItem("Window/Package Manager"))); // placeholder
+            top.style.backgroundColor = DevkitTheme.Panel2;
 
             // Content
-            _content = new ScrollView(ScrollViewMode.Vertical)
-            {
-                style =
-                {
-                    flexGrow = 1,
-                    backgroundColor = new Color(0.11f, 0.12f, 0.14f, 1f),
-                    paddingTop = 12,
-                    paddingBottom = 12,
-                    paddingLeft = 12,
-                    paddingRight = 12,
-                    borderTopLeftRadius = 6,
-                    borderBottomLeftRadius = 6,
-                    borderTopRightRadius = 6,
-                    borderBottomRightRadius = 6
-                }
-            };
-            main.Add(_content);
+            _content = new ScrollView();
+            _content.style.flexGrow = 1;
+            _content.style.paddingLeft = 12; _content.style.paddingRight = 12; _content.style.paddingTop = 8; _content.style.paddingBottom = 8;
+
+            var right = new VisualElement { style = { flexGrow = 1 } };
+            right.Add(top);
+            right.Add(_content);
+
+            row.Add(side);
+            row.Add(right);
+
+            ShowPage(_current);
         }
 
-        void RegisterPages()
+        Button NavButton(string text, PageKind page)
         {
-            _pages.Clear();
-
-            // These page types must exist once in the same namespace (you already created them):
-            // DashboardPage, ModulesPage, ToolsPage, SettingsPage, AboutPage.
-            SafeAdd("Dashboard", new DashboardPage());
-            SafeAdd("Modules", new ModulesPage());
-            SafeAdd("Tools", new ToolsPage());
-            SafeAdd("Settings", new SettingsPage());
-            SafeAdd("About", new AboutPage());
-        }
-
-        void SafeAdd(string key, IDevkitPage page)
-        {
-            if (page != null) _pages[key] = page;
-        }
-
-        void ShowPage(string key)
-        {
-            if (string.Equals(_currentKey, key, StringComparison.Ordinal)) return;
-
-            _content.Clear();
-            if (_pages.TryGetValue(key, out var page))
-            {
-                _currentKey = key;
-                try { page.BuildUI(_content); }
-                catch (Exception ex)
-                {
-                    _content.Add(new HelpBox($"Failed to build page '{key}':\n{ex}", HelpBoxMessageType.Error));
-                }
-            }
-            else
-            {
-                _content.Add(new HelpBox($"Page not found: {key}", HelpBoxMessageType.Warning));
-            }
-        }
-
-        // UI helpers
-        static VisualElement MakeSpacer(float h) =>
-            new VisualElement { style = { height = h, flexShrink = 0 } };
-
-        static Label MakeSectionLabel(string text)
-        {
-            var l = new Label(text);
-            l.style.unityFontStyleAndWeight = FontStyle.Bold;
-            l.style.marginBottom = 6;
-            return l;
-        }
-
-        static Button MakeNavButton(string label, Action onClick)
-        {
-            var btn = new Button(onClick) { text = label };
-            btn.style.marginBottom = 6;
-            btn.style.height = 28;
-            btn.style.justifyContent = Justify.Center;
-            return btn;
-        }
-
-        static Button MakeLinkButton(string label, Action onClick)
-        {
-            var b = new Button(onClick) { text = label };
-            b.style.marginLeft = 6;
-            b.style.height = 20;
+            var b = DevkitTheme.Secondary(text, () => ShowPage(page));
+            b.style.width = Length.Percent(100);
             return b;
+        }
+
+        void ShowPage(PageKind page)
+        {
+            _current = page;
+            _content.Clear();
+            if (_pages.TryGetValue(page, out var p))
+                p.BuildUI(_content); // uses your IDevkitPage contract :contentReference[oaicite:13]{index=13}
         }
     }
 }
