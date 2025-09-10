@@ -1,13 +1,11 @@
-#if UNITY_EDITOR
+// Packages/com.pitech.xr.devkit/Editor/Core.Editor/Pages/IDevkitPage.cs
 using UnityEngine.UIElements;
 
-namespace Pitech.XR.Core.Editor
+namespace Pitech.XR.Core.Editor.Pages
 {
-    public interface IDevkitPage
+    internal interface IDevkitPage
     {
         string Title { get; }
-        /// <summary>Build the page UI under the given root.</summary>
-        void BuildUI(VisualElement root);
+        void Build(VisualElement root);
     }
 }
-#endif
