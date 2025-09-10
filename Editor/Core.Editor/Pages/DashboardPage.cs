@@ -2,6 +2,7 @@
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+using ScenarioSceneManager = Pitech.XR.Scenario.SceneManager;
 
 namespace Pitech.XR.Core.Editor
 {
@@ -11,12 +12,12 @@ namespace Pitech.XR.Core.Editor
 
         public void BuildUI(VisualElement root)
         {
-            root.Add(DevkitTheme.Section("Project Setup", el =>
+            root.Add(Section("Project Setup", el =>
             {
-                el.Add(DevkitTheme.Badge(DevkitContext.HasTimeline, "Unity Timeline"));
-                el.Add(DevkitTheme.Badge(DevkitContext.HasTextMeshPro, "TextMeshPro"));
-                el.Add(DevkitTheme.Badge(false, "Scenario module"));
-                el.Add(DevkitTheme.Badge(false, "Stats module"));
+                el.Add(Badge(DevkitContext.HasTimeline, "Unity Timeline"));
+                el.Add(Badge(DevkitContext.HasTextMeshPro, "TextMeshPro"));
+                el.Add(Badge(false, "Scenario module"));
+                el.Add(Badge(false, "Stats module"));
 
                 var hint = new HelpBox(
                     "Enable modules you need, then use the actions below to create assets & scene objects.",
@@ -24,25 +25,48 @@ namespace Pitech.XR.Core.Editor
                 hint.style.marginTop = 6; el.Add(hint);
             }));
 
-            root.Add(DevkitTheme.Section("Quick Actions", el =>
+            root.Add(Section("Quick Actions", el =>
             {
-                el.Add(DevkitTheme.WideButton("Create StatsConfig asset", CreateStatsConfigAsset));
+                el.Add(WideButton("Create StatsConfig asset", CreateStatsConfigAsset));
+                el.Add(WideButton("Create Scene Manager", CreateSceneManager));
                 var row = new VisualElement { style = { flexDirection = FlexDirection.Row } };
-                row.Add(DevkitTheme.Button("Create Scenario GameObject", CreateScenarioGO, b => b.style.marginRight = 8));
+                row.Add(Button("Create Scenario GameObject", CreateScenarioGO));
                 row.Add(new Label("  Scenario Graph available") { style = { color = new Color(0.4f, 1f, 0.5f) } });
                 row.Add(new VisualElement { style = { flexGrow = 1 } });
-                row.Add(DevkitTheme.Button("Open Scenario Graph", OpenScenarioGraph));
+                row.Add(Button("Open Scenario Graph", OpenScenarioGraph));
                 el.Add(row);
             }));
 
-            root.Add(DevkitTheme.Section("Utilities", el =>
+            root.Add(Section("Utilities", el =>
             {
                 var row = new VisualElement { style = { flexDirection = FlexDirection.Row } };
-                row.Add(DevkitTheme.Button("Open Package Manager", () => EditorApplication.ExecuteMenuItem("Window/Package Manager"), b => b.style.marginRight = 8));
-                row.Add(DevkitTheme.Button("Reimport All", () => AssetDatabase.ImportAsset("Assets", ImportAssetOptions.ForceUpdate)));
+                row.Add(Button("Open Package Manager", () => EditorApplication.ExecuteMenuItem("Window/Package Manager")));
+                row.Add(Button("Reimport All", () => AssetDatabase.ImportAsset("Assets", ImportAssetOptions.ForceUpdate)));
                 el.Add(row);
             }));
         }
+
+        // ---------- helpers ----------
+        static VisualElement Section(string title, System.Action<VisualElement> fill)
+        {
+            var box = new VisualElement
+            {
+                style =
+                {
+                    backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
+@@ -93,29 +95,36 @@ namespace Pitech.XR.Core.Editor
+                {
+                    width = 10, height = 10, borderTopLeftRadius = 5, borderBottomLeftRadius = 5,
+                    borderTopRightRadius = 5, borderBottomRightRadius = 5,
+                    backgroundColor = ok ? new Color(0.3f, 0.9f, 0.5f) : new Color(0.95f, 0.35f, 0.35f),
+                    marginRight = 6
+                }
+            };
+            row.Add(dot);
+            row.Add(new Label(label));
+            return row;
+        }
+
         // Actions (replace with your implementations)
         static void CreateStatsConfigAsset()
         {
@@ -56,6 +80,13 @@ namespace Pitech.XR.Core.Editor
             }
         }
         static void CreateScenarioGO() { EditorApplication.ExecuteMenuItem("GameObject/Create Empty"); }
+        static void CreateSceneManager()
+        {
+            var go = new GameObject("Scene Manager");
+            go.AddComponent<ScenarioSceneManager>();
+            Undo.RegisterCreatedObjectUndo(go, "Create Scene Manager");
+            Selection.activeGameObject = go;
+        }
         static void OpenScenarioGraph() { EditorApplication.ExecuteMenuItem("Window/General/Inspector"); }
     }
 }
