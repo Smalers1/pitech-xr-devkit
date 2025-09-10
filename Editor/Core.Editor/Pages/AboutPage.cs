@@ -1,29 +1,28 @@
-#if UNITY_EDITOR
 using UnityEngine;
 using UnityEngine.UIElements;
 
-namespace Pitech.XR.Core.Editor
+namespace Pitech.XR.Core.Editor.Pages
 {
-    public sealed class AboutPage : IDevkitPage
+    internal sealed class AboutPage : IDevkitPage
     {
         public string Title => "About";
 
-        public void BuildUI(VisualElement root)
+        public void Build(VisualElement root)
         {
-            root.Add(DevkitTheme.Section("Pi tech XR DevKit", el =>
+            root.Clear();
+
+            root.Add(new Label("About Pi tech XR DevKit")
             {
-                if (DevkitContext.SidebarLogo != null)
+                style =
                 {
-                    var img = new Image { image = DevkitContext.SidebarLogo };
-                    img.style.unityBackgroundScaleMode = ScaleMode.ScaleToFit;
-                    img.style.height = 64;
-                    img.style.marginBottom = 6;
-                    el.Add(img);
+                    unityFontStyleAndWeight = FontStyle.Bold,
+                    fontSize = 16,
+                    marginBottom = 8
                 }
-                el.Add(new Label($"Version: {DevkitContext.Version}"));
-                el.Add(new Label(" Pi tech"));
-            }));
+            });
+
+            root.Add(new Label("A modular, in-house toolkit for building XR apps faster on Unity LTS.\n" +
+                               "This page is a placeholder; we can add credits, links, version info, etc."));
         }
     }
 }
-#endif
