@@ -27,16 +27,12 @@ namespace Pitech.XR.Stats
         public List<Binding> bindings = new();
         Dictionary<StatKey, Binding> map = new();
         Dictionary<StatKey, Coroutine> anims = new();
-        StatsRuntime runtime;
 
         public void Init(StatsRuntime rt)
         {
-            if (runtime != null)
-                runtime.OnChanged -= AnimateTo;
-            runtime = rt;
             map.Clear();
             foreach (var b in bindings) if (b != null) map[b.key] = b;
-            runtime.OnChanged += AnimateTo;
+            rt.OnChanged += AnimateTo;
         }
 
         void AnimateTo(StatKey k, float from, float to)
@@ -59,21 +55,6 @@ namespace Pitech.XR.Stats
             }
             if (b.text) b.text.text = bval.ToString(b.format);
             if (b.slider) b.slider.value = Mathf.Clamp01(bval / Mathf.Max(0.0001f, b.sliderMax));
-            anims.Remove(b.key);
-        }
-
-        void OnDisable()
-        {
-            if (runtime != null)
-                runtime.OnChanged -= AnimateTo;
-            foreach (var c in anims.Values)
-                if (c != null) StopCoroutine(c);
-            anims.Clear();
-        }
-
-        void OnDestroy()
-        {
-            OnDisable();
         }
     }
 }

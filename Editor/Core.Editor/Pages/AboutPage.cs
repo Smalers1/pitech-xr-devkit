@@ -1,28 +1,49 @@
+#if UNITY_EDITOR
 using UnityEngine;
 using UnityEngine.UIElements;
 
-namespace Pitech.XR.Core.Editor.Pages
+namespace Pitech.XR.Core.Editor
 {
-    internal sealed class AboutPage : IDevkitPage
+    public sealed class AboutPage : IDevkitPage
     {
         public string Title => "About";
 
-        public void Build(VisualElement root)
+        public void BuildUI(VisualElement root)
         {
-            root.Clear();
+            root.Add(Section("Pi tech XR DevKit", el =>
+            {
+                if (DevkitContext.SidebarLogo != null)
+                {
+                    var img = new Image { image = DevkitContext.SidebarLogo };
+                    img.style.unityBackgroundScaleMode = ScaleMode.ScaleToFit;
+                    img.style.height = 64;
+                    img.style.marginBottom = 6;
+                    el.Add(img);
+                }
+                el.Add(new Label($"Version: {DevkitContext.Version}"));
+                el.Add(new Label("© Pi tech"));
+            }));
+        }
 
-            root.Add(new Label("About Pi tech XR DevKit")
+        static VisualElement Section(string title, System.Action<VisualElement> fill)
+        {
+            var box = new VisualElement
             {
                 style =
                 {
-                    unityFontStyleAndWeight = FontStyle.Bold,
-                    fontSize = 16,
-                    marginBottom = 8
+                    backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
+                    paddingTop = 10, paddingBottom = 10, paddingLeft = 10, paddingRight = 10,
+                    marginBottom = 10, borderTopLeftRadius = 6, borderTopRightRadius = 6,
+                    borderBottomLeftRadius = 6, borderBottomRightRadius = 6
                 }
-            });
-
-            root.Add(new Label("A modular, in-house toolkit for building XR apps faster on Unity LTS.\n" +
-                               "This page is a placeholder; we can add credits, links, version info, etc."));
+            };
+            var label = new Label(title) { style = { unityFontStyleAndWeight = FontStyle.Bold, marginBottom = 6 } };
+            box.Add(label);
+            var content = new VisualElement();
+            box.Add(content);
+            fill?.Invoke(content);
+            return box;
         }
     }
 }
+#endif

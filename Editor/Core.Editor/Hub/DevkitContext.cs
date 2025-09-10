@@ -1,17 +1,36 @@
-// Packages/com.pitech.xr.devkit/Editor/Core.Editor/Hub/DevkitContext.cs
+#if UNITY_EDITOR
+using System;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
 namespace Pitech.XR.Core.Editor
 {
-    /// <summary>Shared context/state for the DevKit Hub.</summary>
+    /// <summary>Shared editor context/branding helpers (static only).</summary>
     internal static class DevkitContext
     {
-        public const string Version = "v0.1.0 (preview)";
+        public static readonly string Version = "v0.1.0";
 
-        // Optional: assign your textures in code or load by name if you import them.
-        // Keep null-safe usage in UI.
-        public static Texture2D TitleIcon;    // small 16-20px icon in title bar
-        public static Texture2D SidebarLogo;  // wide logo shown at the top of sidebar
+        // Title icon (tab) and sidebar logo, resolved by name (you placed them under Editor/Core/Icons)
+        public static Texture2D TitleIcon => FindTextureByName("Pi tech Icon");
+        public static Texture2D SidebarLogo => FindTextureByName("Pi tech Logo");
+
+        // Capability checks (optional)
+        public static bool HasTimeline => Type.GetType("UnityEngine.Timeline.TimelineAsset, UnityEngine.Timeline") != null;
+        public static bool HasTextMeshPro => Type.GetType("TMPro.TMP_Text, Unity.TextMeshPro") != null;
+
+        // Finder
+        static Texture2D FindTextureByName(string assetName)
+        {
+            var guids = AssetDatabase.FindAssets(assetName);
+            foreach (var guid in guids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+                if (tex != null) return tex;
+            }
+            return null;
+        }
     }
 }
+#endif

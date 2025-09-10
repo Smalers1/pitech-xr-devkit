@@ -30,16 +30,6 @@ namespace Pitech.XR.Core.Editor
             return ve;
         }
 
-        public static VisualElement Section(string title, System.Action<VisualElement> fill)
-        {
-            var ve = Section(title);
-            var content = new VisualElement();
-            content.style.flexDirection = FlexDirection.Column;
-            ve.Add(content);
-            fill?.Invoke(content);
-            return ve;
-        }
-
         public static Label Body(string text, bool dim=false)
             => new(text) { style = { color = dim ? SubText : Text, fontSize = 12 } };
 
@@ -64,45 +54,6 @@ namespace Pitech.XR.Core.Editor
             b.style.borderTopLeftRadius = b.style.borderTopRightRadius =
             b.style.borderBottomLeftRadius = b.style.borderBottomRightRadius = 6;
             return b;
-        }
-
-        public static Button Button(string text, System.Action onClick, System.Action<Button>? customize = null)
-        {
-            var b = new Button(onClick) { text = text };
-            customize?.Invoke(b);
-            return b;
-        }
-
-        public static Button WideButton(string text, System.Action onClick, System.Action<Button>? customize = null)
-        {
-            var b = Button(text, onClick);
-            b.style.width = Length.Percent(100);
-            b.style.marginBottom = 8;
-            customize?.Invoke(b);
-            return b;
-        }
-
-        public static VisualElement Badge(bool ok, string label, System.Action<VisualElement>? customize = null)
-        {
-            var row = Row();
-            var dot = new VisualElement
-            {
-                style =
-                {
-                    width = 10,
-                    height = 10,
-                    borderTopLeftRadius = 5,
-                    borderBottomLeftRadius = 5,
-                    borderTopRightRadius = 5,
-                    borderBottomRightRadius = 5,
-                    backgroundColor = ok ? new Color(0.3f, 0.9f, 0.5f) : new Color(0.95f, 0.35f, 0.35f),
-                    marginRight = 6
-                }
-            };
-            row.Add(dot);
-            row.Add(new Label(label) { style = { color = Text } });
-            customize?.Invoke(row);
-            return row;
         }
 
         public static VisualElement Divider()

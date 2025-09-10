@@ -1,106 +1,121 @@
-// Packages/com.pitech.xr.devkit/Editor/Core.Editor/Pages/DashboardPage.cs
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-namespace Pitech.XR.Core.Editor.Pages
+namespace Pitech.XR.Core.Editor
 {
-    internal sealed class DashboardPage : IDevkitPage
+    public sealed class DashboardPage : IDevkitPage
     {
         public string Title => "Dashboard";
 
-        public void Build(VisualElement root)
+        public void BuildUI(VisualElement root)
         {
-            root.Clear();
-
-            var header = new Label("Pi tech XR DevKit")
+            root.Add(Section("Project Setup", el =>
             {
-                style =
-                {
-                    unityFontStyleAndWeight = FontStyle.Bold,
-                    fontSize = 16,
-                    marginBottom = 6
-                }
-            };
-            root.Add(header);
+                el.Add(Badge(DevkitContext.HasTimeline, "Unity Timeline"));
+                el.Add(Badge(DevkitContext.HasTextMeshPro, "TextMeshPro"));
+                el.Add(Badge(false, "Scenario module"));
+                el.Add(Badge(false, "Stats module"));
 
-            var ver = new Label($"Version: {Core.Editor.DevkitContext.Version}")
-            {
-                style = { marginBottom = 10, color = new Color(0.75f, 0.75f, 0.75f) }
-            };
-            root.Add(ver);
-
-            var card = MakeCard("Project Setup");
-            root.Add(card);
-
-            card.Add(MakePillRow(new[]
-            {
-                ("Unity Timeline", true),
-                ("TextMeshPro", true),
-                ("Scenario module", false),
-                ("Stats module", false)
+                var hint = new HelpBox(
+                    "Enable modules you need, then use the actions below to create assets & scene objects.",
+                    HelpBoxMessageType.None);
+                hint.style.marginTop = 6; el.Add(hint);
             }));
 
-            card.Add(new Label("Enable modules you need, then use Quick Actions to create assets & scene objects.")
+            root.Add(Section("Quick Actions", el =>
             {
-                style = { marginTop = 6, marginBottom = 2, color = new Color(0.8f,0.8f,0.8f) }
-            });
+                el.Add(WideButton("Create StatsConfig asset", CreateStatsConfigAsset));
+                var row = new VisualElement { style = { flexDirection = FlexDirection.Row } };
+                row.Add(Button("Create Scenario GameObject", CreateScenarioGO));
+                row.Add(new Label("  Scenario Graph available") { style = { color = new Color(0.4f, 1f, 0.5f) } });
+                row.Add(new VisualElement { style = { flexGrow = 1 } });
+                row.Add(Button("Open Scenario Graph", OpenScenarioGraph));
+                el.Add(row);
+            }));
+
+            root.Add(Section("Utilities", el =>
+            {
+                var row = new VisualElement { style = { flexDirection = FlexDirection.Row } };
+                row.Add(Button("Open Package Manager", () => EditorApplication.ExecuteMenuItem("Window/Package Manager")));
+                row.Add(Button("Reimport All", () => AssetDatabase.ImportAsset("Assets", ImportAssetOptions.ForceUpdate)));
+                el.Add(row);
+            }));
         }
 
-        static VisualElement MakeCard(string title)
+        // ---------- helpers ----------
+        static VisualElement Section(string title, System.Action<VisualElement> fill)
         {
-            var box = new VisualElement();
-            box.style.paddingTop = 10;
-            box.style.paddingBottom = 10;
-            box.style.paddingLeft = 12;
-            box.style.paddingRight = 12;
-            box.style.marginBottom = 10;
-            box.style.borderBottomLeftRadius = 6;
-            box.style.borderBottomRightRadius = 6;
-            box.style.borderTopLeftRadius = 6;
-            box.style.borderTopRightRadius = 6;
-            box.style.backgroundColor = new Color(0.14f, 0.16f, 0.19f);
-
-            var label = new Label(title)
+            var box = new VisualElement
             {
                 style =
                 {
-                    unityFontStyleAndWeight = FontStyle.Bold,
-                    marginBottom = 6
+                    backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
+                    paddingTop = 10, paddingBottom = 10, paddingLeft = 10, paddingRight = 10,
+                    marginBottom = 10, borderTopLeftRadius = 6, borderTopRightRadius = 6,
+                    borderBottomLeftRadius = 6, borderBottomRightRadius = 6
                 }
             };
+            var label = new Label(title);
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            label.style.marginBottom = 6;
             box.Add(label);
+
+            var content = new VisualElement();
+            content.style.flexDirection = FlexDirection.Column;
+            box.Add(content);
+            fill?.Invoke(content);
             return box;
         }
 
-        static VisualElement MakePillRow((string label, bool ok)[] items)
+        static Button Button(string text, System.Action onClick)
         {
-            var row = new VisualElement();
-            row.style.flexDirection = FlexDirection.Row;
+            var b = new Button(onClick) { text = text };
+            b.style.marginRight = 8;
+            return b;
+        }
 
-            foreach (var it in items)
+        static VisualElement WideButton(string text, System.Action onClick)
+        {
+            var b = new Button(onClick) { text = text };
+            b.style.width = Length.Percent(100);
+            b.style.marginBottom = 8;
+            return b;
+        }
+
+        static VisualElement Badge(bool ok, string label)
+        {
+            var row = new VisualElement { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
+            var dot = new VisualElement
             {
-                var pill = new Label(it.label)
+                style =
                 {
-                    style =
-                    {
-                        unityTextAlign = TextAnchor.MiddleCenter,
-                        paddingLeft = 8,
-                        paddingRight = 8,
-                        paddingTop = 2,
-                        paddingBottom = 2,
-                        marginRight = 6,
-                        backgroundColor = it.ok ? new Color(0.20f, 0.44f, 0.24f) : new Color(0.44f, 0.20f, 0.20f),
-                        borderBottomLeftRadius = 12,
-                        borderBottomRightRadius = 12,
-                        borderTopLeftRadius = 12,
-                        borderTopRightRadius = 12
-                    }
-                };
-                row.Add(pill);
-            }
-
+                    width = 10, height = 10, borderTopLeftRadius = 5, borderBottomLeftRadius = 5,
+                    borderTopRightRadius = 5, borderBottomRightRadius = 5,
+                    backgroundColor = ok ? new Color(0.3f, 0.9f, 0.5f) : new Color(0.95f, 0.35f, 0.35f),
+                    marginRight = 6
+                }
+            };
+            row.Add(dot);
+            row.Add(new Label(label));
             return row;
         }
+
+        // Actions (replace with your implementations)
+        static void CreateStatsConfigAsset()
+        {
+            var path = EditorUtility.SaveFilePanelInProject("Create StatsConfig", "StatsConfig", "asset", "");
+            if (!string.IsNullOrEmpty(path))
+            {
+                var obj = ScriptableObject.CreateInstance("Pitech.XR.Stats.StatsConfig");
+                AssetDatabase.CreateAsset(obj, path);
+                AssetDatabase.SaveAssets();
+                Selection.activeObject = obj;
+            }
+        }
+        static void CreateScenarioGO() { EditorApplication.ExecuteMenuItem("GameObject/Create Empty"); }
+        static void OpenScenarioGraph() { EditorApplication.ExecuteMenuItem("Window/General/Inspector"); }
     }
 }
+#endif
