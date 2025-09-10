@@ -56,7 +56,7 @@ namespace Pitech.XR.Core.Editor
             if (DevkitContext.SidebarLogo != null)
             {
                 var logo = new Image { image = DevkitContext.SidebarLogo };
-                logo.style.width = 20; logo.style.height = 20; logo.style.marginRight = 8;
+                logo.style.width = 28; logo.style.height = 28; logo.style.marginRight = 8;
                 logoRow.Add(logo);
             }
             var title = new Label("XR DevKit") { style = { color = DevkitTheme.Text, unityFontStyleAndWeight = FontStyle.Bold } };

@@ -11,84 +11,131 @@ namespace Pitech.XR.Core.Editor
 
         public void BuildUI(VisualElement root)
         {
-            // ===== Project Setup =====
-            var setup = DevkitTheme.Section("Project Setup");
+            var health = new ProjectHealthService();
+
+            // ===== System Status (ribbon) =====
             {
-                // Status pills
-                var srow = DevkitTheme.Row();
-                srow.Add(Pill(DevkitContext.HasTimeline, "Unity Timeline"));
-                srow.Add(DevkitTheme.VSpace(8));
-                srow.Add(Pill(DevkitContext.HasTextMeshPro, "TextMeshPro"));
-                setup.Add(srow);
-                setup.Add(DevkitTheme.VSpace(8));
-                setup.Add(DevkitTheme.Body("Create folders, seed assets and apply recommended settings.", dim: true));
+                var (fOk, fTotal, _) = health.CheckFolders();
+                var (rOk, rTotal, _) = health.CheckSceneRoots();
+                var (sOk, sTotal, _) = health.CheckSettings();
+                var (hasTimeline, hasTMP) = health.CheckModules();
 
-                setup.Add(DevkitTheme.VSpace(10));
-                var svc = new ProjectSetupService(); // folders + settings + main scene :contentReference[oaicite:14]{index=14} :contentReference[oaicite:15]{index=15} :contentReference[oaicite:16]{index=16}
-                var btns1 = DevkitTheme.Row();
-                btns1.Add(DevkitTheme.Primary("Create project folders", svc.SetupFolders));
-                btns1.Add(DevkitTheme.VSpace(6));
-                btns1.Add(DevkitTheme.Secondary("Create Main scene", svc.CreateMainScene));
-                setup.Add(btns1);
+                var chips = DevkitWidgets.StatusChips(
+                    (fOk == fTotal, $"Folders {fOk}/{fTotal}"),
+                    (rOk > 0, $"Scene roots {rOk}/{rTotal}"),
+                    (sOk == sTotal, $"Settings {sOk}/{sTotal}"),
+                    (hasTimeline, "Timeline"),
+                    (hasTMP, "TextMeshPro")
+                );
 
-                setup.Add(DevkitTheme.VSpace(6));
-                var btns2 = DevkitTheme.Row();
-                var categoriesBtn = new Button(() => SceneCategoriesWindow.Open()) { text = "Create Scene Categories…" };
-                categoriesBtn.style.width = Length.Percent(100);
-                root.Add(categoriesBtn);
-                btns2.Add(DevkitTheme.Secondary("Apply recommended settings", svc.ApplyRecommendedSettings));
-                setup.Add(btns2);
+                var ribbon = DevkitWidgets.StatusRibbon(
+                    chips,
+                    health.OverallProgress01(),
+                    "Green means you are good to go. Use the tiles to fix anything missing."
+                );
+
+                var wrap = DevkitTheme.Section("System Status");
+                wrap.Add(ribbon);
+                root.Add(wrap);
             }
-            root.Add(setup);
 
-            // ===== Quick Actions =====
-            var quick = DevkitTheme.Section("Quick Actions");
+
+            // ===== KPI row (cards) =====
             {
-                var stats = new StatsService();       // create StatsConfig asset where selection points :contentReference[oaicite:17]{index=17}
-                var scen = new ScenarioService();    // create Scenario GO + open graph :contentReference[oaicite:18]{index=18} :contentReference[oaicite:19]{index=19}
-
-                quick.Add(DevkitTheme.Primary("Create StatsConfig asset", stats.CreateConfig));
-                quick.Add(DevkitTheme.VSpace(6));
-
-                var row = DevkitTheme.Row();
-                row.Add(DevkitTheme.Secondary("Create Scenario GameObject", scen.CreateScenarioGameObject));
-                row.Add(DevkitTheme.Flex());
-                row.Add(DevkitTheme.Secondary("Open Scenario Graph", scen.OpenGraph));
-                quick.Add(row);
+                var grid = DevkitTheme.Row();
+                var (fOk, fTotal, _) = health.CheckFolders();
+                var (rOk, rTotal, _) = health.CheckSceneRoots();
+                var (sOk, sTotal, _) = health.CheckSettings();
+                grid.Add(DevkitWidgets.Kpi("Folders", $"{fOk}/{fTotal}", fOk == fTotal ? "Complete" : "Missing some"));
+                grid.Add(DevkitWidgets.Kpi("Scene roots", $"{rOk}/{rTotal}", rOk > 0 ? "Present" : "None"));
+                grid.Add(DevkitWidgets.Kpi("Settings", $"{sOk}/{sTotal}", sOk == sTotal ? "OK" : "Needs fixes"));
+                root.Add(grid);
             }
-            root.Add(quick);
 
-            // ===== Utilities =====
-            var utils = DevkitTheme.Section("Utilities");
+            // ===== Tiles =====
+            var section = DevkitTheme.Section("Project Setup");
             {
-                var row = DevkitTheme.Row();
-                row.Add(DevkitTheme.Secondary("Open Package Manager", () => EditorApplication.ExecuteMenuItem("Window/Package Manager")));
-                row.Add(DevkitTheme.VSpace(6));
-                row.Add(DevkitTheme.Secondary("Reimport All", () => AssetDatabase.ImportAsset("Assets", ImportAssetOptions.ForceUpdate)));
-                utils.Add(row);
-            }
-            root.Add(utils);
-        }
+                var grid = DevkitWidgets.TileGrid();
 
-        // --- small UI helpers ---
-        static VisualElement Pill(bool ok, string label)
-        {
-            var row = DevkitTheme.Row();
-            var dot = new VisualElement
-            {
-                style =
+                var psvc = new ProjectSetupService();
+                var ssvc = new ScenarioService();
+                var stsvc = new StatsService();
+
+                // Folders
                 {
-                    width = 10, height = 10,
-                    borderTopLeftRadius = 5, borderTopRightRadius = 5,
-                    borderBottomLeftRadius = 5, borderBottomRightRadius = 5,
-                    backgroundColor = ok ? new Color(0.3f, 0.9f, 0.5f) : new Color(0.95f, 0.35f, 0.35f),
-                    marginRight = 6
+                    var actions = DevkitWidgets.Actions(
+                        DevkitTheme.Primary("Create project folders", psvc.SetupFolders)
+                    );
+                    grid.Add(DevkitWidgets.Card(
+                        "Folders",
+                        "Scaffold Assets with recommended subfolders.",
+                        DevkitWidgets.Actions(DevkitTheme.Primary("Create project folders", psvc.SetupFolders))
+                    ));
+
                 }
-            };
-            row.Add(dot);
-            row.Add(new Label(label) { style = { color = DevkitTheme.Text } });
-            return row;
+
+                // Scene
+                {
+                    var actions = DevkitWidgets.Actions(
+                        DevkitTheme.Secondary("Create Main scene", psvc.CreateMainScene),
+                        DevkitTheme.Secondary("Create Scene Categories…", SceneCategoriesWindow.Open)
+                    );
+                    grid.Add(DevkitWidgets.Card(
+                        "Scene",
+                        "Prepare a clean starting scene structure.",
+                        DevkitWidgets.Actions(
+                            DevkitTheme.Secondary("Create Main scene", psvc.CreateMainScene),
+                            DevkitTheme.Secondary("Create Scene Categories…", SceneCategoriesWindow.Open)
+                        )
+                    ));
+                }
+
+                // Settings
+                {
+                    var actions = DevkitWidgets.Actions(
+                        DevkitTheme.Secondary("Apply recommended settings", health.FixRecommended)
+                    );
+                    grid.Add(DevkitWidgets.Card(
+                        "Settings",
+                        "Linear color space, Force Text and visible meta files.",
+                        DevkitWidgets.Actions(DevkitTheme.Secondary("Apply recommended settings", health.FixRecommended))
+                    ));
+                }
+
+                // Stats
+                {
+                    var actions = DevkitWidgets.Actions(
+                        DevkitTheme.Primary("Create StatsConfig asset", stsvc.CreateConfig)
+                    );
+                    grid.Add(DevkitWidgets.Card(
+                        "Stats",
+                        "Create a StatsConfig in the selected folder.",
+                        DevkitWidgets.Actions(DevkitTheme.Primary("Create StatsConfig asset", stsvc.CreateConfig))
+                    ));
+                }
+
+                // Scenario
+                {
+                    var actions = DevkitWidgets.Actions(
+                        DevkitTheme.Secondary("Create Scenario GameObject", ssvc.CreateScenarioGameObject),
+                        DevkitTheme.Secondary("Open Scenario Graph", ssvc.OpenGraph)
+                    );
+                    grid.Add(DevkitWidgets.Card(
+                        "Scenario",
+                        "Runtime object and authoring graph.",
+                        DevkitWidgets.Actions(
+                            DevkitTheme.Secondary("Create Scenario GameObject", ssvc.CreateScenarioGameObject),
+                            DevkitTheme.Secondary("Open Scenario Graph", ssvc.OpenGraph)
+                        )
+                    ));
+                }
+
+                section.Add(grid);
+            }
+            root.Add(section);
         }
+
+
     }
 }
 #endif

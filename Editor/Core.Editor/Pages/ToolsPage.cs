@@ -14,6 +14,17 @@ namespace Pitech.XR.Core.Editor
             {
                 el.Add(new Label("Project scaffolding, addressables helpers, prefabs, etc. (coming soon)."));
             }));
+            {
+                var section = DevkitTheme.Section("Scene Categories");
+                section.Add(DevkitTheme.Body("Create tidy root groups in the active scene: Lighting, Scene Managers, Environment, Interactables, Timelines, UI, Audio, VFX, Cameras and Debug.", dim: true));
+
+                var actions = DevkitWidgets.Actions(
+                    DevkitTheme.Primary("Open", SceneCategoriesWindow.Open)
+                );
+                section.Add(DevkitTheme.VSpace(6));
+                section.Add(actions);
+                root.Add(section);
+            }
         }
 
         static VisualElement Section(string title, System.Action<VisualElement> fill)
