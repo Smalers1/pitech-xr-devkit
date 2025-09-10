@@ -1,28 +1,28 @@
-#if UNITY_EDITOR
-using UnityEditor;
+// Packages/com.pitech.xr.devkit/Editor/Core.Editor/Pages/SettingsPage.cs
 using UnityEngine;
 using UnityEngine.UIElements;
 
-namespace Pitech.XR.Core.Editor
+namespace Pitech.XR.Core.Editor.Pages
 {
-    public sealed class SettingsPage : IDevkitPage
+    internal sealed class SettingsPage : IDevkitPage
     {
         public string Title => "Settings";
 
-        public void BuildUI(VisualElement root)
+        public void Build(VisualElement root)
         {
-            root.Add(DevkitTheme.Section("DevKit", el =>
-            {
-                el.Add(new Label($"Version: {DevkitContext.Version}"));
-                el.Add(new Label($"Timeline present: {DevkitContext.HasTimeline}"));
-                el.Add(new Label($"TextMeshPro present: {DevkitContext.HasTextMeshPro}"));
-            }));
+            root.Clear();
 
-            root.Add(DevkitTheme.Section("Project Settings", el =>
+            root.Add(new Label("Settings")
             {
-                el.Add(DevkitTheme.Button("Open Project Settings", () => SettingsService.OpenProjectSettings("Project")));
-            }));
+                style =
+                {
+                    unityFontStyleAndWeight = FontStyle.Bold,
+                    fontSize = 16,
+                    marginBottom = 8
+                }
+            });
+
+            root.Add(new Label("Project setup helpers will end up here (folders, layers, tags, URP, etc.)."));
         }
     }
 }
-#endif
