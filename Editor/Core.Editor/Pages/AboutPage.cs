@@ -10,7 +10,7 @@ namespace Pitech.XR.Core.Editor
 
         public void BuildUI(VisualElement root)
         {
-            root.Add(Section("Pi tech XR DevKit", el =>
+            root.Add(DevkitTheme.Section("Pi tech XR DevKit", el =>
             {
                 if (DevkitContext.SidebarLogo != null)
                 {
@@ -21,28 +21,8 @@ namespace Pitech.XR.Core.Editor
                     el.Add(img);
                 }
                 el.Add(new Label($"Version: {DevkitContext.Version}"));
-                el.Add(new Label("© Pi tech"));
+                el.Add(new Label(" Pi tech"));
             }));
-        }
-
-        static VisualElement Section(string title, System.Action<VisualElement> fill)
-        {
-            var box = new VisualElement
-            {
-                style =
-                {
-                    backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
-                    paddingTop = 10, paddingBottom = 10, paddingLeft = 10, paddingRight = 10,
-                    marginBottom = 10, borderTopLeftRadius = 6, borderTopRightRadius = 6,
-                    borderBottomLeftRadius = 6, borderBottomRightRadius = 6
-                }
-            };
-            var label = new Label(title) { style = { unityFontStyleAndWeight = FontStyle.Bold, marginBottom = 6 } };
-            box.Add(label);
-            var content = new VisualElement();
-            box.Add(content);
-            fill?.Invoke(content);
-            return box;
         }
     }
 }

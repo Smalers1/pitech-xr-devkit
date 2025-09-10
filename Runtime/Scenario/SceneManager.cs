@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Playables;
 using Pitech.XR.Stats;
@@ -39,17 +40,66 @@ namespace Pitech.XR.Scenario
 
         IEnumerator Run()
         {
-            if (!scenario || scenario.steps == null) yield break;
+            if (!scenario || scenario.steps == null || scenario.steps.Count == 0) yield break;
 
+            var guidToIndex = new Dictionary<string, int>();
             for (int i = 0; i < scenario.steps.Count; i++)
             {
-                StepIndex = i;
-                var s = scenario.steps[i];
-                if (s == null) continue;
+                var st = scenario.steps[i];
+                if (st != null && !string.IsNullOrEmpty(st.guid))
+                    guidToIndex[st.guid] = i;
+            }
 
-                if (s is TimelineStep tl) yield return RunTimeline(tl);
-                else if (s is CueCardsStep cc) yield return RunCueCards(cc);
-                else if (s is QuestionStep q) yield return RunQuestion(q);
+            var visited = new HashSet<int>();
+            int idx = 0;
+
+            while (idx >= 0 && idx < scenario.steps.Count)
+            {
+                if (!visited.Add(idx))
+                {
+                    Debug.LogWarning("Scenario encountered a loop. Aborting run.");
+                    yield break;
+                }
+
+                StepIndex = idx;
+                var s = scenario.steps[idx];
+                if (s == null)
+                {
+                    idx++;
+                    continue;
+                }
+
+                string nextGuid = null;
+
+                if (s is TimelineStep tl)
+                {
+                    yield return RunTimeline(tl);
+                    nextGuid = tl.nextGuid;
+                }
+                else if (s is CueCardsStep cc)
+                {
+                    yield return RunCueCards(cc);
+                    nextGuid = cc.nextGuid;
+                }
+                else if (s is QuestionStep q)
+                {
+                    yield return RunQuestion(q, g => nextGuid = g);
+                }
+
+                if (!string.IsNullOrEmpty(nextGuid))
+                {
+                    if (guidToIndex.TryGetValue(nextGuid, out var nextIdx))
+                        idx = nextIdx;
+                    else
+                    {
+                        Debug.LogWarning($"Next GUID '{nextGuid}' not found. Proceeding sequentially.");
+                        idx++;
+                    }
+                }
+                else
+                {
+                    idx++;
+                }
             }
         }
 
@@ -229,7 +279,7 @@ namespace Pitech.XR.Scenario
             else go.SetActive(visible);
         }
 
-        IEnumerator RunQuestion(QuestionStep q)
+        IEnumerator RunQuestion(QuestionStep q, System.Action<string> onPicked)
         {
             Choice picked = null;
             System.Action cleanup = () => { };
@@ -262,6 +312,8 @@ namespace Pitech.XR.Scenario
 
             if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
             cleanup();
+
+            onPicked?.Invoke(picked != null ? picked.nextGuid : null);
         }
     }
 }

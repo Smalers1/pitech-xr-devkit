@@ -13,10 +13,47 @@ namespace Pitech.XR.Stats
         [SerializeField] Entry[] entries;
 
         Dictionary<StatKey, Entry> table;
-        void Ensure() { if (table != null) return; table = new(); foreach (var e in entries) table[e.key] = e; }
+        void Ensure()
+        {
+            if (table != null) return;
+            table = new();
+            if (entries == null)
+            {
+                Debug.LogWarning("StatsConfig entries are null");
+                return;
+            }
+            foreach (var e in entries)
+            {
+                if (!table.TryAdd(e.key, e))
+                    Debug.LogWarning($"Duplicate StatKey {e.key} in StatsConfig");
+            }
+        }
 
-        public float GetDefault(StatKey k) { Ensure(); return table[k].defaultValue; }
-        public Vector2 GetRange(StatKey k) { Ensure(); var e = table[k]; return new Vector2(e.min, e.max); }
+        public float GetDefault(StatKey k)
+        {
+            Ensure();
+            if (table.TryGetValue(k, out var e)) return e.defaultValue;
+            Debug.LogWarning($"Default value for {k} not found");
+            return 0f;
+        }
+
+        public Vector2 GetRange(StatKey k)
+        {
+            return TryGetRange(k, out var range) ? range : Vector2.zero;
+        }
+
+        public bool TryGetRange(StatKey k, out Vector2 range)
+        {
+            Ensure();
+            if (table.TryGetValue(k, out var e))
+            {
+                range = new Vector2(e.min, e.max);
+                return true;
+            }
+            Debug.LogWarning($"Range for {k} not found");
+            range = default;
+            return false;
+        }
         public IEnumerable<KeyValuePair<StatKey, Entry>> All() { Ensure(); return table; }
     }
 
@@ -56,8 +93,25 @@ namespace Pitech.XR.Stats
 
         public float this[StatKey k]
         {
-            get => v[k];
-            set { var old = v[k]; if (Mathf.Approximately(old, value)) return; v[k] = value; OnChanged?.Invoke(k, old, value); }
+            get
+            {
+                if (v.TryGetValue(k, out var val)) return val;
+                Debug.LogWarning($"Stat '{k}' not found");
+                return 0f;
+            }
+            set
+            {
+                if (!v.TryGetValue(k, out var old))
+                {
+                    Debug.LogWarning($"Stat '{k}' not found; initializing");
+                    v[k] = value;
+                    OnChanged?.Invoke(k, 0f, value);
+                    return;
+                }
+                if (Mathf.Approximately(old, value)) return;
+                v[k] = value;
+                OnChanged?.Invoke(k, old, value);
+            }
         }
     }
 }
