@@ -1,3 +1,4 @@
+// Test comment: verifying commit through assistant.
 namespace Pitech.XR.Core
 {
     public interface IXRService { void Initialize(); void Shutdown(); }
