@@ -7,12 +7,9 @@ namespace Pitech.XR.Scenario
 {
     public class SceneManager : MonoBehaviour
     {
-        [Header("Scenario")]
-        public Scenario scenario;
-
-        [Header("Stats")]
-        public StatsConfig statsConfig;
-        public StatsUIController statsUI;
+        [HideInInspector] [SerializeField] private Scenario scenario;
+        [HideInInspector] [SerializeField] private Pitech.XR.Stats.StatsUIController statsUI;
+        [HideInInspector] [SerializeField] private Pitech.XR.Stats.StatsConfig statsConfig;
 
         [Header("Start")]
         public bool autoStart = true;
