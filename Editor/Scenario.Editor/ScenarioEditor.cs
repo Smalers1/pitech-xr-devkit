@@ -28,7 +28,6 @@ namespace Pitech.XR.Scenario.Editor
             if (target == null) return;
             stepsProp = serializedObject.FindProperty("steps");
             titleProp = serializedObject.FindProperty("title");
-            titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 11 };
         }
 
         void BuildList()
@@ -108,6 +107,8 @@ namespace Pitech.XR.Scenario.Editor
             if (target == null) return;
 
             serializedObject.UpdateIfRequiredOrScript();
+            if (titleStyle == null)
+                titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12 };
             if (stepsProp == null) { FindProps(); BuildList(); }
 
             // --- NEW: Scenario Title block (first) ---
