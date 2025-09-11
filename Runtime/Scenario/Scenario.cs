@@ -102,6 +102,10 @@ namespace Pitech.XR.Scenario
     [DisallowMultipleComponent]
     public class Scenario : MonoBehaviour
     {
+        // human–friendly name for this scenario (used in inspectors, logs, dashboards)
+        [SerializeField, Tooltip("Human-friendly name for this scenario")]
+        private string title = "Main Scenario";
+        public string Title => title;
         [SerializeReference] public List<Step> steps = new();
 
         void OnValidate()
@@ -114,6 +118,9 @@ namespace Pitech.XR.Scenario
             foreach (var s in steps)
                 if (s != null && string.IsNullOrEmpty(s.guid))
                     s.guid = Guid.NewGuid().ToString();
+            if (!string.IsNullOrEmpty(title) && gameObject.name == "Scenario")
+                gameObject.name = title;
         }
+
     }
 }

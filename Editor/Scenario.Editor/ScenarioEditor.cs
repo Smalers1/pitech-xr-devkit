@@ -13,6 +13,7 @@ namespace Pitech.XR.Scenario.Editor
     public class ScenarioEditor : UnityEditor.Editor
     {
         SerializedProperty stepsProp;
+        SerializedProperty titleProp;
         ReorderableList list;
         GUIStyle titleStyle;
 
@@ -26,6 +27,7 @@ namespace Pitech.XR.Scenario.Editor
         {
             if (target == null) return;
             stepsProp = serializedObject.FindProperty("steps");
+            titleProp = serializedObject.FindProperty("title");
             titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 11 };
         }
 
@@ -107,6 +109,25 @@ namespace Pitech.XR.Scenario.Editor
 
             serializedObject.UpdateIfRequiredOrScript();
             if (stepsProp == null) { FindProps(); BuildList(); }
+
+            // --- NEW: Scenario Title block (first) ---
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                var bold = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12 };
+                EditorGUILayout.LabelField("Scenario Title", bold);
+
+                if (titleProp != null)
+                {
+                    EditorGUI.BeginChangeCheck();
+                    var newTitle = EditorGUILayout.TextField(GUIContent.none, titleProp.stringValue);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        titleProp.stringValue = newTitle;
+                        serializedObject.ApplyModifiedProperties();
+                    }
+                }
+            }
+            EditorGUILayout.Space(4);
 
             var sc = target as Runtime.Scenario;
             if (sc != null && sc.steps != null)
