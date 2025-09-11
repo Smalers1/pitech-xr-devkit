@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -10,41 +11,52 @@ namespace Pitech.XR.Core.Editor
 
         public void BuildUI(VisualElement root)
         {
-            root.Add(Section("Utilities", el =>
-            {
-                el.Add(new Label("Project scaffolding, addressables helpers, prefabs, etc. (coming soon)."));
-            }));
+            // Scene Categories
             {
                 var section = DevkitTheme.Section("Scene Categories");
                 section.Add(DevkitTheme.Body("Create tidy root groups in the active scene: Lighting, Scene Managers, Environment, Interactables, Timelines, UI, Audio, VFX, Cameras and Debug.", dim: true));
-
-                var actions = DevkitWidgets.Actions(
-                    DevkitTheme.Primary("Open", SceneCategoriesWindow.Open)
-                );
                 section.Add(DevkitTheme.VSpace(6));
-                section.Add(actions);
+                section.Add(DevkitWidgets.Actions(
+                    DevkitTheme.Primary("Open", SceneCategoriesWindow.Open)
+                ));
                 root.Add(section);
             }
-        }
 
-        static VisualElement Section(string title, System.Action<VisualElement> fill)
-        {
-            var box = new VisualElement
+            // Managers
             {
-                style =
-                {
-                    backgroundColor = new Color(0.13f, 0.15f, 0.18f, 1f),
-                    paddingTop = 10, paddingBottom = 10, paddingLeft = 10, paddingRight = 10,
-                    marginBottom = 10, borderTopLeftRadius = 6, borderTopRightRadius = 6,
-                    borderBottomLeftRadius = 6, borderBottomRightRadius = 6
-                }
-            };
-            var label = new Label(title) { style = { unityFontStyleAndWeight = FontStyle.Bold, marginBottom = 6 } };
-            box.Add(label);
-            var content = new VisualElement();
-            box.Add(content);
-            fill?.Invoke(content);
-            return box;
+                var mgr = new SceneManagerService();
+                var section = DevkitTheme.Section("Managers");
+                section.Add(DevkitTheme.Body("Quickly create common managers under the '--- SCENE MANAGERS ---' root.", dim: true));
+                section.Add(DevkitTheme.VSpace(6));
+                section.Add(DevkitWidgets.Actions(
+                    DevkitTheme.Secondary("Create Scene Manager", mgr.CreateSceneManager),
+                    DevkitTheme.Secondary("Create StatsUIController", mgr.CreateStatsUIController)
+                ));
+                root.Add(section);
+            }
+
+            // Stats
+            {
+                var stats = new StatsService();
+                var section = DevkitTheme.Section("Stats");
+                section.Add(DevkitTheme.Body("Create a StatsConfig asset in the selected folder.", dim: true));
+                section.Add(DevkitTheme.VSpace(6));
+                section.Add(DevkitWidgets.Actions(
+                    DevkitTheme.Primary("Create StatsConfig asset", stats.CreateConfig)
+                ));
+                root.Add(section);
+            }
+
+            // Utilities
+            {
+                var section = DevkitTheme.Section("Utilities");
+                var row = DevkitTheme.Row();
+                row.Add(DevkitTheme.Secondary("Open Package Manager", () => EditorApplication.ExecuteMenuItem("Window/Package Manager")));
+                row.Add(DevkitTheme.VSpace(6));
+                row.Add(DevkitTheme.Secondary("Reimport All", () => AssetDatabase.ImportAsset("Assets", ImportAssetOptions.ForceUpdate)));
+                section.Add(row);
+                root.Add(section);
+            }
         }
     }
 }

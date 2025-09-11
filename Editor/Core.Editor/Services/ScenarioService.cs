@@ -2,12 +2,30 @@
 using System;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Pitech.XR.Core.Editor
 {
     internal sealed class ScenarioService
     {
+        const string ManagersRootName = "--- SCENE MANAGERS ---";
+
+        static Transform EnsureManagersRoot()
+        {
+            var s = SceneManager.GetActiveScene();
+            if (!s.IsValid() || !s.isLoaded) return null;
+            var root = s.GetRootGameObjects().FirstOrDefault(g => g.name == ManagersRootName);
+            if (!root)
+            {
+                root = new GameObject(ManagersRootName);
+                Undo.RegisterCreatedObjectUndo(root, "Create scene root");
+                EditorSceneManager.MarkSceneDirty(s);
+            }
+            return root.transform;
+        }
+
         public void CreateScenarioGameObject()
         {
             var t = AppDomain.CurrentDomain.GetAssemblies()
@@ -16,7 +34,12 @@ namespace Pitech.XR.Core.Editor
                                           x.FullName == "Pitech.XR.ScenarioKit.Scenario" ||
                                           x.Name == "Scenario");
             if (t == null) { EditorUtility.DisplayDialog("Scenario", "Scenario component not found.", "OK"); return; }
-            var go = new GameObject("Scenario"); Undo.RegisterCreatedObjectUndo(go, "Create Scenario"); go.AddComponent(t);
+
+            var parent = EnsureManagersRoot();
+            var go = new GameObject("Scenario");
+            Undo.RegisterCreatedObjectUndo(go, "Create Scenario");
+            go.AddComponent(t);
+            if (parent) go.transform.SetParent(parent, false);
             Selection.activeGameObject = go;
         }
 

@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -75,93 +75,64 @@ namespace Pitech.XR.Core.Editor
                 pct.pickingMode = PickingMode.Ignore;   // ignore mouse
                 track.Add(pct);
 
-
                 status.Add(track);
                 status.Add(DevkitTheme.VSpace(6));
                 status.Add(DevkitTheme.Body("Green means you are good to go. Use the cards to fix anything missing.", dim: true));
-
                 root.Add(status);
             }
 
-
-
-
-
-
-            // ===== KPI row (cards) =====
-            {
-                var grid = DevkitTheme.Row();
-                var (fOk, fTotal, _) = health.CheckFolders();
-                var (rOk, rTotal, _) = health.CheckSceneRoots();
-                var (sOk, sTotal, _) = health.CheckSettings();
-                grid.Add(DevkitWidgets.Kpi("Folders", $"{fOk}/{fTotal}", fOk == fTotal ? "Complete" : "Missing some"));
-                grid.Add(DevkitWidgets.Kpi("Scene roots", $"{rOk}/{rTotal}", rOk > 0 ? "Present" : "None"));
-                grid.Add(DevkitWidgets.Kpi("Settings", $"{sOk}/{sTotal}", sOk == sTotal ? "OK" : "Needs fixes"));
-                root.Add(grid);
-            }
-
-            // ===== Tiles =====
-            // ===== Project Setup =====
-            var section = DevkitTheme.Section("Project Setup");
+            // ===== Project Setup (2×2 grid): Folders | Scene, Settings | Scenario =====
             {
                 var psvc = new ProjectSetupService();
-                var ssvc = new ScenarioService();
-                var stsvc = new StatsService();
+                var scen = new ScenarioService();
+                var mgr = new SceneManagerService();
 
-                // new two-column grid
+                var section = DevkitTheme.Section("Project Setup");
                 var grid = DevkitWidgets.CardGridTwoCol(out var colL, out var colR);
 
-                // Left column cards
+                // Row 1 — left: Folders
                 colL.Add(DevkitWidgets.Card(
                     "Folders",
                     "Scaffold Assets with recommended subfolders.",
-                    DevkitWidgets.Actions(DevkitTheme.Primary("Create project folders", psvc.SetupFolders))
+                    DevkitWidgets.Actions(
+                        DevkitTheme.Primary("Create project folders", psvc.SetupFolders)
+                    )
                 ));
 
-                colL.Add(DevkitWidgets.Card(
-                    "Settings",
-                    "Linear color space, Force Text and visible meta files.",
-                    DevkitWidgets.Actions(DevkitTheme.Secondary("Apply recommended settings", health.FixRecommended))
-                ));
-
-                // Right column cards
+                // Row 1 — right: Scene
                 colR.Add(DevkitWidgets.Card(
                     "Scene",
                     "Prepare a clean starting scene structure.",
                     DevkitWidgets.Actions(
                         DevkitTheme.Secondary("Create Main scene", psvc.CreateMainScene),
-                        DevkitTheme.Secondary("Create Scene Categories�", SceneCategoriesWindow.Open)
+                        DevkitTheme.Secondary("Create Scene Categories…", SceneCategoriesWindow.Open),
+                        DevkitTheme.Secondary("Create Scene Manager", mgr.CreateSceneManager)
                     )
                 ));
 
-                colR.Add(DevkitWidgets.Card(
-                    "Stats",
-                    "Create a StatsConfig in the selected folder.",
-                    DevkitWidgets.Actions(DevkitTheme.Primary("Create StatsConfig asset", stsvc.CreateConfig))
+                // Row 2 — left: Settings
+                colL.Add(DevkitWidgets.Card(
+                    "Settings",
+                    "Linear color space, Force Text and visible meta files.",
+                    DevkitWidgets.Actions(
+                        DevkitTheme.Secondary("Apply recommended settings", health.FixRecommended)
+                    )
                 ));
 
-                // Optional: a full-width card below (spans both columns)
-                var scenarioCard = DevkitWidgets.Card(
+                // Row 2 — right: Scenario
+                colR.Add(DevkitWidgets.Card(
                     "Scenario",
                     "Runtime object and authoring graph.",
                     DevkitWidgets.Actions(
-                        DevkitTheme.Secondary("Create Scenario GameObject", ssvc.CreateScenarioGameObject),
-                        DevkitTheme.Secondary("Open Scenario Graph", ssvc.OpenGraph)
+                        DevkitTheme.Secondary("Create Scenario GameObject", scen.CreateScenarioGameObject),
+                        DevkitTheme.Secondary("Open Scenario Graph", scen.OpenGraph)
                     )
-                );
-                // make it span both by adding after the grid
+                ));
+
                 section.Add(grid);
-                section.Add(scenarioCard);
+                root.Add(section);
             }
-
-
-            root.Add(section);
-
-
-
         }
-
-
     }
 }
 #endif
