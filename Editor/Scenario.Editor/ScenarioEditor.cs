@@ -97,7 +97,7 @@ namespace Pitech.XR.Scenario.Editor
 
             using (new EditorGUILayout.VerticalScope(Styles.InfoBox))
             {
-                // Title row
+                // Title
                 EditorGUILayout.LabelField("Scenario Title", Styles.HeaderTitle);
 
                 if (titleProp != null)
@@ -109,7 +109,6 @@ namespace Pitech.XR.Scenario.Editor
                         titleProp.stringValue = newTitle;
                         serializedObject.ApplyModifiedProperties();
 
-                        // keep GameObject name in sync if it was the default
                         if (sc && !string.IsNullOrEmpty(newTitle) && sc.gameObject.name == "Scenario")
                         {
                             sc.gameObject.name = newTitle;
@@ -118,13 +117,29 @@ namespace Pitech.XR.Scenario.Editor
                     }
                 }
 
-                // Quick actions
-                EditorGUILayout.Space(2);
+                // Full-width CTA, no clipping + light blue
+                EditorGUILayout.Space(4);
+                var r = GUILayoutUtility.GetRect(
+                    GUIContent.none, Styles.BigButton, GUILayout.Height(34), GUILayout.ExpandWidth(true)
+                );
+
+                // Light blue + white text
+                var prevBg = GUI.backgroundColor;
+                var prevCt = GUI.contentColor;
+                GUI.backgroundColor = new Color(0.55f, 0.72f, 1.00f); // lighter blue
+                GUI.contentColor = Color.white;
+
+                if (GUI.Button(r, "★  Open Scenario Graph", Styles.BigButton))
+                    ScenarioGraphWindow.Open(sc);
+
+                GUI.contentColor = prevCt;
+                GUI.backgroundColor = prevBg;
+
+
+                // Secondary actions on a separate right-aligned row
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (GUILayout.Button("Open Graph", Styles.Primary, GUILayout.Height(22)))
-                        ScenarioGraphWindow.Open(sc);
-
+                    GUILayout.FlexibleSpace();
                     if (GUILayout.Button("Ping", Styles.Mid, GUILayout.Height(22)))
                         EditorGUIUtility.PingObject(sc);
 
@@ -142,6 +157,8 @@ namespace Pitech.XR.Scenario.Editor
         }
 
 
+
+
         // ================== Reorderable List ==================
 
         void BuildList()
@@ -150,10 +167,14 @@ namespace Pitech.XR.Scenario.Editor
 
             list = new ReorderableList(serializedObject, stepsProp, true, true, true, true);
 
+            // when you build the list
             list.drawHeaderCallback = r =>
             {
-                EditorGUI.LabelField(r, "Steps (Timeline → Cue Cards → Question → …)", Styles.Bold);
+                // add a little inset so it lines up with the list body
+                var rr = new Rect(r.x + 6, r.y, r.width - 12, r.height);
+                EditorGUI.LabelField(rr, "Steps (Timeline → Cue Cards → Question → …)", Styles.Bold);
             };
+
 
             list.onAddDropdownCallback = (rect, _) =>
             {
@@ -231,10 +252,6 @@ namespace Pitech.XR.Scenario.Editor
             // badge
             var badge = new Rect(left.xMax + 4, r.y + 1, 82, r.height - 2);
             Styles.DrawBadge(badge, kind);
-
-            // right: title
-            var title = new Rect(badge.xMax + 6, r.y, r.xMax - (badge.xMax + 6), r.height);
-            EditorGUI.LabelField(title, kind, Styles.Bold);
         }
 
         void AddStep(Type t)
@@ -422,6 +439,7 @@ namespace Pitech.XR.Scenario.Editor
 
             public static readonly Color RowEven = cRowEven;
             public static readonly Color RowOdd = cRowOdd;
+            public static readonly GUIStyle BigButton;
 
             static Styles()
             {
@@ -444,6 +462,31 @@ namespace Pitech.XR.Scenario.Editor
                 {
                     padding = new RectOffset(8, 8, 8, 8)
                 };
+                BigButton = new GUIStyle(EditorStyles.miniButton)
+                {
+                    // let the layout height we request be used
+                    fixedHeight = 0,
+                    stretchHeight = true,
+
+                    // make it feel like a “primary” button
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 14,
+                    fontStyle = FontStyle.Bold,
+
+                    // extra vertical padding so text never clips
+                    padding = new RectOffset(18, 18, 9, 9),
+
+                    // a bit more outer space so it doesn’t look squeezed
+                    margin = new RectOffset(8, 8, 4, 8),
+
+                    // keep the label visible and centered
+                    wordWrap = false,
+                    clipping = TextClipping.Overflow,
+
+                    // nudge text down one pixel (prevents top-edge cut on some DPIs)
+                    contentOffset = new Vector2(0, 1)
+                };
+
             }
 
             public static void DrawHeaderBackground(Rect r)
