@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Playables;
@@ -42,7 +42,7 @@ namespace Pitech.XR.Scenario
         [Tooltip("UI objects for each card (order matters)")]
         public GameObject[] cards;
 
-        [Tooltip("Cue Times (sec) = max seconds each card stays before auto-advance if player doesn’t tap. " +
+        [Tooltip("Cue Times (sec) = max seconds each card stays before auto-advance if player doesnâ€™t tap. " +
                  "Length can be 1 (applies to all) or match the number of cards. Leave empty for tap-only.")]
         public float[] cueTimes;
 
@@ -102,7 +102,7 @@ namespace Pitech.XR.Scenario
     [DisallowMultipleComponent]
     public class Scenario : MonoBehaviour
     {
-        // human–friendly name for this scenario (used in inspectors, logs, dashboards)
+        // humanâ€“friendly name for this scenario (used in inspectors, logs, dashboards)
         [SerializeField, Tooltip("Human-friendly name for this scenario")]
         private string title = "Main Scenario";
         public string Title => title;

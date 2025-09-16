@@ -15,12 +15,31 @@ namespace Pitech.XR.Scenario.Editor
         SerializedProperty stepsProp;
         SerializedProperty titleProp;
         ReorderableList list;
-        GUIStyle titleStyle;
+
+        // foldout prefs (persist per user)
+        const string FoldStepsKey = "pitech.xr.scenario.fold.steps";
+        const string FoldRoutingKey = "pitech.xr.scenario.fold.routing";
+        const string FoldValidationKey = "pitech.xr.scenario.fold.validation";
+
+        bool foldSteps;
+        bool foldRouting;
+        bool foldValidation;
 
         void OnEnable()
         {
             FindProps();
             BuildList();
+
+            foldSteps = EditorPrefs.GetBool(FoldStepsKey, true);
+            foldRouting = EditorPrefs.GetBool(FoldRoutingKey, true);
+            foldValidation = EditorPrefs.GetBool(FoldValidationKey, true);
+        }
+
+        void OnDisable()
+        {
+            EditorPrefs.SetBool(FoldStepsKey, foldSteps);
+            EditorPrefs.SetBool(FoldRoutingKey, foldRouting);
+            EditorPrefs.SetBool(FoldValidationKey, foldValidation);
         }
 
         void FindProps()
@@ -30,6 +49,101 @@ namespace Pitech.XR.Scenario.Editor
             titleProp = serializedObject.FindProperty("title");
         }
 
+        public override void OnInspectorGUI()
+        {
+            if (target == null) return;
+
+            serializedObject.UpdateIfRequiredOrScript();
+            if (stepsProp == null) FindProps();
+            if (list == null) BuildList();
+
+            // TOP BAR
+            DrawTopBar();
+
+            // AUTHORING HINT
+            using (new EditorGUILayout.VerticalScope(Styles.InfoBox))
+            {
+                EditorGUILayout.LabelField("Authoring", Styles.Bold);
+                EditorGUILayout.LabelField("• Timeline: assign the scene PlayableDirector", Styles.Small);
+                EditorGUILayout.LabelField("• Cue Cards: add cards and Cue Times (sec). Empty = tap only", Styles.Small);
+                EditorGUILayout.LabelField("• Question: set Panel Root, Animator and Buttons then add Effects", Styles.Small);
+            }
+
+            // STEPS SECTION
+            foldSteps = Styles.Section("Steps", foldSteps, () =>
+            {
+                if (list != null) list.DoLayoutList();
+            });
+
+            // ROUTING SECTION
+            var sc = target as Runtime.Scenario;
+            foldRouting = Styles.Section("Routing (quick links)", foldRouting, () =>
+            {
+                DrawRouting(sc);
+            });
+
+            // VALIDATION
+            foldValidation = Styles.Section("Validation", foldValidation, () =>
+            {
+                DrawValidation(sc);
+            });
+
+            serializedObject.ApplyModifiedProperties();
+        }
+
+        void DrawTopBar()
+        {
+            var sc = target as Runtime.Scenario;
+
+            using (new EditorGUILayout.VerticalScope(Styles.InfoBox))
+            {
+                // Title row
+                EditorGUILayout.LabelField("Scenario Title", Styles.HeaderTitle);
+
+                if (titleProp != null)
+                {
+                    EditorGUI.BeginChangeCheck();
+                    string newTitle = EditorGUILayout.TextField(GUIContent.none, titleProp.stringValue);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        titleProp.stringValue = newTitle;
+                        serializedObject.ApplyModifiedProperties();
+
+                        // keep GameObject name in sync if it was the default
+                        if (sc && !string.IsNullOrEmpty(newTitle) && sc.gameObject.name == "Scenario")
+                        {
+                            sc.gameObject.name = newTitle;
+                            EditorUtility.SetDirty(sc);
+                        }
+                    }
+                }
+
+                // Quick actions
+                EditorGUILayout.Space(2);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("Open Graph", Styles.Primary, GUILayout.Height(22)))
+                        ScenarioGraphWindow.Open(sc);
+
+                    if (GUILayout.Button("Ping", Styles.Mid, GUILayout.Height(22)))
+                        EditorGUIUtility.PingObject(sc);
+
+                    if (GUILayout.Button("Clear Nulls", Styles.Mid, GUILayout.Height(22)))
+                    {
+                        if (sc?.steps != null)
+                        {
+                            for (int i = sc.steps.Count - 1; i >= 0; i--)
+                                if (sc.steps[i] == null) sc.steps.RemoveAt(i);
+                            EditorUtility.SetDirty(sc);
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // ================== Reorderable List ==================
+
         void BuildList()
         {
             if (stepsProp == null) return;
@@ -37,7 +151,9 @@ namespace Pitech.XR.Scenario.Editor
             list = new ReorderableList(serializedObject, stepsProp, true, true, true, true);
 
             list.drawHeaderCallback = r =>
-                EditorGUI.LabelField(r, "Steps (Timeline → Cue Cards → Question → …)");
+            {
+                EditorGUI.LabelField(r, "Steps (Timeline → Cue Cards → Question → …)", Styles.Bold);
+            };
 
             list.onAddDropdownCallback = (rect, _) =>
             {
@@ -55,7 +171,18 @@ namespace Pitech.XR.Scenario.Editor
                     return EditorGUIUtility.singleLineHeight * 2 + 12;
 
                 float inner = EditorGUI.GetPropertyHeight(p, true);
-                return inner + EditorGUIUtility.singleLineHeight + 8;
+                // extra for header
+                return inner + EditorGUIUtility.singleLineHeight + 10;
+            };
+
+            list.drawElementBackgroundCallback = (rect, index, active, focused) =>
+            {
+                // zebra rows
+                if (Event.current.type == EventType.Repaint)
+                {
+                    var c = (index % 2 == 0) ? Styles.RowEven : Styles.RowOdd;
+                    EditorGUI.DrawRect(rect, c);
+                }
             };
 
             list.drawElementCallback = (rect, index, active, focused) =>
@@ -64,10 +191,10 @@ namespace Pitech.XR.Scenario.Editor
 
                 if (el == null || el.managedReferenceValue == null)
                 {
-                    var header = new Rect(rect.x, rect.y + 2, rect.width, EditorGUIUtility.singleLineHeight);
-                    EditorGUI.LabelField(header, $"{index:00}. <missing step>", titleStyle);
-                    var fix = new Rect(rect.x, header.y + header.height + 4, rect.width, EditorGUIUtility.singleLineHeight);
-                    if (GUI.Button(fix, "Remove null entry"))
+                    var header = new Rect(rect.x + 4, rect.y + 4, rect.width - 8, EditorGUIUtility.singleLineHeight);
+                    EditorGUI.LabelField(header, $"{index:00}. <missing step>", Styles.Muted);
+                    var fix = new Rect(rect.x + 4, header.y + header.height + 3, rect.width - 8, EditorGUIUtility.singleLineHeight);
+                    if (GUI.Button(fix, "Remove null entry", Styles.Mid))
                     {
                         stepsProp.DeleteArrayElementAtIndex(index);
                         serializedObject.ApplyModifiedProperties();
@@ -76,21 +203,38 @@ namespace Pitech.XR.Scenario.Editor
                 }
 
                 string full = el.managedReferenceFullTypename ?? "";
-                string label =
-                    full.Contains(nameof(Runtime.TimelineStep)) ? $"{index:00}. Timeline" :
-                    full.Contains(nameof(Runtime.CueCardsStep)) ? $"{index:00}. Cue Cards" :
-                    full.Contains(nameof(Runtime.QuestionStep)) ? $"{index:00}. Question" :
-                    $"{index:00}. Step";
+                string kind =
+                    full.Contains(nameof(Runtime.TimelineStep)) ? "Timeline" :
+                    full.Contains(nameof(Runtime.CueCardsStep)) ? "Cue Cards" :
+                    full.Contains(nameof(Runtime.QuestionStep)) ? "Question" :
+                    "Step";
 
-                var header2 = new Rect(rect.x, rect.y + 2, rect.width, EditorGUIUtility.singleLineHeight);
-                EditorGUI.LabelField(header2, label, titleStyle);
+                // Header line with badge
+                var header2 = new Rect(rect.x + 4, rect.y + 4, rect.width - 8, EditorGUIUtility.singleLineHeight);
+                DrawStepHeader(header2, index, kind);
 
+                // Body
                 var body = new Rect(
-                    rect.x, header2.y + header2.height + 4,
-                    rect.width, EditorGUI.GetPropertyHeight(el, true));
+                    rect.x + 4, header2.y + header2.height + 3,
+                    rect.width - 8, EditorGUI.GetPropertyHeight(el, true));
 
                 EditorGUI.PropertyField(body, el, GUIContent.none, true);
             };
+        }
+
+        void DrawStepHeader(Rect r, int index, string kind)
+        {
+            // left: index
+            var left = new Rect(r.x, r.y, 50, r.height);
+            EditorGUI.LabelField(left, $"{index:00}", Styles.Index);
+
+            // badge
+            var badge = new Rect(left.xMax + 4, r.y + 1, 82, r.height - 2);
+            Styles.DrawBadge(badge, kind);
+
+            // right: title
+            var title = new Rect(badge.xMax + 6, r.y, r.xMax - (badge.xMax + 6), r.height);
+            EditorGUI.LabelField(title, kind, Styles.Bold);
         }
 
         void AddStep(Type t)
@@ -98,81 +242,22 @@ namespace Pitech.XR.Scenario.Editor
             serializedObject.Update();
             int i = stepsProp.arraySize;
             stepsProp.InsertArrayElementAtIndex(i);
-            stepsProp.GetArrayElementAtIndex(i).managedReferenceValue = Activator.CreateInstance(t);
+            var el = stepsProp.GetArrayElementAtIndex(i);
+            el.managedReferenceValue = Activator.CreateInstance(t);
             serializedObject.ApplyModifiedProperties();
         }
 
-        public override void OnInspectorGUI()
-        {
-            if (target == null) return;
-
-            serializedObject.UpdateIfRequiredOrScript();
-            if (titleStyle == null)
-                titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12 };
-            if (stepsProp == null) { FindProps(); BuildList(); }
-
-            // --- NEW: Scenario Title block (first) ---
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-            {
-                var bold = new GUIStyle(EditorStyles.boldLabel) { fontSize = 12 };
-                EditorGUILayout.LabelField("Scenario Title", bold);
-
-                if (titleProp != null)
-                {
-                    EditorGUI.BeginChangeCheck();
-                    var newTitle = EditorGUILayout.TextField(GUIContent.none, titleProp.stringValue);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        titleProp.stringValue = newTitle;
-                        serializedObject.ApplyModifiedProperties();
-                    }
-                }
-            }
-            EditorGUILayout.Space(4);
-
-            var sc = target as Runtime.Scenario;
-            if (sc != null && sc.steps != null)
-            {
-                for (int i = sc.steps.Count - 1; i >= 0; i--)
-                    if (sc.steps[i] == null)
-                    {
-                        sc.steps.RemoveAt(i);
-                        EditorUtility.SetDirty(sc);
-                    }
-            }
-
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.HelpBox(
-                "Authoring:\n" +
-                "• Timeline: assign the scene PlayableDirector\n" +
-                "• Cue Cards: add cards and Cue Times (sec, max per card). Leave empty for tap-only\n" +
-                "• Question: assign Panel root, Animator and Buttons then add StatEffects on each button",
-                MessageType.Info);
-
-            using (new EditorGUILayout.VerticalScope(GUILayout.Width(150)))
-            {
-                GUILayout.Space(2);
-                if (GUILayout.Button("Open Scenario Graph", GUILayout.Height(24)))
-                    ScenarioGraphWindow.Open(sc);
-            }
-            EditorGUILayout.EndHorizontal();
-
-            if (list == null) BuildList();
-            if (list != null) list.DoLayoutList();
-
-            serializedObject.ApplyModifiedProperties();
-
-            DrawRouting(sc);
-            DrawValidation(sc);
-        }
+        // ================== Routing ==================
 
         void DrawRouting(Runtime.Scenario sc)
         {
-            if (!sc || sc.steps == null || sc.steps.Count == 0) return;
+            if (!sc || sc.steps == null || sc.steps.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No steps yet.", MessageType.Info);
+                return;
+            }
 
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Routing (quick links)", EditorStyles.boldLabel);
-
+            // build names/guids
             var names = new List<string> { "(next in list)" };
             var guids = new List<string> { "" };
 
@@ -191,95 +276,221 @@ namespace Pitech.XR.Scenario.Editor
                 return EditorGUILayout.Popup(idx, names.ToArray());
             }
 
+            // per step rows, boxed
             for (int i = 0; i < sc.steps.Count; i++)
             {
                 var s = sc.steps[i];
                 if (s == null) continue;
 
-                if (s is Runtime.TimelineStep tl)
+                using (new EditorGUILayout.VerticalScope(Styles.OuterBox))
                 {
-                    EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField($"{i:00} Timeline", GUILayout.Width(120));
-                    int choice = Popup(tl.nextGuid);
-                    string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
-                    if (newGuid != tl.nextGuid) { Undo.RecordObject(sc, "Route Change"); tl.nextGuid = newGuid; EditorUtility.SetDirty(sc); }
-                    EditorGUILayout.EndHorizontal();
-                }
-                else if (s is Runtime.CueCardsStep cc)
-                {
-                    EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField($"{i:00} Cue Cards", GUILayout.Width(120));
-                    int choice = Popup(cc.nextGuid);
-                    string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
-                    if (newGuid != cc.nextGuid) { Undo.RecordObject(sc, "Route Change"); cc.nextGuid = newGuid; EditorUtility.SetDirty(sc); }
-                    EditorGUILayout.EndHorizontal();
-                }
-                else if (s is Runtime.QuestionStep q)
-                {
-                    EditorGUILayout.LabelField($"{i:00} Question", EditorStyles.boldLabel);
-                    if (q.choices == null || q.choices.Count == 0) { EditorGUILayout.LabelField("  (no choices)"); continue; }
+                    EditorGUILayout.LabelField($"{i:00}  {s.Kind}", Styles.Bold);
 
-                    for (int c = 0; c < q.choices.Count; c++)
+                    if (s is Runtime.TimelineStep tl)
                     {
-                        var ch = q.choices[c];
-                        if (ch == null) continue;
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Label("Next", GUILayout.Width(60));
+                            int choice = Popup(tl.nextGuid);
+                            string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                            if (newGuid != tl.nextGuid)
+                            {
+                                Undo.RecordObject(sc, "Route Change");
+                                tl.nextGuid = newGuid;
+                                EditorUtility.SetDirty(sc);
+                            }
+                        }
+                    }
+                    else if (s is Runtime.CueCardsStep cc)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Label("Next", GUILayout.Width(60));
+                            int choice = Popup(cc.nextGuid);
+                            string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                            if (newGuid != cc.nextGuid)
+                            {
+                                Undo.RecordObject(sc, "Route Change");
+                                cc.nextGuid = newGuid;
+                                EditorUtility.SetDirty(sc);
+                            }
+                        }
+                    }
+                    else if (s is Runtime.QuestionStep q)
+                    {
+                        if (q.choices == null || q.choices.Count == 0)
+                        {
+                            EditorGUILayout.LabelField("No choices", Styles.Muted);
+                        }
+                        else
+                        {
+                            for (int c = 0; c < q.choices.Count; c++)
+                            {
+                                var ch = q.choices[c];
+                                if (ch == null) continue;
 
-                        EditorGUILayout.BeginHorizontal();
-                        EditorGUILayout.LabelField($"  Choice {c}", GUILayout.Width(120));
-                        int choice = Popup(ch.nextGuid);
-                        string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
-                        if (newGuid != ch.nextGuid) { Undo.RecordObject(sc, "Route Change"); ch.nextGuid = newGuid; EditorUtility.SetDirty(sc); }
-                        EditorGUILayout.EndHorizontal();
+                                using (new EditorGUILayout.HorizontalScope())
+                                {
+                                    GUILayout.Label($"Choice {c}", GUILayout.Width(80));
+                                    int choice = Popup(ch.nextGuid);
+                                    string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                                    if (newGuid != ch.nextGuid)
+                                    {
+                                        Undo.RecordObject(sc, "Route Change");
+                                        ch.nextGuid = newGuid;
+                                        EditorUtility.SetDirty(sc);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
+        // ================== Validation ==================
+
         void DrawValidation(Runtime.Scenario sc)
         {
             if (sc == null || sc.steps == null) return;
-            EditorGUILayout.Space();
+            int warnings = 0;
 
             for (int i = 0; i < sc.steps.Count; i++)
             {
                 var s = sc.steps[i];
                 if (s == null)
                 {
-                    EditorGUILayout.HelpBox($"Step {i}: is null (remove it).", MessageType.Warning);
+                    Styles.Warn($"Step {i}: is null (remove it).");
+                    warnings++;
                     continue;
                 }
 
                 if (s is Runtime.TimelineStep tl)
                 {
-                    if (!tl.director)
-                        EditorGUILayout.HelpBox($"Step {i}: Timeline has no Director.", MessageType.Warning);
+                    if (!tl.director) { Styles.Warn($"Step {i}: Timeline has no Director."); warnings++; }
                 }
                 else if (s is Runtime.CueCardsStep cc)
                 {
                     if (cc.cards == null || cc.cards.Length == 0)
-                        EditorGUILayout.HelpBox($"Step {i}: Cue Cards has no cards.", MessageType.Warning);
+                    { Styles.Warn($"Step {i}: Cue Cards has no cards."); warnings++; }
 
                     if (cc.cueTimes != null && cc.cueTimes.Length > 1 &&
                         (cc.cards == null || cc.cueTimes.Length != cc.cards.Length))
-                        EditorGUILayout.HelpBox($"Step {i}: Cue Times should be 1 or match cards count. Extra cards use the last time.", MessageType.Info);
+                        Styles.Info($"Step {i}: Cue Times 1 value (all cards) or match card count.");
                 }
                 else if (s is Runtime.QuestionStep q)
                 {
                     if (!q.panelRoot)
-                        EditorGUILayout.HelpBox($"Step {i}: Question has no Panel Root.", MessageType.Warning);
+                    { Styles.Warn($"Step {i}: Question has no Panel Root."); warnings++; }
 
                     if (q.choices == null || q.choices.Count == 0)
-                        EditorGUILayout.HelpBox($"Step {i}: Question has no choices.", MessageType.Warning);
+                    { Styles.Warn($"Step {i}: Question has no choices."); warnings++; }
                     else
+                    {
                         for (int c = 0; c < q.choices.Count; c++)
                             if (q.choices[c] != null && !q.choices[c].button)
-                                EditorGUILayout.HelpBox($"Step {i} Choice {c}: Button not set.", MessageType.Info);
+                            { Styles.Info($"Step {i} Choice {c}: Button not set."); }
+                    }
                 }
             }
+
+            if (warnings == 0)
+                EditorGUILayout.HelpBox("No blocking issues found.", MessageType.None);
+        }
+
+        // ================== Styles ==================
+
+        static class Styles
+        {
+            // palette (dark UI)
+            static readonly Color cHeader = new Color(0.12f, 0.14f, 0.17f);
+            static readonly Color cRowEven = new Color(0.16f, 0.18f, 0.22f);
+            static readonly Color cRowOdd = new Color(0.14f, 0.16f, 0.19f);
+            static readonly Color cBadgeTimeline = new Color(0.20f, 0.42f, 0.85f);
+            static readonly Color cBadgeCards = new Color(0.32f, 0.62f, 0.32f);
+            static readonly Color cBadgeQuestion = new Color(0.76f, 0.45f, 0.22f);
+
+            public static readonly GUIStyle HeaderTitle;
+            public static readonly GUIStyle Bold;
+            public static readonly GUIStyle Small;
+            public static readonly GUIStyle Muted;
+            public static readonly GUIStyle Index;
+            public static readonly GUIStyle Primary;
+            public static readonly GUIStyle Mid;
+            public static readonly GUIStyle OuterBox;
+            public static readonly GUIStyle InfoBox;
+
+            public static readonly Color RowEven = cRowEven;
+            public static readonly Color RowOdd = cRowOdd;
+
+            static Styles()
+            {
+                HeaderTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 13 };
+
+                Bold = new GUIStyle(EditorStyles.boldLabel);
+                Small = new GUIStyle(EditorStyles.label) { fontSize = 10, wordWrap = true };
+                Muted = new GUIStyle(EditorStyles.label) { normal = { textColor = new Color(0.8f, 0.82f, 0.86f, 0.8f) } };
+                Index = new GUIStyle(EditorStyles.boldLabel) { alignment = TextAnchor.MiddleLeft };
+
+                Primary = new GUIStyle(EditorStyles.miniButton);
+                Mid = new GUIStyle(EditorStyles.miniButton);
+
+                OuterBox = new GUIStyle("HelpBox")
+                {
+                    padding = new RectOffset(8, 8, 6, 6)
+                };
+
+                InfoBox = new GUIStyle("HelpBox")
+                {
+                    padding = new RectOffset(8, 8, 8, 8)
+                };
+            }
+
+            public static void DrawHeaderBackground(Rect r)
+            {
+                EditorGUI.DrawRect(r, cHeader);
+                var bottom = new Rect(r.x, r.yMax - 1, r.width, 1);
+                EditorGUI.DrawRect(bottom, new Color(0, 0, 0, 0.35f));
+            }
+
+            public static bool Section(string title, bool open, Action drawBody)
+            {
+                var rect = GUILayoutUtility.GetRect(0, 26, GUILayout.ExpandWidth(true));
+                EditorGUI.DrawRect(rect, new Color(0.11f, 0.12f, 0.15f));
+
+                var foldRect = new Rect(rect.x + 6, rect.y + 4, rect.width - 12, rect.height - 8);
+                open = EditorGUI.Foldout(foldRect, open, title, true, HeaderTitle);
+
+                if (open)
+                {
+                    using (new EditorGUILayout.VerticalScope(OuterBox))
+                    {
+                        EditorGUILayout.Space(2);
+                        drawBody?.Invoke();
+                    }
+                }
+
+                return open;
+            }
+
+            public static void DrawBadge(Rect r, string kind)
+            {
+                var col = cBadgeTimeline;
+                if (kind == "Cue Cards") col = cBadgeCards;
+                else if (kind == "Question") col = cBadgeQuestion;
+
+                var bg = new Rect(r.x, r.y, r.width, r.height);
+                EditorGUI.DrawRect(bg, col);
+                var txt = new Rect(r.x + 6, r.y, r.width - 12, r.height);
+                EditorGUI.LabelField(txt, kind, new GUIStyle(EditorStyles.whiteBoldLabel) { alignment = TextAnchor.MiddleLeft });
+            }
+
+            public static void Warn(string msg) => EditorGUILayout.HelpBox(msg, MessageType.Warning);
+            public static void Info(string msg) => EditorGUILayout.HelpBox(msg, MessageType.Info);
         }
     }
 
-    // -------- Custom drawers (hide guid/graphPos/nextGuid) --------
+    // -------- Custom drawers (unchanged, just organized) --------
 
     [CustomPropertyDrawer(typeof(Runtime.TimelineStep))]
     class TimelineStepDrawer : PropertyDrawer

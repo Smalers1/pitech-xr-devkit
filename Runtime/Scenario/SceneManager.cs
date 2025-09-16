@@ -1,264 +1,316 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.Playables;
+using UnityEngine.UI;
 using Pitech.XR.Stats;
 
 namespace Pitech.XR.Scenario
 {
+    [AddComponentMenu("Pi tech XR/Scenario/Scene Manager")]
     public class SceneManager : MonoBehaviour
     {
-        [HideInInspector] [SerializeField] private Scenario scenario;
-        [HideInInspector] [SerializeField] private Pitech.XR.Stats.StatsUIController statsUI;
-        [HideInInspector] [SerializeField] private Pitech.XR.Stats.StatsConfig statsConfig;
-
-        [Header("Start")]
+        [Header("Scenario")]
+        public Scenario scenario;
         public bool autoStart = true;
 
+        [Header("Stats (optional)")]
+        public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
+
+        /// Current step index while running. -1 when idle or finished
         public int StepIndex { get; private set; } = -1;
-        public StatsRuntime Runtime { get; private set; } = new();
+
+        Coroutine _run;
+        readonly List<(Button btn, UnityAction fn)> _wired = new();
+        string _nextGuidFromChoice;
 
         void Awake()
         {
-            Runtime.Reset(statsConfig);
-            if (statsUI) statsUI.Init(Runtime);
+            if (runtime == null) runtime = new StatsRuntime();
+            DeactivateAllVisuals(); // nothing interactable before we start
         }
 
         void Start()
         {
-            if (autoStart) StartCoroutine(Run());
+            if (autoStart) Restart();
         }
 
         public void Restart()
         {
-            StopAllCoroutines();
-            StartCoroutine(Run());
+            if (_run != null) StopCoroutine(_run);
+            _run = StartCoroutine(Run());
         }
 
         IEnumerator Run()
         {
-            if (!scenario || scenario.steps == null) yield break;
+            if (scenario == null || scenario.steps == null || scenario.steps.Count == 0)
+                yield break;
 
-            for (int i = 0; i < scenario.steps.Count; i++)
+            int idx = 0;
+
+            while (idx >= 0 && idx < scenario.steps.Count)
             {
-                StepIndex = i;
-                var s = scenario.steps[i];
-                if (s == null) continue;
+                StepIndex = idx;
+                var step = scenario.steps[idx];
+                if (step == null) { idx++; continue; }
 
-                if (s is TimelineStep tl) yield return RunTimeline(tl);
-                else if (s is CueCardsStep cc) yield return RunCueCards(cc);
-                else if (s is QuestionStep q) yield return RunQuestion(q);
-            }
-        }
+                // make sure only visuals of the current step can be seen or clicked
+                DeactivateAllVisuals();
 
-        IEnumerator RunTimeline(TimelineStep s)
-        {
-            var d = s.director;
-            if (!d) yield break;
+                string branchGuid = null;
 
-            if (s.rewindOnEnter) d.time = 0;
-            d.Play();
-
-            if (s.waitForEnd)
-                while (d.state == PlayState.Playing) yield return null;
-        }
-
-        IEnumerator RunCueCards(CueCardsStep s)
-        {
-            int count = s.cards != null ? s.cards.Length : 0;
-            if (count == 0) yield break;
-
-            var fade = s.fadeCurve ?? AnimationCurve.EaseInOut(0, 0, 1, 1);
-            var scale = s.scaleCurve ?? AnimationCurve.EaseInOut(0, 0, 1, 1);
-
-            for (int i = 0; i < count; i++)
-            {
-                var go = s.cards[i];
-                if (!go) continue;
-                var cg = go.GetComponent<CanvasGroup>() ?? go.AddComponent<CanvasGroup>();
-                cg.alpha = 0;
-                go.SetActive(false);
-                var rt = go.GetComponent<RectTransform>();
-                if (rt) rt.localScale = Vector3.one;
-            }
-
-            SetVisible(s.extraObject, false, s.useRenderersForExtra);
-            if (s.tapHint) s.tapHint.SetActive(false);
-
-            var d = s.director;
-            if (d && d.state != PlayState.Playing) d.Play();
-            double prevTime = d ? d.time : 0.0f;
-
-            int cur = -1;
-            bool animating = false;
-            float curElapsed = 0f;
-
-            float TimeFor(int idx)
-            {
-                if (s.cueTimes == null || s.cueTimes.Length == 0) return 9999f;
-                if (s.cueTimes.Length == 1) return Mathf.Max(0f, s.cueTimes[0]);
-                if (idx >= 0 && idx < s.cueTimes.Length) return Mathf.Max(0f, s.cueTimes[idx]);
-                return s.cueTimes[^1];
-            }
-
-            IEnumerator FadeIn(int idx)
-            {
-                animating = true;
-                var go = s.cards[idx];
-                if (!go) { animating = false; yield break; }
-
-                var cg = go.GetComponent<CanvasGroup>();
-                var rt = go.GetComponent<RectTransform>();
-                go.SetActive(true);
-                go.transform.SetAsLastSibling();
-                cg.alpha = 0;
-
-                Vector3 startScale = Vector3.one * (s.popScale > 1f ? 1f / s.popScale : 1f);
-                if (rt) rt.localScale = startScale;
-
-                float t = 0, dur = Mathf.Max(0.0001f, s.fadeDuration);
-                while (t < dur)
+                if (step is TimelineStep tl)
                 {
-                    t += Time.deltaTime;
-                    float k = Mathf.Clamp01(t / dur);
-                    cg.alpha = fade.Evaluate(k);
-
-                    if (rt && s.popScale > 1f)
-                    {
-                        float ks = Mathf.Clamp01(t / Mathf.Max(0.0001f, s.popDuration));
-                        float sc = Mathf.Lerp(startScale.x, 1f, scale.Evaluate(ks));
-                        rt.localScale = new Vector3(sc, sc, 1f);
-                    }
-                    yield return null;
+                    yield return RunTimeline(tl);
+                    branchGuid = tl.nextGuid;
                 }
-                cg.alpha = 1f; if (rt) rt.localScale = Vector3.one;
-
-                if (s.extraObject && idx == s.extraShowAtIndex)
-                    SetVisible(s.extraObject, true, s.useRenderersForExtra);
-
-                animating = false;
-            }
-
-            IEnumerator FadeOut(int idx)
-            {
-                animating = true;
-                var go = idx >= 0 && idx < count ? s.cards[idx] : null;
-                if (go)
+                else if (step is CueCardsStep cc)
                 {
-                    var cg = go.GetComponent<CanvasGroup>();
-                    float t = 0, dur = Mathf.Max(0.0001f, s.fadeDuration);
-                    float start = cg.alpha;
-                    while (t < dur)
-                    {
-                        t += Time.deltaTime;
-                        float k = Mathf.Clamp01(t / dur);
-                        cg.alpha = Mathf.Lerp(start, 0f, fade.Evaluate(k));
-                        yield return null;
-                    }
-                    cg.alpha = 0f;
-                    go.SetActive(false);
+                    yield return RunCueCards(cc);
+                    branchGuid = cc.nextGuid;
                 }
-                animating = false;
-            }
-
-            if (s.autoShowFirst)
-            {
-                cur = 0;
-                yield return FadeIn(cur);
-                if (s.tapHint) s.tapHint.SetActive(true);
-            }
-
-            while (true)
-            {
-                float dt;
-                if (d)
+                else if (step is QuestionStep q)
                 {
-                    double now = d.time;
-                    dt = Mathf.Max(0f, (float)(now - prevTime));
-                    prevTime = now;
+                    _nextGuidFromChoice = null;
+                    yield return RunQuestion(q);
+                    branchGuid = _nextGuidFromChoice; // null or ""
                 }
-                else dt = Time.deltaTime;
 
-                curElapsed += dt;
-
-                bool tap = GetTap() && !animating;
-                bool timeUp = cur >= 0 && curElapsed >= TimeFor(cur);
-
-                if ((tap || timeUp) && !animating)
+                // compute next index. empty guid means "next in list"
+                if (string.IsNullOrEmpty(branchGuid))
                 {
-                    if (cur >= count - 1)
-                    {
-                        if (s.tapHint) s.tapHint.SetActive(false);
-                        yield return FadeOut(cur);
-
-                        if (s.extraObject && s.hideExtraWithFinalTap)
-                            SetVisible(s.extraObject, false, s.useRenderersForExtra);
-                        break;
-                    }
-
-                    if (s.tapHint) s.tapHint.SetActive(false);
-                    yield return FadeOut(cur);
-                    cur++;
-                    curElapsed = 0f;
-                    yield return FadeIn(cur);
-                    if (s.tapHint) s.tapHint.SetActive(true);
+                    idx = idx + 1;
+                }
+                else
+                {
+                    int jump = FindIndexByGuid(branchGuid);
+                    idx = jump >= 0 ? jump : idx + 1;
                 }
 
                 yield return null;
             }
+
+            DeactivateAllVisuals();
+            StepIndex = -1;
+            _run = null;
         }
 
-        static bool GetTap()
+        int FindIndexByGuid(string guid)
         {
-            if (Input.GetMouseButtonDown(0)) return true;
-            if (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began) return true;
+            if (string.IsNullOrEmpty(guid) || scenario?.steps == null) return -1;
+            for (int i = 0; i < scenario.steps.Count; i++)
+                if (scenario.steps[i] != null && scenario.steps[i].guid == guid)
+                    return i;
+            return -1;
+        }
+
+        // ---------------- TIMELINE ----------------
+        IEnumerator RunTimeline(TimelineStep tl)
+        {
+            var d = tl.director;
+            if (!d) yield break;
+
+            if (tl.rewindOnEnter) d.time = 0;
+            d.Play();
+
+            if (tl.waitForEnd)
+            {
+                while (d.state == PlayState.Playing) yield return null;
+            }
+        }
+
+        // ---------------- CUE CARDS ----------------
+        IEnumerator RunCueCards(CueCardsStep cc)
+        {
+            var cards = cc.cards;
+            if (cards == null || cards.Length == 0) yield break;
+
+            // hide all first
+            for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
+
+            // use director only as an optional clock
+            var d = cc.director;
+            if (d && d.state != PlayState.Playing) d.Play();
+
+            // wait release so a click from a previous step does not get consumed here
+            yield return WaitForPointerRelease();
+
+            int cur = cc.autoShowFirst ? 0 : -1;
+            if (cur == 0) SafeSet(cards[cur], true);
+
+            while (true)
+            {
+                // if not auto showing the first card wait for first click to reveal it
+                if (cur < 0)
+                {
+                    yield return WaitForCleanClick();
+                    cur = 0;
+                    SafeSet(cards[cur], true);
+                }
+
+                // card timeout (0 = no timeout)
+                float timeout = 0f;
+                if (cc.cueTimes != null && cc.cueTimes.Length > 0)
+                    timeout = (cc.cueTimes.Length == 1) ? cc.cueTimes[0]
+                              : (cur < cc.cueTimes.Length ? cc.cueTimes[cur] : 0f);
+
+                // wait for click or timeout
+                float t = 0f;
+                while (true)
+                {
+                    if (JustClicked()) break;
+
+                    if (timeout > 0f)
+                    {
+                        if (d && d.state != PlayState.Playing) break;
+                        t += Time.deltaTime;
+                        if (t >= timeout) break;
+                    }
+
+                    yield return null;
+                }
+
+                // consume click so it does not skip next card
+                yield return WaitForPointerRelease();
+
+                // advance
+                SafeSet(cards[cur], false);
+
+                if (cur >= cards.Length - 1) break;
+
+                cur++;
+                SafeSet(cards[cur], true);
+            }
+
+            // all off at end
+            for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
+        }
+
+        // ---------------- QUESTION ----------------
+        IEnumerator RunQuestion(QuestionStep q)
+        {
+            // show and enable only now
+            if (q.panelRoot) q.panelRoot.gameObject.SetActive(true);
+            if (q.panelAnimator && !string.IsNullOrEmpty(q.showTrigger))
+                q.panelAnimator.SetTrigger(q.showTrigger);
+
+            _wired.Clear();
+            _nextGuidFromChoice = null;
+
+            if (q.choices != null)
+            {
+                for (int i = 0; i < q.choices.Count; i++)
+                {
+                    int idx = i;
+                    var choice = q.choices[idx];
+                    if (choice == null || choice.button == null) continue;
+
+                    UnityAction fn = () =>
+                    {
+                        // apply stat effects if any
+                        if (runtime != null && choice.effects != null)
+                        {
+                            foreach (var eff in choice.effects)
+                            {
+                                if (eff == null) continue;
+                                var cur = runtime[eff.key];
+                                var nxt = eff.Apply(cur);
+                                runtime[eff.key] = nxt;
+                            }
+                        }
+
+                        _nextGuidFromChoice = choice.nextGuid;
+
+                        // hide
+                        if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
+                            q.panelAnimator.SetTrigger(q.hideTrigger);
+                        else if (q.panelRoot)
+                            q.panelRoot.gameObject.SetActive(false);
+                    };
+
+                    choice.button.onClick.AddListener(fn);
+                    _wired.Add((choice.button, fn));
+                }
+            }
+
+            // wait for a click only. no auto advance. user must choose
+            while (string.IsNullOrEmpty(_nextGuidFromChoice))
+                yield return null;
+
+            // remove listeners to avoid double fires later
+            if (_wired.Count > 0)
+            {
+                foreach (var (btn, fn) in _wired) if (btn) btn.onClick.RemoveListener(fn);
+                _wired.Clear();
+            }
+
+            // make sure panel is not left active
+            if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
+
+            // debounce so the click that chose the option does not also click the next step
+            yield return WaitForPointerRelease();
+        }
+
+        // ---------------- helpers ----------------
+        static bool AnyPointerDown()
+        {
+            if (Input.GetMouseButton(0)) return true;
+            if (Input.touchCount > 0)
+            {
+                for (int i = 0; i < Input.touchCount; i++)
+                {
+                    var ph = Input.GetTouch(i).phase;
+                    if (ph == TouchPhase.Began || ph == TouchPhase.Moved || ph == TouchPhase.Stationary) return true;
+                }
+            }
             return false;
         }
 
-        static void SetVisible(GameObject go, bool visible, bool byRenderers)
+        static bool JustClicked()
         {
-            if (!go) return;
-            if (byRenderers)
-            {
-                foreach (var r in go.GetComponentsInChildren<Renderer>(true)) r.enabled = visible;
-                var cg = go.GetComponentInChildren<CanvasGroup>(true);
-                if (cg) cg.alpha = visible ? 1f : 0f;
-            }
-            else go.SetActive(visible);
+            if (Input.GetMouseButtonDown(0)) return true;
+            for (int i = 0; i < Input.touchCount; i++)
+                if (Input.GetTouch(i).phase == TouchPhase.Began) return true;
+            return false;
         }
 
-        IEnumerator RunQuestion(QuestionStep q)
+        static IEnumerator WaitForPointerRelease()
         {
-            Choice picked = null;
-            System.Action cleanup = () => { };
-            foreach (var c in q.choices)
+            // wait until there is no mouse button held and no active touch
+            while (AnyPointerDown()) yield return null;
+        }
+
+        static IEnumerator WaitForCleanClick()
+        {
+            // wait for the next press then release (debounced)
+            while (!JustClicked()) yield return null;
+            while (AnyPointerDown()) yield return null;
+        }
+
+        static void SafeSet(GameObject go, bool on)
+        {
+            if (go && go.activeSelf != on) go.SetActive(on);
+        }
+
+        /// Disable all visuals of all steps so nothing is interactable until its turn
+        void DeactivateAllVisuals()
+        {
+            if (scenario?.steps == null) return;
+
+            foreach (var s in scenario.steps)
             {
-                if (!c.button) continue;
-                UnityEngine.Events.UnityAction h = () => { picked = c; };
-                c.button.onClick.AddListener(h);
-                cleanup += () => c.button.onClick.RemoveListener(h);
+                if (s is CueCardsStep cc && cc.cards != null)
+                {
+                    foreach (var card in cc.cards) SafeSet(card, false);
+                    if (cc.extraObject) SafeSet(cc.extraObject, false);
+                    if (cc.tapHint) SafeSet(cc.tapHint, false);
+                }
+                else if (s is QuestionStep q)
+                {
+                    if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false);
+                }
             }
-
-            if (q.panelRoot) q.panelRoot.gameObject.SetActive(true);
-            if (q.panelAnimator && !string.IsNullOrEmpty(q.showTrigger)) q.panelAnimator.SetTrigger(q.showTrigger);
-
-            while (picked == null) yield return null;
-
-            foreach (var eff in picked.effects)
-            {
-                float cur = Runtime[eff.key];
-                float next = Mathf.Clamp(eff.Apply(cur),
-                    statsConfig.GetRange(eff.key).x,
-                    statsConfig.GetRange(eff.key).y);
-                Runtime[eff.key] = next;
-            }
-
-            if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
-                q.panelAnimator.SetTrigger(q.hideTrigger);
-            else
-                yield return new WaitForSeconds(q.fallbackHideSeconds);
-
-            if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
-            cleanup();
         }
     }
 }
