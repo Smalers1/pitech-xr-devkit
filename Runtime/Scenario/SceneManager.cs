@@ -15,6 +15,9 @@ namespace Pitech.XR.Scenario
         public Scenario scenario;
         public bool autoStart = true;
 
+        public StatsUIController statsUI;
+        public StatsConfig statsConfig;
+
         [Header("Stats (optional)")]
         public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
 
@@ -27,9 +30,20 @@ namespace Pitech.XR.Scenario
 
         void Awake()
         {
-            if (runtime == null) runtime = new StatsRuntime();
-            DeactivateAllVisuals(); // nothing interactable before we start
+            // Ensure we always have a runtime instance
+            if (runtime == null)
+                runtime = new StatsRuntime();
+
+            // If you want to *optionally* pass config/UI to the runtime or UI,
+            // do it only if your classes actually expose those members.
+            // (Leave these commented unless such APIs exist in your Stats package.)
+            //
+            // if (statsConfig != null) runtime.Config = statsConfig;   // <- only if there is a property/field
+            // if (statsUI != null)      statsUI.Runtime = runtime;     // <- only if there is a property/field
+
+            DeactivateAllVisuals();
         }
+
 
         void Start()
         {
@@ -111,14 +125,42 @@ namespace Pitech.XR.Scenario
             var d = tl.director;
             if (!d) yield break;
 
-            if (tl.rewindOnEnter) d.time = 0;
-            d.Play();
-
-            if (tl.waitForEnd)
+            // Proper rewind
+            if (tl.rewindOnEnter)
             {
-                while (d.state == PlayState.Playing) yield return null;
+                d.time = 0;
+                d.Evaluate();           // ensure graph jumps to t=0 immediately
             }
+
+            d.Play();
+            yield return null;          // let it start this frame
+
+            if (!tl.waitForEnd)
+                yield break;
+
+            bool done = false;
+            void OnStopped(PlayableDirector _) => done = true;
+            d.stopped += OnStopped;
+
+            // Fallback polling: treat as finished when we’re at/after duration
+            // and it's not looping (or state stopped playing).
+            const double Eps = 1e-3;
+            while (!done)
+            {
+                // if timeline is not looping and we've reached (or passed) the end
+                bool atEnd = d.duration > 0 &&
+                             d.extrapolationMode != DirectorWrapMode.Loop &&
+                             d.time >= d.duration - Eps;
+
+                if (atEnd || d.state != PlayState.Playing)
+                    done = true;
+
+                yield return null;
+            }
+
+            d.stopped -= OnStopped;
         }
+
 
         // ---------------- CUE CARDS ----------------
         IEnumerator RunCueCards(CueCardsStep cc)

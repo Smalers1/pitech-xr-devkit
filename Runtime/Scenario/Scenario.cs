@@ -90,7 +90,7 @@ namespace Pitech.XR.Scenario
         public Animator panelAnimator;
         public string showTrigger = "Show";
         public string hideTrigger = "Hide";
-        public float fallbackHideSeconds = 0.3f;
+        public float fallbackHideSeconds = 50f;
 
         [Header("Choices")]
         public List<Choice> choices = new();

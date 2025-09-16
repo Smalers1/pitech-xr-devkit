@@ -48,6 +48,14 @@ namespace Pitech.XR.Scenario.Editor
             stepsProp = serializedObject.FindProperty("steps");
             titleProp = serializedObject.FindProperty("title");
         }
+        static Rect InsetLikeHelpBox(Rect r)
+        {
+            // Use the same margins Unity applies to "HelpBox"
+            var m = EditorStyles.helpBox.margin;
+            r.x += m.left;
+            r.width -= (m.left + m.right);
+            return r;
+        }
 
         public override void OnInspectorGUI()
         {
@@ -157,8 +165,6 @@ namespace Pitech.XR.Scenario.Editor
         }
 
 
-
-
         // ================== Reorderable List ==================
 
         void BuildList()
@@ -170,10 +176,12 @@ namespace Pitech.XR.Scenario.Editor
             // when you build the list
             list.drawHeaderCallback = r =>
             {
-                // add a little inset so it lines up with the list body
-                var rr = new Rect(r.x + 6, r.y, r.width - 12, r.height);
-                EditorGUI.LabelField(rr, "Steps (Timeline → Cue Cards → Question → …)", Styles.Bold);
+                // Align with SectionBox content rect
+                r.x += Styles.SectionBox.padding.left;
+                r.width -= Styles.SectionBox.padding.horizontal;
+                EditorGUI.LabelField(r, "Create Steps (Example: Timeline → Cue Cards → Question → …)", Styles.Bold);
             };
+
 
 
             list.onAddDropdownCallback = (rect, _) =>
@@ -240,7 +248,21 @@ namespace Pitech.XR.Scenario.Editor
                     rect.width - 8, EditorGUI.GetPropertyHeight(el, true));
 
                 EditorGUI.PropertyField(body, el, GUIContent.none, true);
+
+                // tiny remove button on the right of the header line
+                var xRect = new Rect(rect.xMax - 22, rect.y + 2, 18, EditorGUIUtility.singleLineHeight - 2);
+                if (GUI.Button(xRect, "✕", EditorStyles.miniButton))
+                    RemoveStepAt(index);
             };
+
+            // allow removing any row, not just the last
+            list.onCanRemoveCallback = l => l.count > 0;
+
+            list.onRemoveCallback = l =>
+            {
+                RemoveStepAt(l.index);
+            };
+
         }
 
         void DrawStepHeader(Rect r, int index, string kind)
@@ -262,6 +284,29 @@ namespace Pitech.XR.Scenario.Editor
             var el = stepsProp.GetArrayElementAtIndex(i);
             el.managedReferenceValue = Activator.CreateInstance(t);
             serializedObject.ApplyModifiedProperties();
+        }
+        void RemoveStepAt(int index)
+        {
+            if (stepsProp == null) return;
+            if (index < 0 || index >= stepsProp.arraySize) return;
+
+            Undo.RecordObject(target, "Remove Step");
+
+            // First delete: clears managed reference
+            stepsProp.DeleteArrayElementAtIndex(index);
+
+            // Second delete: actually removes the array slot (needed for ManagedReference/ObjectReference)
+            if (index < stepsProp.arraySize)
+            {
+                var el = stepsProp.GetArrayElementAtIndex(index);
+                bool isManaged = el != null &&
+                                 el.propertyType == SerializedPropertyType.ManagedReference;
+                if (isManaged && el.managedReferenceValue == null)
+                    stepsProp.DeleteArrayElementAtIndex(index);
+            }
+
+            serializedObject.ApplyModifiedProperties();
+            GUI.FocusControl(null); // avoid stuck focus on a now-removed field
         }
 
         // ================== Routing ==================
@@ -426,7 +471,9 @@ namespace Pitech.XR.Scenario.Editor
             static readonly Color cBadgeTimeline = new Color(0.20f, 0.42f, 0.85f);
             static readonly Color cBadgeCards = new Color(0.32f, 0.62f, 0.32f);
             static readonly Color cBadgeQuestion = new Color(0.76f, 0.45f, 0.22f);
-
+            
+            public static readonly GUIStyle SectionBox;   // NEW: a HelpBox that wraps header+body
+            public static readonly Color HeaderBg = new Color(0.11f, 0.12f, 0.15f);
             public static readonly GUIStyle HeaderTitle;
             public static readonly GUIStyle Bold;
             public static readonly GUIStyle Small;
@@ -453,40 +500,28 @@ namespace Pitech.XR.Scenario.Editor
                 Primary = new GUIStyle(EditorStyles.miniButton);
                 Mid = new GUIStyle(EditorStyles.miniButton);
 
-                OuterBox = new GUIStyle("HelpBox")
-                {
-                    padding = new RectOffset(8, 8, 6, 6)
-                };
+                OuterBox = new GUIStyle("HelpBox") { padding = new RectOffset(8, 8, 6, 6) };
+                InfoBox = new GUIStyle("HelpBox") { padding = new RectOffset(8, 8, 8, 8) };
 
-                InfoBox = new GUIStyle("HelpBox")
-                {
-                    padding = new RectOffset(8, 8, 8, 8)
-                };
                 BigButton = new GUIStyle(EditorStyles.miniButton)
                 {
-                    // let the layout height we request be used
                     fixedHeight = 0,
                     stretchHeight = true,
-
-                    // make it feel like a “primary” button
                     alignment = TextAnchor.MiddleCenter,
                     fontSize = 14,
                     fontStyle = FontStyle.Bold,
-
-                    // extra vertical padding so text never clips
                     padding = new RectOffset(18, 18, 9, 9),
-
-                    // a bit more outer space so it doesn’t look squeezed
                     margin = new RectOffset(8, 8, 4, 8),
-
-                    // keep the label visible and centered
                     wordWrap = false,
                     clipping = TextClipping.Overflow,
-
-                    // nudge text down one pixel (prevents top-edge cut on some DPIs)
                     contentOffset = new Vector2(0, 1)
                 };
 
+                SectionBox = new GUIStyle("HelpBox")
+                {
+                    margin = EditorStyles.helpBox.margin,           // match Unity defaults
+                    padding = new RectOffset(8, 8, 8, 8)              // nice breathing room
+                };
             }
 
             public static void DrawHeaderBackground(Rect r)
@@ -496,25 +531,29 @@ namespace Pitech.XR.Scenario.Editor
                 EditorGUI.DrawRect(bottom, new Color(0, 0, 0, 0.35f));
             }
 
+            // inside ScenarioEditor
             public static bool Section(string title, bool open, Action drawBody)
             {
-                var rect = GUILayoutUtility.GetRect(0, 26, GUILayout.ExpandWidth(true));
-                EditorGUI.DrawRect(rect, new Color(0.11f, 0.12f, 0.15f));
-
-                var foldRect = new Rect(rect.x + 6, rect.y + 4, rect.width - 12, rect.height - 8);
-                open = EditorGUI.Foldout(foldRect, open, title, true, HeaderTitle);
-
-                if (open)
+                // Wrap header + body in the SAME HelpBox => no left/right bleed
+                using (new EditorGUILayout.VerticalScope(SectionBox))
                 {
-                    using (new EditorGUILayout.VerticalScope(OuterBox))
+                    // Header strip drawn INSIDE the box (respects padding)
+                    var header = GUILayoutUtility.GetRect(0, 24, GUILayout.ExpandWidth(true));
+                    EditorGUI.DrawRect(header, HeaderBg);
+
+                    var foldRect = new Rect(header.x + 15, header.y + 3, header.width - 12, header.height - 6);
+                    open = EditorGUI.Foldout(foldRect, open, title, true, HeaderTitle);
+
+                    if (open)
                     {
                         EditorGUILayout.Space(2);
                         drawBody?.Invoke();
                     }
                 }
-
                 return open;
             }
+
+
 
             public static void DrawBadge(Rect r, string kind)
             {

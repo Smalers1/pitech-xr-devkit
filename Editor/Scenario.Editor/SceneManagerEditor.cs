@@ -84,21 +84,23 @@ namespace Pitech.XR.Scenario.Editor
             {
                 EditorGUILayout.LabelField("Scenario", TitleStyle);
 
-                var hasScenario = _scenarioProp != null && _scenarioProp.objectReferenceValue != null;
+                bool hasScenario = _scenarioProp != null && _scenarioProp.objectReferenceValue != null;
 
                 if (hasScenario)
                 {
-                    // Single line: object field + Ping / Clear
-                    ObjectFieldWithPingClear(serializedObject, _scenarioProp);
+                    // Exactly like the Stats "UI Controller" row: mini caption + object field + Ping/Clear
+                    MiniCaption("Scenario");
+                    ObjectFieldWithPingClear(serializedObject, _scenarioProp, "Scenario", "Pitech.XR.Scenario");
                 }
                 else
                 {
                     EditorGUILayout.LabelField("Not added", EditorStyles.miniLabel);
-                    if (GUILayout.Button("Add Scenario (create & assign)", GUILayout.Height(24)))
+                    if (GUILayout.Button("Add Scenario (create & assign)", GUILayout.Height(22)))
                         CreateAndAssignScenario();
                 }
             }
         }
+
 
 
 
@@ -121,7 +123,7 @@ namespace Pitech.XR.Scenario.Editor
                 if (hasUI)
                 {
                     MiniCaption("UI Controller");
-                    ObjectFieldWithPingClear(serializedObject, _statsUIProp);
+                    ObjectFieldWithPingClear(serializedObject, _statsUIProp, "StatsUIController", "Pitech.XR.Stats");
                 }
                 else
                 {
@@ -133,7 +135,7 @@ namespace Pitech.XR.Scenario.Editor
                 if (hasConfig)
                 {
                     MiniCaption("Config");
-                    ObjectFieldWithPingClear(serializedObject, _statsConfigProp);
+                    ObjectFieldWithPingClear(serializedObject, _statsConfigProp, "StatsConfig", "Pitech.XR.Stats");
                 }
                 else
                 {
@@ -332,32 +334,48 @@ namespace Pitech.XR.Scenario.Editor
         }
 
         // Object field with right-aligned Ping / Clear. No label.
-        static void ObjectFieldWithPingClear(SerializedObject owner, SerializedProperty prop)
+        // Object field with right-aligned Ping / Clear. No label ever.
+        static void ObjectFieldWithPingClear(
+    SerializedObject owner,
+    SerializedProperty prop,
+    string simpleTypeName = null,
+    string ns = null)
         {
-            const float clearW = 54f;   // "Clear"
-            const float pingW = 50f;   // "Ping"
+            const float clearW = 54f;
+            const float pingW = 50f;
             const float pad = 4f;
 
             var line = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            var clear = new Rect(line.xMax - clearW, line.y, clearW, line.height);
+            var ping = new Rect(clear.x - pad - pingW, line.y, pingW, line.height);
+            var field = new Rect(line.x, line.y, ping.x - pad - line.x, line.height);
 
-            var clearR = new Rect(line.xMax - clearW, line.y, clearW, line.height);
-            var pingR = new Rect(clearR.x - pad - pingW, line.y, pingW, line.height);
-            var fieldR = new Rect(line.x, line.y, pingR.x - pad - line.x, line.height);
-
-            EditorGUI.PropertyField(fieldR, prop, GUIContent.none);
-
-            using (new EditorGUI.DisabledScope(prop.objectReferenceValue == null))
+            // Try to resolve the type by name; if missing package, use Object so we still compile.
+            Type objectType = typeof(UnityEngine.Object);
+            if (!string.IsNullOrEmpty(simpleTypeName))
             {
-                if (GUI.Button(pingR, "Ping"))
-                    EditorGUIUtility.PingObject(prop.objectReferenceValue);
+                var t = FindType(simpleTypeName, ns);
+                if (t != null) objectType = t;
             }
 
-            if (GUI.Button(clearR, "Clear"))
+            EditorGUI.BeginChangeCheck();
+            var newObj = EditorGUI.ObjectField(field, GUIContent.none, prop.objectReferenceValue, objectType, true);
+            if (EditorGUI.EndChangeCheck())
+            {
+                prop.objectReferenceValue = newObj;
+                owner.ApplyModifiedProperties();
+            }
+
+            using (new EditorGUI.DisabledScope(prop.objectReferenceValue == null))
+                if (GUI.Button(ping, "Ping")) EditorGUIUtility.PingObject(prop.objectReferenceValue);
+
+            if (GUI.Button(clear, "Clear"))
             {
                 prop.objectReferenceValue = null;
                 owner.ApplyModifiedProperties();
             }
         }
+
 
 
     }
