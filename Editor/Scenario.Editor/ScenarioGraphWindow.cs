@@ -14,12 +14,16 @@ using UnityEngine.UIElements;
 // Avoid Button clash (UGUI vs UIElements)
 using UGUIButton = UnityEngine.UI.Button;
 using UIEButton = UnityEngine.UIElements.Button;
+
 public class ScenarioGraphWindow : EditorWindow
 {
     Scenario scenario;
     ScenarioGraphView view;
     readonly Dictionary<string, StepNode> nodes = new();
     Vector2 mouseWorld;
+
+    // NEW: guard to avoid wiping links while rebuilding UI
+    bool _isLoading;
 
     [MenuItem("Pi tech/Scenario Graph")]
     public static void OpenWindow() => GetWindow<ScenarioGraphWindow>("Scenario Graph");
@@ -71,9 +75,15 @@ public class ScenarioGraphWindow : EditorWindow
         scenario = sc;
         titleContent = new GUIContent(sc ? $"Scenario Graph • {sc.gameObject.name}" : "Scenario Graph");
 
+        _isLoading = true; // begin guarded load
+
         view.ClearGraph();
         nodes.Clear();
-        if (!scenario || scenario.steps == null) return;
+        if (!scenario || scenario.steps == null)
+        {
+            _isLoading = false;
+            return;
+        }
 
         // ensure guids
         foreach (var s in scenario.steps)
@@ -86,7 +96,12 @@ public class ScenarioGraphWindow : EditorWindow
             var s = scenario.steps[i];
             if (s == null) continue;
 
-            var node = new StepNode(scenario, s, i, view, RebuildLinksFromGraph);
+            // pass a guarded rebuild callback
+            var node = new StepNode(scenario, s, i, view, () =>
+            {
+                if (!_isLoading) RebuildLinksFromGraph();
+            });
+
             var pos = s.graphPos == default ? new Vector2(80 + 340 * i, 220) : s.graphPos;
             node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
             view.AddElement(node);
@@ -101,20 +116,24 @@ public class ScenarioGraphWindow : EditorWindow
         // draw edges from persisted data
         foreach (var s in scenario.steps)
         {
-            if (s is TimelineStep tl && !string.IsNullOrEmpty(tl.nextGuid))
-                Connect(nodes[tl.guid].outNext, tl.nextGuid);
+            if (s is TimelineStep tl && !string.IsNullOrEmpty(tl.nextGuid) && nodes.TryGetValue(tl.guid, out var tlNode))
+                Connect(tlNode.outNext, tl.nextGuid);
 
-            if (s is CueCardsStep cc && !string.IsNullOrEmpty(cc.nextGuid))
-                Connect(nodes[cc.guid].outNext, cc.nextGuid);
+            if (s is CueCardsStep cc && !string.IsNullOrEmpty(cc.nextGuid) && nodes.TryGetValue(cc.guid, out var ccNode))
+                Connect(ccNode.outNext, cc.nextGuid);
 
             if (s is QuestionStep q && q.choices != null && nodes.TryGetValue(q.guid, out var src))
+            {
                 for (int c = 0; c < q.choices.Count; c++)
                 {
                     var g = q.choices[c]?.nextGuid;
                     if (!string.IsNullOrEmpty(g) && src.outChoices != null && c < src.outChoices.Count)
                         Connect(src.outChoices[c], g);
                 }
+            }
         }
+
+        _isLoading = false; // end guarded load
 
         view.FrameAll();
 
@@ -139,7 +158,7 @@ public class ScenarioGraphWindow : EditorWindow
 
     void RebuildLinksFromGraph()
     {
-        if (!scenario) return;
+        if (!scenario || _isLoading) return; // guard: do not clear while loading
 
         // clear all links
         foreach (var st in scenario.steps)
@@ -178,6 +197,7 @@ public class ScenarioGraphWindow : EditorWindow
 
     void Connect(Port src, string dstGuid)
     {
+        if (src == null) return;
         if (!nodes.TryGetValue(dstGuid, out var dstNode)) return;
         var edge = src.ConnectTo(dstNode.inPort);
         view.AddElement(edge);
@@ -403,7 +423,7 @@ public class ScenarioGraphWindow : EditorWindow
             }
 
             RefreshPorts();
-            rebuild?.Invoke(); // keep wiring data in sync if count changed
+            rebuild?.Invoke(); // will be ignored during Load thanks to guard
         }
 
         public override void SetPosition(Rect newPos)
