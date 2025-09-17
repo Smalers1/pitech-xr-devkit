@@ -31,25 +31,23 @@ namespace Pitech.XR.Scenario
 
         void Awake()
         {
+            // Only set up stats if the feature is present (UI or config).
+            // Only if feature present
             if (statsUI != null || statsConfig != null)
             {
-                if (runtime == null)
-                    runtime = new StatsRuntime();
+                if (runtime == null) runtime = new StatsRuntime();
+                if (statsConfig != null) runtime.Reset(statsConfig);      // seed defaults
 
-                // preload defaults (e.g., Money = 500)
-                if (statsConfig != null)
-                    runtime.Reset(statsConfig);
-
-                // bind UI and push current values immediately
                 if (statsUI != null)
-                    statsUI.Init(runtime, syncNow: true);
+                {
+                    if (statsConfig != null) statsUI.ApplyConfig(statsConfig, alsoSetDefaultsToUI: true); // ranges + default paint
+                    statsUI.Init(runtime, syncNow: true);                                                  // subscribe + ensure paint
+                    _statsBound = true;
+                }
             }
 
             DeactivateAllVisuals();
         }
-
-
-
 
 
 

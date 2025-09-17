@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -12,46 +12,63 @@ namespace Pitech.XR.Stats
         public class Binding
         {
             public StatKey key;
-            public TMP_Text text;
-            public Slider slider;          // optional
+            public TMP_Text text;   // optional
+            public Slider slider;  // optional
             public string format = "N0";
         }
 
+        [Tooltip("(Editor-only) If assigned, ranges are pulled from this config on validate.")]
+        [SerializeField] StatsConfig editorConfig;
+
         public List<Binding> bindings = new();
+
         readonly Dictionary<StatKey, Binding> map = new();
         readonly Dictionary<StatKey, Coroutine> anims = new();
 
         StatsRuntime runtime;
 
+        /// Call from SceneManager. syncNow=true paints current values immediately.
         public void Init(StatsRuntime rt, bool syncNow = true)
         {
             runtime = rt;
+
             map.Clear();
             foreach (var b in bindings)
                 if (b != null) map[b.key] = b;
 
-            if (runtime == null) return;
-
-            runtime.OnChanged -= AnimateTo;
-            runtime.OnChanged += AnimateTo;
-
-            if (syncNow)
+            if (runtime != null)
             {
-                foreach (var kv in map)
+                runtime.OnChanged -= AnimateTo;
+                runtime.OnChanged += AnimateTo;
+
+                if (syncNow)
                 {
-                    var key = kv.Key;
-                    var b = kv.Value;
-
-                    // 1) set slider range from config if available
-                    if (b.slider && runtime.TryGetRange(key, out var min, out var max))
+                    foreach (var kv in map)
                     {
-                        b.slider.minValue = min;
-                        b.slider.maxValue = max;
+                        var b = kv.Value;
+                        float v = 0f;
+                        try { v = runtime[kv.Key]; } catch { /* seeded by SceneManager */ }
+                        SetImmediate(b, v);
                     }
-
-                    // 2) push the current value immediately
-                    SetImmediate(b, runtime[key]);
                 }
+            }
+        }
+
+        /// Push min/max from config into any bound sliders.
+        public void ApplyConfig(StatsConfig cfg, bool alsoSetDefaultsToUI = false)
+        {
+            if (cfg == null) return;
+
+            foreach (var b in bindings)
+            {
+                if (b == null || b.slider == null) continue;
+
+                var range = cfg.GetRange(b.key); // (min,max)
+                b.slider.minValue = range.x;
+                b.slider.maxValue = range.y;
+
+                if (alsoSetDefaultsToUI)
+                    SetImmediate(b, cfg.GetDefault(b.key));
             }
         }
 
@@ -60,6 +77,15 @@ namespace Pitech.XR.Stats
             if (runtime != null) runtime.OnChanged -= AnimateTo;
         }
 
+#if UNITY_EDITOR
+        // Editor convenience: when you assign Editor Config, mirror ranges/defaults in the inspector.
+        void OnValidate()
+        {
+            if (editorConfig != null && !Application.isPlaying)
+                ApplyConfig(editorConfig, alsoSetDefaultsToUI: true);
+        }
+#endif
+
         void AnimateTo(StatKey k, float from, float to)
         {
             if (!map.TryGetValue(k, out var b)) return;
@@ -67,7 +93,7 @@ namespace Pitech.XR.Stats
             anims[k] = StartCoroutine(Anim(b, from, to));
         }
 
-        System.Collections.IEnumerator Anim(Binding b, float a, float bval)
+        IEnumerator Anim(Binding b, float a, float bval)
         {
             float t = 0f, dur = 0.5f;
             while (t < 1f)
