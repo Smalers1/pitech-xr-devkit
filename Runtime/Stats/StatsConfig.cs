@@ -48,16 +48,43 @@ namespace Pitech.XR.Stats
         readonly Dictionary<StatKey, float> v = new();
         public event Action<StatKey, float, float> OnChanged;
 
+        StatsConfig _cfg;
+
         public void Reset(StatsConfig cfg)
         {
+            _cfg = cfg;
             v.Clear();
-            foreach (var kv in cfg.All()) v[kv.Key] = kv.Value.defaultValue;
+            foreach (var kv in cfg.All())
+                v[kv.Key] = kv.Value.defaultValue;
         }
+
+        public bool TryGetRange(StatKey k, out float min, out float max)
+        {
+            if (_cfg == null) { min = 0; max = 1; return false; }
+            var r = _cfg.GetRange(k);
+            min = r.x; max = r.y;
+            return true;
+        }
+
+        public void EnsureKey(StatKey k, float initial = 0f)
+        {
+            if (!v.ContainsKey(k)) v[k] = initial;
+        }
+
+        public bool TryGet(StatKey k, out float value) => v.TryGetValue(k, out value);
 
         public float this[StatKey k]
         {
-            get => v[k];
-            set { var old = v[k]; if (Mathf.Approximately(old, value)) return; v[k] = value; OnChanged?.Invoke(k, old, value); }
+            get => v.TryGetValue(k, out var val) ? val : 0f; // no exception
+            set
+            {
+                var old = v.TryGetValue(k, out var o) ? o : 0f;
+                if (Mathf.Approximately(old, value)) return;
+                v[k] = value;
+                OnChanged?.Invoke(k, old, value);
+            }
         }
+
+
     }
 }

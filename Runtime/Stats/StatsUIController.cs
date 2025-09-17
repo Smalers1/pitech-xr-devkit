@@ -2,9 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
-#if TMP_PRESENT
 using TMPro;
-#endif
 
 namespace Pitech.XR.Stats
 {
@@ -14,25 +12,52 @@ namespace Pitech.XR.Stats
         public class Binding
         {
             public StatKey key;
-#if TMP_PRESENT
             public TMP_Text text;
-#else
-            public Text text;
-#endif
             public Slider slider;          // optional
-            public float sliderMax = 100f; // optional
             public string format = "N0";
         }
 
         public List<Binding> bindings = new();
-        Dictionary<StatKey, Binding> map = new();
-        Dictionary<StatKey, Coroutine> anims = new();
+        readonly Dictionary<StatKey, Binding> map = new();
+        readonly Dictionary<StatKey, Coroutine> anims = new();
 
-        public void Init(StatsRuntime rt)
+        StatsRuntime runtime;
+
+        public void Init(StatsRuntime rt, bool syncNow = true)
         {
+            runtime = rt;
             map.Clear();
-            foreach (var b in bindings) if (b != null) map[b.key] = b;
-            rt.OnChanged += AnimateTo;
+            foreach (var b in bindings)
+                if (b != null) map[b.key] = b;
+
+            if (runtime == null) return;
+
+            runtime.OnChanged -= AnimateTo;
+            runtime.OnChanged += AnimateTo;
+
+            if (syncNow)
+            {
+                foreach (var kv in map)
+                {
+                    var key = kv.Key;
+                    var b = kv.Value;
+
+                    // 1) set slider range from config if available
+                    if (b.slider && runtime.TryGetRange(key, out var min, out var max))
+                    {
+                        b.slider.minValue = min;
+                        b.slider.maxValue = max;
+                    }
+
+                    // 2) push the current value immediately
+                    SetImmediate(b, runtime[key]);
+                }
+            }
+        }
+
+        void OnDestroy()
+        {
+            if (runtime != null) runtime.OnChanged -= AnimateTo;
         }
 
         void AnimateTo(StatKey k, float from, float to)
@@ -42,19 +67,25 @@ namespace Pitech.XR.Stats
             anims[k] = StartCoroutine(Anim(b, from, to));
         }
 
-        IEnumerator Anim(Binding b, float a, float bval)
+        System.Collections.IEnumerator Anim(Binding b, float a, float bval)
         {
-            float t = 0, dur = 0.5f;
+            float t = 0f, dur = 0.5f;
             while (t < 1f)
             {
-                t += Time.deltaTime / dur;
+                t += Time.deltaTime / Mathf.Max(0.0001f, dur);
                 float x = Mathf.Lerp(a, bval, Mathf.SmoothStep(0, 1, t));
-                if (b.text) b.text.text = x.ToString(b.format);
-                if (b.slider) b.slider.value = Mathf.Clamp01(x / Mathf.Max(0.0001f, b.sliderMax));
+                UpdateVisuals(b, x);
                 yield return null;
             }
-            if (b.text) b.text.text = bval.ToString(b.format);
-            if (b.slider) b.slider.value = Mathf.Clamp01(bval / Mathf.Max(0.0001f, b.sliderMax));
+            SetImmediate(b, bval);
+        }
+
+        void SetImmediate(Binding b, float value) => UpdateVisuals(b, value);
+
+        void UpdateVisuals(Binding b, float value)
+        {
+            if (b.text) b.text.text = value.ToString(string.IsNullOrEmpty(b.format) ? "N0" : b.format);
+            if (b.slider) b.slider.value = Mathf.Clamp(value, b.slider.minValue, b.slider.maxValue);
         }
     }
 }

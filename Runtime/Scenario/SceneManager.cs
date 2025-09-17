@@ -17,6 +17,7 @@ namespace Pitech.XR.Scenario
 
         public StatsUIController statsUI;
         public StatsConfig statsConfig;
+        bool _statsBound;
 
         [Header("Stats (optional)")]
         public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
@@ -30,19 +31,26 @@ namespace Pitech.XR.Scenario
 
         void Awake()
         {
-            // Ensure we always have a runtime instance
-            if (runtime == null)
-                runtime = new StatsRuntime();
+            if (statsUI != null || statsConfig != null)
+            {
+                if (runtime == null)
+                    runtime = new StatsRuntime();
 
-            // If you want to *optionally* pass config/UI to the runtime or UI,
-            // do it only if your classes actually expose those members.
-            // (Leave these commented unless such APIs exist in your Stats package.)
-            //
-            // if (statsConfig != null) runtime.Config = statsConfig;   // <- only if there is a property/field
-            // if (statsUI != null)      statsUI.Runtime = runtime;     // <- only if there is a property/field
+                // preload defaults (e.g., Money = 500)
+                if (statsConfig != null)
+                    runtime.Reset(statsConfig);
+
+                // bind UI and push current values immediately
+                if (statsUI != null)
+                    statsUI.Init(runtime, syncNow: true);
+            }
 
             DeactivateAllVisuals();
         }
+
+
+
+
 
 
         void Start()
@@ -250,17 +258,32 @@ namespace Pitech.XR.Scenario
 
                     UnityAction fn = () =>
                     {
-                        // apply stat effects if any
-                        if (runtime != null && choice.effects != null)
+                        // Only do stats work if feature is present (UI or Config).
+                        if (statsUI != null || statsConfig != null)
                         {
-                            foreach (var eff in choice.effects)
+                            if (runtime == null)
+                                runtime = new StatsRuntime();   // ← no args
+
+                            // if (statsConfig != null) runtime.Apply(statsConfig); // optional
+
+                            if (statsUI != null && !_statsBound)
                             {
-                                if (eff == null) continue;
-                                var cur = runtime[eff.key];
-                                var nxt = eff.Apply(cur);
-                                runtime[eff.key] = nxt;
+                                statsUI.Init(runtime, syncNow: true);
+                                _statsBound = true;
+                            }
+
+                            if (choice.effects != null)
+                            {
+                                foreach (var eff in choice.effects)
+                                {
+                                    if (eff == null) continue;
+                                    var cur = runtime[eff.key];
+                                    var nxt = eff.Apply(cur);
+                                    runtime[eff.key] = nxt;
+                                }
                             }
                         }
+
 
                         _nextGuidFromChoice = choice.nextGuid;
 
@@ -270,6 +293,7 @@ namespace Pitech.XR.Scenario
                         else if (q.panelRoot)
                             q.panelRoot.gameObject.SetActive(false);
                     };
+
 
                     choice.button.onClick.AddListener(fn);
                     _wired.Add((choice.button, fn));
