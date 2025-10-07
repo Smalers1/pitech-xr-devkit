@@ -3,7 +3,8 @@
     "rootNamespace": "Pitech.XR.Scenario.Editor",
     "references": [
         "Pitech.XR.Scenario",
-        "Pitech.XR.Core.Editor"
+        "Pitech.XR.Core.Editor",
+        "Pitech.XR.Interactables"
     ],
     "includePlatforms": [
         "Editor"

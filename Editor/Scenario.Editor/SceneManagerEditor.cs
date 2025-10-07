@@ -18,7 +18,8 @@ namespace Pitech.XR.Scenario.Editor
         SerializedProperty _statsConfigProp;   // Pitech.XR.Stats.StatsConfig
         SerializedProperty _statsUIProp;       // Pitech.XR.Stats.StatsUIController
         SerializedProperty _autoStartProp;     // bool
-
+        SerializedProperty _selectablesProp;    // Pitech.XR.Interactables.SelectablesManager
+        SerializedProperty _selectionListsProp; // Pitech.XR.Interactables.SelectionLists
         const string ManagersRootName = "--- SCENE MANAGERS ---";
 
         // ❌ DO NOT cache EditorStyles in static fields — causes NREs on domain reload
@@ -31,6 +32,9 @@ namespace Pitech.XR.Scenario.Editor
             _statsConfigProp = serializedObject.FindProperty("statsConfig");
             _statsUIProp = serializedObject.FindProperty("statsUI");
             _autoStartProp = serializedObject.FindProperty("autoStart");
+            _selectablesProp = serializedObject.FindProperty("selectables");
+            _selectionListsProp = serializedObject.FindProperty("selectionLists");
+
         }
 
         public override void OnInspectorGUI()
@@ -49,6 +53,9 @@ namespace Pitech.XR.Scenario.Editor
             DrawScenarioFeature();
             EditorGUILayout.Space(6);
             DrawStatsFeature();
+            
+            EditorGUILayout.Space(6);
+            DrawInteractablesFeature();
 
             EditorGUILayout.Space(8);
             if (_autoStartProp != null)
@@ -145,6 +152,86 @@ namespace Pitech.XR.Scenario.Editor
             }
         }
 
+        void DrawInteractablesFeature()
+        {
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Interactables", TitleStyle);
+
+                bool hasSelMgr = _selectablesProp != null && _selectablesProp.objectReferenceValue != null;
+                bool hasSelList = _selectionListsProp != null && _selectionListsProp.objectReferenceValue != null;
+
+                if (!hasSelMgr && !hasSelList)
+                    EditorGUILayout.LabelField("Not added", EditorStyles.miniLabel);
+
+                // Selectables Manager row
+                if (hasSelMgr)
+                {
+                    MiniCaption("Selectables Manager");
+                    ObjectFieldWithPingClear(serializedObject, _selectablesProp, "SelectablesManager", "Pitech.XR.Interactables");
+                }
+                else
+                {
+                    if (GUILayout.Button("Create Selectables Manager", GUILayout.Height(22)))
+                        CreateAndAssignSelectablesManager();
+                }
+
+                // Selection Lists row
+                if (hasSelList)
+                {
+                    MiniCaption("Selection Lists");
+                    ObjectFieldWithPingClear(serializedObject, _selectionListsProp, "SelectionLists", "Pitech.XR.Interactables");
+                }
+                else
+                {
+                    if (GUILayout.Button("Create Selection Lists", GUILayout.Height(22)))
+                        CreateAndAssignSelectionLists();
+                }
+            }
+        }
+
+        void CreateAndAssignSelectablesManager()
+        {
+            var parent = EnsureManagersRoot();
+            if (!parent) return;
+
+            var t = FindType("SelectablesManager", "Pitech.XR.Interactables");
+            if (t == null) { EditorUtility.DisplayDialog("Interactables", "Type Pitech.XR.Interactables.SelectablesManager not found.", "OK"); return; }
+
+            var go = new GameObject("Selectables Manager");
+            Undo.RegisterCreatedObjectUndo(go, "Create Selectables Manager");
+            var comp = go.AddComponent(t) as Component;
+            go.transform.SetParent(parent, false);
+
+            var so = new SerializedObject(target);
+            var prop = so.FindProperty("selectables");
+            if (prop != null) { prop.objectReferenceValue = comp; so.ApplyModifiedProperties(); }
+            Selection.activeObject = go;
+        }
+
+        void CreateAndAssignSelectionLists()
+        {
+            var parent = EnsureManagersRoot();
+            if (!parent) return;
+
+            var t = FindType("SelectionLists", "Pitech.XR.Interactables");
+            if (t == null) { EditorUtility.DisplayDialog("Interactables", "Type Pitech.XR.Interactables.SelectionLists not found.", "OK"); return; }
+
+            var go = new GameObject("Selection Lists");
+            Undo.RegisterCreatedObjectUndo(go, "Create Selection Lists");
+            var comp = go.AddComponent(t) as Component;
+            go.transform.SetParent(parent, false);
+
+            // If Scene Manager already has a SelectablesManager, auto-link it
+            var sm = (Pitech.XR.Scenario.SceneManager)target;
+            var lists = comp as Pitech.XR.Interactables.SelectionLists;
+            if (lists && sm.selectables) lists.selectables = sm.selectables;
+
+            var so = new SerializedObject(target);
+            var prop = so.FindProperty("selectionLists");
+            if (prop != null) { prop.objectReferenceValue = comp; so.ApplyModifiedProperties(); }
+            Selection.activeObject = go;
+        }
 
 
         // --------------------------------------------------------------------

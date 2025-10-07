@@ -22,7 +22,10 @@ namespace Pitech.XR.Scenario
 
         [Header("Stats (optional)")]
         public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
-
+        
+        [Header("Interactables (optional)")]
+        public SelectablesManager selectables;     // the catalog of clickable colliders
+        public SelectionLists selectionLists;      // the quiz/controller using that catalog
         /// Current step index while running. -1 when idle or finished
         public int StepIndex { get; private set; } = -1;
 
@@ -47,10 +50,22 @@ namespace Pitech.XR.Scenario
                 }
             }
 
+            if (selectionLists != null)
+            {
+                if (selectionLists.selectables == null && selectables != null)
+                    selectionLists.selectables = selectables;
+            }
+            if (selectables != null)
+                selectables.pickingEnabled = false;
+
             DeactivateAllVisuals();
         }
 
-
+        // ------ Convenience bridges (so Timeline/UI can talk only to SceneManager) ------
+        public void ActivateSelectionList(int index) => selectionLists?.ActivateList(index);
+        public void ActivateSelectionListByName(string listName) => selectionLists?.ActivateListByName(listName);
+        public void CompleteSelection() => selectionLists?.CompleteActive();
+        public void RetrySelection() => selectionLists?.RetryActive();
 
         void Start()
         {
