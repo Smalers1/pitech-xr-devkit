@@ -1,0 +1,19 @@
+{
+    "name": "Pitech.XR.Interactables.Editor",
+    "rootNamespace": "Pitech.XR.Scenario.Editor",
+    "references": [
+        "GUID:2ed5af203d137d54ab36a6ee88a2b9d6",
+        "GUID:63a468054d7ceaa4c8dc0b7bd0aa1da3"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -5,6 +5,7 @@ using UnityEngine.Events;
 using UnityEngine.Playables;
 using UnityEngine.UI;
 using Pitech.XR.Stats;
+using Pitech.XR.Interactables;
 
 namespace Pitech.XR.Scenario
 {

@@ -9,7 +9,7 @@ namespace Pitech.XR.Core.Editor
     /// <summary>Shared editor context/branding helpers (static only).</summary>
     internal static class DevkitContext
     {
-        public static readonly string Version = "v0.1.0";
+        public static readonly string Version = "v0.2.0";
 
         // Title icon (tab) and sidebar logo, resolved by name (you placed them under Editor/Core/Icons)
         public static Texture2D TitleIcon => FindTextureByName("Pi tech Icon");
