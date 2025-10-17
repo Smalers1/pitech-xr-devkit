@@ -22,16 +22,18 @@ namespace Pitech.XR.Scenario
 
         [Header("Stats (optional)")]
         public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
-        
+
         [Header("Interactables (optional)")]
         public SelectablesManager selectables;     // the catalog of clickable colliders
         public SelectionLists selectionLists;      // the quiz/controller using that catalog
+
         /// Current step index while running. -1 when idle or finished
         public int StepIndex { get; private set; } = -1;
 
         Coroutine _run;
         readonly List<(Button btn, UnityAction fn)> _wired = new();
         string _nextGuidFromChoice;
+        string _nextGuidFromSelection;
 
         void Awake()
         {
@@ -111,6 +113,12 @@ namespace Pitech.XR.Scenario
                     _nextGuidFromChoice = null;
                     yield return RunQuestion(q);
                     branchGuid = _nextGuidFromChoice; // null or ""
+                }
+                else if (step is SelectionStep sel)
+                {
+                    _nextGuidFromSelection = null;
+                    yield return RunSelection(sel);
+                    branchGuid = _nextGuidFromSelection; // null or ""
                 }
 
                 // compute next index. empty guid means "next in list"
@@ -278,8 +286,6 @@ namespace Pitech.XR.Scenario
                             if (runtime == null)
                                 runtime = new StatsRuntime();   // ← no args
 
-                            // if (statsConfig != null) runtime.Apply(statsConfig); // optional
-
                             if (statsUI != null && !_statsBound)
                             {
                                 statsUI.Init(runtime, syncNow: true);
@@ -298,7 +304,6 @@ namespace Pitech.XR.Scenario
                             }
                         }
 
-
                         _nextGuidFromChoice = choice.nextGuid;
 
                         // hide
@@ -307,7 +312,6 @@ namespace Pitech.XR.Scenario
                         else if (q.panelRoot)
                             q.panelRoot.gameObject.SetActive(false);
                     };
-
 
                     choice.button.onClick.AddListener(fn);
                     _wired.Add((choice.button, fn));
@@ -330,6 +334,164 @@ namespace Pitech.XR.Scenario
 
             // debounce so the click that chose the option does not also click the next step
             yield return WaitForPointerRelease();
+        }
+
+        // ---------------- SELECTION ----------------
+        IEnumerator RunSelection(SelectionStep s)
+        {
+            // prefer the step's local reference; fall back to the manager-level field
+            var lists = s.lists != null ? s.lists : selectionLists;
+            _nextGuidFromSelection = null;
+
+            // show and enable only now
+            if (s.panelRoot) s.panelRoot.gameObject.SetActive(true);
+            if (s.panelAnimator && !string.IsNullOrEmpty(s.showTrigger))
+                s.panelAnimator.SetTrigger(s.showTrigger);
+            if (s.hint) s.hint.SetActive(true);
+
+            // Activate requested list
+            int active = -1;
+            if (lists != null)
+            {
+                if (!string.IsNullOrEmpty(s.listKey))
+                    active = lists.ShowList(s.listKey, s.resetOnEnter);
+                else
+                    active = lists.ShowList(s.listIndex, s.resetOnEnter);
+            }
+
+            if (active < 0)
+            {
+                Debug.LogWarning("[Scenario] SelectionStep: could not activate requested list. Will route WRONG.");
+                yield return HideSelectionUI(s);
+                _nextGuidFromSelection = FallbackGuid(s.wrongNextGuid);
+                yield break;
+            }
+
+            // Optional submit wiring
+            bool submitted = false;
+            UnityAction submitCb = null;
+            if (s.completion == SelectionStep.CompleteMode.OnSubmitButton && s.submitButton)
+            {
+                submitCb = () => submitted = true;
+                s.submitButton.onClick.AddListener(submitCb);
+            }
+
+            // Listen to selection changes for auto-complete mode
+            bool changed = true;
+            System.Action onChanged = () => { changed = true; };
+            lists.OnSelectionChanged += onChanged;
+
+            float t = 0f;
+            bool done = false;
+            bool isCorrect = false;
+
+            while (!done)
+            {
+                // timeout => WRONG
+                if (s.timeoutSeconds > 0f)
+                {
+                    t += Time.deltaTime;
+                    if (t >= s.timeoutSeconds)
+                    {
+                        isCorrect = false;
+                        break;
+                    }
+                }
+
+                if (s.completion == SelectionStep.CompleteMode.AutoWhenRequirementMet)
+                {
+                    if (changed)
+                    {
+                        changed = false;
+                        var e = lists.EvaluateActive();
+
+                        bool countOK = s.requireExactCount
+                            ? (e.selectedTotal == s.requiredSelections)
+                            : (e.selectedTotal >= s.requiredSelections);
+
+                        if (countOK)
+                        {
+                            bool wrongOK = e.selectedWrong <= s.allowedWrong;
+                            isCorrect = wrongOK && e.selectedCorrect > 0;
+                            done = true;
+                        }
+                    }
+                }
+                else // OnSubmitButton
+                {
+                    if (submitted)
+                    {
+                        var e = lists.EvaluateActive();
+                        bool countOK = s.requireExactCount
+                            ? (e.selectedTotal == s.requiredSelections)
+                            : (e.selectedTotal >= s.requiredSelections);
+                        bool wrongOK = e.selectedWrong <= s.allowedWrong;
+                        isCorrect = countOK && wrongOK && e.selectedCorrect > 0;
+                        done = true;
+                    }
+                }
+
+                yield return null;
+            }
+
+            // Cleanup listeners
+            lists.OnSelectionChanged -= onChanged;
+            if (submitCb != null && s.submitButton)
+                s.submitButton.onClick.RemoveListener(submitCb);
+
+            // Hide UI & disable picking to avoid spill into next step
+            if (lists.selectables != null) lists.selectables.pickingEnabled = false;
+            yield return HideSelectionUI(s);
+
+            // Apply effects
+            if (isCorrect) ApplyEffects(s.onCorrectEffects);
+            else ApplyEffects(s.onWrongEffects);
+
+            // Route
+            _nextGuidFromSelection = isCorrect ? FallbackGuid(s.correctNextGuid) : FallbackGuid(s.wrongNextGuid);
+
+            // debounce any final click (especially on submit button)
+            yield return WaitForPointerRelease();
+        }
+
+        IEnumerator HideSelectionUI(SelectionStep s)
+        {
+            if (s.hint) s.hint.SetActive(false);
+            if (s.panelAnimator && !string.IsNullOrEmpty(s.hideTrigger))
+                s.panelAnimator.SetTrigger(s.hideTrigger);
+            else if (s.panelRoot)
+                s.panelRoot.gameObject.SetActive(false);
+            yield return null; // settle one frame
+        }
+
+        static string FallbackGuid(string prefer)
+        {
+            // empty => linear next
+            return string.IsNullOrEmpty(prefer) ? "" : prefer;
+        }
+
+        void ApplyEffects(List<StatEffect> effects)
+        {
+            // Only do stats work if feature is present (UI or Config).
+            if ((statsUI == null && statsConfig == null) || effects == null || effects.Count == 0)
+                return;
+
+            if (runtime == null)
+                runtime = new StatsRuntime();
+
+            if (statsUI != null && !_statsBound)
+            {
+                statsUI.Init(runtime, syncNow: true);
+                _statsBound = true;
+            }
+
+            foreach (var eff in effects)
+            {
+                if (eff == null) continue;
+                var cur = runtime[eff.key];
+                var nxt = eff.Apply(cur);
+                runtime[eff.key] = nxt;
+            }
         }
 
         // ---------------- helpers ----------------
@@ -389,6 +551,11 @@ namespace Pitech.XR.Scenario
                 else if (s is QuestionStep q)
                 {
                     if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false);
+                }
+                else if (s is SelectionStep sel)
+                {
+                    if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
+                    if (sel.hint) SafeSet(sel.hint, false);
                 }
             }
         }

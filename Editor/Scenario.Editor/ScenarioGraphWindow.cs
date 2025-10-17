@@ -10,6 +10,7 @@ using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.UIElements;
+using Pitech.XR.Interactables;
 
 // Avoid Button clash (UGUI vs UIElements)
 using UGUIButton = UnityEngine.UI.Button;
@@ -132,6 +133,16 @@ public class ScenarioGraphWindow : EditorWindow
                 }
             }
         }
+        // Selection edges (Correct/Wrong)
+        foreach (var s in scenario.steps)
+        {
+            if (s is SelectionStep sel && nodes.TryGetValue(sel.guid, out var selNode))
+            {
+                if (!string.IsNullOrEmpty(sel.correctNextGuid)) Connect(selNode.outCorrect, sel.correctNextGuid);
+                if (!string.IsNullOrEmpty(sel.wrongNextGuid)) Connect(selNode.outWrong, sel.wrongNextGuid);
+            }
+        }
+
 
         _isLoading = false; // end guarded load
 
@@ -168,6 +179,11 @@ public class ScenarioGraphWindow : EditorWindow
             else if (st is QuestionStep q && q.choices != null)
                 foreach (var ch in q.choices)
                     if (ch != null) ch.nextGuid = "";
+                    else if (st is SelectionStep sl)
+                    {
+                        sl.correctNextGuid = "";
+                        sl.wrongNextGuid = "";
+                    }
         }
 
         // re-assign from visible edges
@@ -182,6 +198,14 @@ public class ScenarioGraphWindow : EditorWindow
             else if (outMeta.owner is QuestionStep oq && outMeta.choiceIndex >= 0 &&
                      oq.choices != null && outMeta.choiceIndex < oq.choices.Count)
                 oq.choices[outMeta.choiceIndex].nextGuid = inNode.step.guid;
+            // NEW:
+            else if (outMeta.owner is SelectionStep osl)
+            {
+                // -2 => Correct, -3 => Wrong (see ports below)
+                if (outMeta.choiceIndex == -2) osl.correctNextGuid = inNode.step.guid;
+                else if (outMeta.choiceIndex == -3) osl.wrongNextGuid = inNode.step.guid;
+            }
+
         }
 
         Dirty(scenario, "Route Change");
@@ -209,6 +233,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Timeline", _ => CreateStep(typeof(TimelineStep)));
         evt.menu.AppendAction("Add/Cue Cards", _ => CreateStep(typeof(CueCardsStep)));
         evt.menu.AppendAction("Add/Question", _ => CreateStep(typeof(QuestionStep)));
+        evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
     }
 
     void CreateStep(Type t)
@@ -291,6 +316,9 @@ public class ScenarioGraphWindow : EditorWindow
         public Port inPort;
         public Port outNext;
         public List<Port> outChoices;
+        public Port outCorrect;
+        public Port outWrong;
+
 
         readonly ScenarioGraphView graph;
         readonly Action rebuild;
@@ -306,6 +334,8 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) tbox.style.backgroundColor = new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) tbox.style.backgroundColor = new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) tbox.style.backgroundColor = new Color(0.76f, 0.45f, 0.22f);
+            if (s is SelectionStep) tbox.style.backgroundColor = new Color(0.58f, 0.38f, 0.78f);
+
 
             // In
             inPort = MakePort(Direction.Input, Port.Capacity.Multi, "In", -1);
@@ -318,8 +348,11 @@ public class ScenarioGraphWindow : EditorWindow
                 if (step is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (step is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
                 else if (step is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
+                // NEW:
+                else if (step is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
             })
             { text = "Edit…" };
+
             editBtn.style.unityTextAlign = TextAnchor.MiddleCenter;
             editBtn.style.marginLeft = 6;
             titleContainer.Add(editBtn);
@@ -380,6 +413,45 @@ public class ScenarioGraphWindow : EditorWindow
 
                 RecreateChoicePorts();
             }
+            else if (s is SelectionStep sel)
+            {
+                // Inline quick fields
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    EditorGUI.BeginChangeCheck();
+                    sel.lists = (SelectionLists)EditorGUILayout.ObjectField("Lists", sel.lists, typeof(SelectionLists), true);
+                    sel.listKey = EditorGUILayout.TextField("List Name", sel.listKey);
+                    sel.listIndex = EditorGUILayout.IntField("(or) List Index", sel.listIndex);
+                    sel.resetOnEnter = EditorGUILayout.Toggle("Reset On Enter", sel.resetOnEnter);
+                    sel.completion = (SelectionStep.CompleteMode)EditorGUILayout.EnumPopup("Completion", sel.completion);
+                    if (sel.completion == SelectionStep.CompleteMode.OnSubmitButton)
+                        sel.submitButton = (UGUIButton)EditorGUILayout.ObjectField("Submit Button", sel.submitButton, typeof(UGUIButton), true);
+
+                    EditorGUILayout.Space(4);
+                    EditorGUILayout.LabelField("Requirement", EditorStyles.boldLabel);
+                    sel.requiredSelections = EditorGUILayout.IntField("Required Selections", sel.requiredSelections);
+                    sel.requireExactCount = EditorGUILayout.Toggle("Require Exact Count", sel.requireExactCount);
+                    sel.allowedWrong = EditorGUILayout.IntField("Allowed Wrong", sel.allowedWrong);
+                    sel.timeoutSeconds = EditorGUILayout.FloatField("Timeout (s)", sel.timeoutSeconds);
+
+                    EditorGUILayout.Space(4);
+                    EditorGUILayout.LabelField("UI (optional)", EditorStyles.boldLabel);
+                    sel.panelRoot = (RectTransform)EditorGUILayout.ObjectField("Panel Root", sel.panelRoot, typeof(RectTransform), true);
+                    sel.panelAnimator = (Animator)EditorGUILayout.ObjectField("Animator", sel.panelAnimator, typeof(Animator), true);
+                    sel.showTrigger = EditorGUILayout.TextField("Show Trigger", sel.showTrigger);
+                    sel.hideTrigger = EditorGUILayout.TextField("Hide Trigger", sel.hideTrigger);
+                    sel.hint = (GameObject)EditorGUILayout.ObjectField("Hint", sel.hint, typeof(GameObject), true);
+
+                    if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Selection");
+                }));
+
+                // Two outputs
+                outCorrect = MakePort(Direction.Output, Port.Capacity.Single, "Correct", -2);
+                outWrong = MakePort(Direction.Output, Port.Capacity.Single, "Wrong", -3);
+                outputContainer.Add(outCorrect);
+                outputContainer.Add(outWrong);
+            }
+
 
             RefreshExpandedState();
             RefreshPorts();
@@ -436,8 +508,10 @@ public class ScenarioGraphWindow : EditorWindow
         public float GetHeight()
         {
             if (step is QuestionStep q) return 220 + 22 * Mathf.Max(1, q.choices?.Count ?? 0);
+            if (step is SelectionStep) return 220;
             return 170;
         }
+
 
         sealed class ECListener : IEdgeConnectorListener
         {
@@ -472,6 +546,8 @@ sealed class StepEditWindow : EditorWindow
 
     public static void OpenQuestion(Scenario sc, QuestionStep q, Action afterApply = null)
         => Open(sc, q.guid, "Question", w => w.DrawQuestion(), afterApply);
+    public static void OpenSelection(Scenario sc, SelectionStep sel)
+    => Open(sc, sel.guid, "Selection", w => w.DrawSelection());
 
     static void Open(Scenario sc, string guid, string title, Action<StepEditWindow> draw, Action afterApply = null)
     {
@@ -609,6 +685,66 @@ sealed class StepEditWindow : EditorWindow
             EditorGUILayout.HelpBox("Choices list not found.", MessageType.Warning);
         }
     }
+    void DrawSelection()
+    {
+        EditorGUILayout.LabelField("Selection", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("lists"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listKey"), new GUIContent("List Name"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listIndex"), new GUIContent("(or) List Index"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("resetOnEnter"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("completion"));
+        var comp = stepProp.FindPropertyRelative("completion").enumValueIndex;
+        if (comp == (int)SelectionStep.CompleteMode.OnSubmitButton)
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("submitButton"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Requirement", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("requiredSelections"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("requireExactCount"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("allowedWrong"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("timeoutSeconds"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("UI (optional)", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelRoot"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelAnimator"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("showTrigger"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hideTrigger"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hint"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Stat Effects", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("onCorrectEffects"), true);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("onWrongEffects"), true);
+
+        DrawCorrectWrongGuids();
+    }
+
+    void DrawCorrectWrongGuids()
+    {
+        var corr = stepProp.FindPropertyRelative("correctNextGuid");
+        var wrong = stepProp.FindPropertyRelative("wrongNextGuid");
+        if (corr == null || wrong == null) return;
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Branches", EditorStyles.boldLabel);
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField("Correct →", GUILayout.Width(70));
+            EditorGUILayout.SelectableLabel(string.IsNullOrEmpty(corr.stringValue) ? "(next in list)" : corr.stringValue, GUILayout.Height(18));
+            if (GUILayout.Button("Clear", GUILayout.Width(60))) corr.stringValue = "";
+        }
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField("Wrong →", GUILayout.Width(70));
+            EditorGUILayout.SelectableLabel(string.IsNullOrEmpty(wrong.stringValue) ? "(next in list)" : wrong.stringValue, GUILayout.Height(18));
+            if (GUILayout.Button("Clear", GUILayout.Width(60))) wrong.stringValue = "";
+        }
+    }
+
 
     void DrawNextGuid()
     {

@@ -60,6 +60,16 @@ namespace Pitech.XR.Interactables
         public int Count => lists?.Count ?? 0;
         public int ActiveIndex => activeIndex;
 
+        /// <summary>
+        /// Raised whenever the active list selection changes (or active list changes).
+        /// Call <see cref="NotifySelectionChanged"/> from your selectable toggle code if your SelectablesManager doesn't raise an event.
+        /// </summary>
+        public event Action OnSelectionChanged;
+
+        /// <summary>Convenience: how many items are correct in the currently active list.</summary>
+        public int ActiveTotalCorrect => (activeIndex >= 0 && activeIndex < Count && lists[activeIndex] != null)
+            ? lists[activeIndex].CorrectCount : 0;
+
         void Awake()
         {
             // disable picking until a list is chosen
@@ -86,6 +96,87 @@ namespace Pitech.XR.Interactables
             ShowText("Select a list to begin.");
             SetButtons(false, false);
         }
+
+        // ========= NEW: Scenario-facing helpers =========
+
+        /// <summary>Activate by list name. Returns the active index or -1 on failure.</summary>
+        public int ShowList(string listName, bool reset = true)
+        {
+            for (int i = 0; i < Count; i++)
+            {
+                if (lists[i] != null && lists[i].name == listName)
+                    return ShowList(i, reset);
+            }
+            return -1;
+        }
+
+        /// <summary>Activate by index. Returns the active index or -1 on failure.</summary>
+        public int ShowList(int index, bool reset = true)
+        {
+            if (index < 0 || index >= Count || lists[index] == null)
+                return -1;
+
+            ActivateList(index);
+
+            if (reset) ResetActive();
+            else NotifySelectionChanged(); // still notify change so listeners know active list changed
+
+            return activeIndex;
+        }
+
+        /// <summary>Clear the current selection for the active list.</summary>
+        public void ResetActive()
+        {
+            if (selectables)
+            {
+                selectables.ClearAll(alsoTurnOffHighlights: true);
+                selectables.pickingEnabled = true;
+            }
+            // notify
+            NotifySelectionChanged();
+        }
+
+        /// <summary>Lightweight evaluation snapshot for the active list.</summary>
+        public struct Evaluation
+        {
+            public int totalCorrect;     // how many items are correct in this list
+            public int selectedTotal;    // how many currently selected (any)
+            public int selectedCorrect;  // selected & correct
+            public int selectedWrong;    // selected & not-correct
+            public bool allCorrectSelected; // selectedCorrect == totalCorrect && selectedWrong == 0
+        }
+
+        /// <summary>Compute counts for the currently active list without mutating UI.</summary>
+        public Evaluation EvaluateActive()
+        {
+            var e = new Evaluation();
+
+            if (activeIndex < 0 || activeIndex >= Count) return e;
+            var l = lists[activeIndex];
+            if (l == null) return e;
+
+            l.EnsureCache();
+
+            var selected = (selectables != null) ? selectables.SelectedIds : Array.Empty<int>();
+            e.totalCorrect = l.CorrectCount;
+
+            foreach (var id in selected)
+            {
+                e.selectedTotal++;
+                if (l.IsCorrect(id)) e.selectedCorrect++;
+            }
+            e.selectedWrong = e.selectedTotal - e.selectedCorrect;
+            e.allCorrectSelected = (e.selectedCorrect == e.totalCorrect) && (e.selectedWrong == 0);
+            return e;
+        }
+
+        /// <summary>
+        /// Call this from your 3D selectable toggle/pick code whenever the selection changes.
+        /// The Scenario runner listens to this for Auto-complete behavior.
+        /// </summary>
+        public void NotifySelectionChanged() => OnSelectionChanged?.Invoke();
+
+        // ============= Existing UI-driven flow =============
 
         // Call from auto-wired or manual button
         public void ActivateList(int index)
@@ -114,6 +205,9 @@ namespace Pitech.XR.Interactables
 
             ShowText($"Select the correct items for <b>{cur.name}</b>, then press <b>Complete</b>.");
             SetButtons(true, false);
+
+            // let any listeners know active list changed
+            NotifySelectionChanged();
         }
 
         public void CompleteActive()
@@ -146,6 +240,9 @@ namespace Pitech.XR.Interactables
                 ShowText($"Not quite.\nMissed: {missed}  •  Extra: {extras}  •  Correct: {correctSelected}\nPress Retry and try again.");
                 SetButtons(false, true);
             }
+
+            // selections were evaluated; notify in case someone listens for completion attempts
+            NotifySelectionChanged();
         }
 
         public void RetryActive()
@@ -164,6 +261,9 @@ namespace Pitech.XR.Interactables
                 : "Select a list to begin.");
 
             SetButtons(true, false);
+
+            // after clearing, selections changed
+            NotifySelectionChanged();
         }
 
         public void ActivateListByName(string listName)
