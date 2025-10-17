@@ -5,6 +5,8 @@ using UnityEngine.Playables;
 using Pitech.XR.Stats;
 using UnityEngine.UI;
 using Pitech.XR.Interactables;
+using UnityEngine.Events;
+
 
 namespace Pitech.XR.Scenario
 {
@@ -148,9 +150,13 @@ namespace Pitech.XR.Scenario
         public string hideTrigger = "Hide";
         public GameObject hint;
 
-        [Header("Optional Stat Effects")]
-        public List<StatEffect> onCorrectEffects = new();
-        public List<StatEffect> onWrongEffects = new();
+        [Header("Events")]
+        public UnityEvent onCorrect = new UnityEvent();
+        public UnityEvent onWrong = new UnityEvent();
+
+        // Keep the old Stats lists but hide them (won’t show in inspector)
+        [HideInInspector] public List<StatEffect> onCorrectEffects = new();
+        [HideInInspector] public List<StatEffect> onWrongEffects = new();
 
         public override string Kind => "Selection";
     }

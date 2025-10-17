@@ -398,41 +398,36 @@ namespace Pitech.XR.Scenario
                     }
                 }
 
+                // Always evaluate (cheap + robust even if no OnSelectionChanged is fired)
+                var e = lists.EvaluateActive();
+
+                bool countOK = s.requireExactCount
+                    ? (e.selectedTotal == s.requiredSelections)
+                    : (e.selectedTotal >= s.requiredSelections);
+
                 if (s.completion == SelectionStep.CompleteMode.AutoWhenRequirementMet)
                 {
-                    if (changed)
+                    if (countOK)
                     {
-                        changed = false;
-                        var e = lists.EvaluateActive();
-
-                        bool countOK = s.requireExactCount
-                            ? (e.selectedTotal == s.requiredSelections)
-                            : (e.selectedTotal >= s.requiredSelections);
-
-                        if (countOK)
-                        {
-                            bool wrongOK = e.selectedWrong <= s.allowedWrong;
-                            isCorrect = wrongOK && e.selectedCorrect > 0;
-                            done = true;
-                        }
+                        // correctness: within wrong tolerance
+                        bool wrongOK = e.selectedWrong <= s.allowedWrong;
+                        isCorrect = wrongOK;                 // <- removed the "e.selectedCorrect > 0" gate
+                        done = true;
                     }
                 }
                 else // OnSubmitButton
                 {
                     if (submitted)
                     {
-                        var e = lists.EvaluateActive();
-                        bool countOK = s.requireExactCount
-                            ? (e.selectedTotal == s.requiredSelections)
-                            : (e.selectedTotal >= s.requiredSelections);
                         bool wrongOK = e.selectedWrong <= s.allowedWrong;
-                        isCorrect = countOK && wrongOK && e.selectedCorrect > 0;
+                        isCorrect = countOK && wrongOK;     // <- also no "must have ≥1 correct" gate
                         done = true;
                     }
                 }
 
                 yield return null;
             }
+
 
             // Cleanup listeners
             lists.OnSelectionChanged -= onChanged;
@@ -442,6 +437,21 @@ namespace Pitech.XR.Scenario
             // Hide UI & disable picking to avoid spill into next step
             if (lists.selectables != null) lists.selectables.pickingEnabled = false;
             yield return HideSelectionUI(s);
+
+            // Events
+            try
+            {
+                if (isCorrect) s.onCorrect?.Invoke();
+                else s.onWrong?.Invoke();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex, this);
+            }
+
+            // (Optional) Stats lists – still supported if you didn’t remove them
+            if (isCorrect) ApplyEffects(s.onCorrectEffects);
+            else ApplyEffects(s.onWrongEffects);
 
             // Apply effects
             if (isCorrect) ApplyEffects(s.onCorrectEffects);

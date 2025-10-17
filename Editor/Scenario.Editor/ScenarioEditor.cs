@@ -799,14 +799,16 @@ namespace Pitech.XR.Scenario.Editor
         // Δεν βάζουμε routing εδώ (Correct/Wrong είναι στο Routing section)
         static readonly string[] fields =
         {
-        "lists",
-        "listKey","listIndex",
-        "resetOnEnter",
-        "completion","submitButton",
-        "requiredSelections","requireExactCount","allowedWrong","timeoutSeconds",
-        "panelRoot","panelAnimator","showTrigger","hideTrigger","hint",
-        "onCorrectEffects","onWrongEffects"
-    };
+            "lists",
+            "listKey","listIndex",
+            "resetOnEnter",
+            "completion","submitButton",
+            "requiredSelections","requireExactCount","allowedWrong","timeoutSeconds",
+            "panelRoot","panelAnimator","showTrigger","hideTrigger","hint",
+            "onCorrect","onWrong" // UnityEvents shown in inspector
+            // (stats lists are hidden by [HideInInspector] on the step)
+        };
+
 
         public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
         {
