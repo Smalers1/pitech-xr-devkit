@@ -3,7 +3,8 @@
     "rootNamespace": "Pitech.XR.Scenario.Editor",
     "references": [
         "GUID:2ed5af203d137d54ab36a6ee88a2b9d6",
-        "GUID:63a468054d7ceaa4c8dc0b7bd0aa1da3"
+        "GUID:63a468054d7ceaa4c8dc0b7bd0aa1da3",
+        "GUID:75469ad4d38634e559750d17036d5f7c"
     ],
     "includePlatforms": [
         "Editor"
