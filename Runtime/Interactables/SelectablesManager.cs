@@ -230,25 +230,43 @@ namespace Pitech.XR.Interactables
         bool PressedThisFrame()
         {
 #if ENABLE_INPUT_SYSTEM
-            // Explicit action (bind to XR trigger / A button / mouse / touch)
-            if (selectAction != null && selectAction.action != null && selectAction.action.triggered)
-                return true;
+    // 1) Preferred: explicit action (works for OpenXR, Quest, Desktop).
+    if (selectAction != null && selectAction.action != null && selectAction.action.triggered)
+        return true;
 
-            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) return true;
-            if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame) return true;
+    // 2) Desktop/mobile fallbacks.
+    if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) return true;
+    if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame) return true;
 
-            var gp = Gamepad.current;
-            if (gp != null && (gp.buttonSouth.wasPressedThisFrame || gp.leftStickButton.wasPressedThisFrame))
-                return true;
+    // 3) XR OpenXR fallback: read right/left controller triggerPressed
+    var r = UnityEngine.InputSystem.XR.XRController.rightHand;
+    if (r != null)
+    {
+        var tPressed = r.TryGetChildControl<UnityEngine.InputSystem.Controls.ButtonControl>("triggerPressed");
+        if (tPressed != null && tPressed.wasPressedThisFrame) return true;
+    }
+    var l = UnityEngine.InputSystem.XR.XRController.leftHand;
+    if (l != null)
+    {
+        var tPressed = l.TryGetChildControl<UnityEngine.InputSystem.Controls.ButtonControl>("triggerPressed");
+        if (tPressed != null && tPressed.wasPressedThisFrame) return true;
+    }
+
+    // Optional: gamepad
+    var gp = Gamepad.current;
+    if (gp != null && (gp.buttonSouth.wasPressedThisFrame || gp.leftStickButton.wasPressedThisFrame))
+        return true;
 #endif
 
 #if ENABLE_LEGACY_INPUT_MANAGER
             if (Input.GetMouseButtonDown(0)) return true;
             for (int i = 0; i < Input.touchCount; i++)
-                if (Input.GetTouch(i).phase == TouchPhase.Began) return true;
+                if (Input.GetTouch(i).phase == UnityEngine.TouchPhase.Began) return true;
 #endif
+
             return false;
         }
+
 
         // --------------- selection state & visuals ----------------
         public void ClearAll(bool alsoTurnOffHighlights)
