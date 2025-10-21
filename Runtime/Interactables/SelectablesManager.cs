@@ -1,10 +1,12 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;                 // Mouse, Touchscreen, Gamepad, etc.
 using UnityEngine.InputSystem.UI;             // (optional, not required)
+using UnityEngine.InputSystem.Controls;
+using UnityEngine.InputSystem.XR;
 #endif
 
 namespace Pitech.XR.Interactables
@@ -59,6 +61,10 @@ namespace Pitech.XR.Interactables
         [Tooltip("Optional: action that represents 'Select/Click'. If not set, we fall back to Mouse/Touch/Gamepad checks.")]
         public InputActionReference selectAction;
 #endif
+#if ENABLE_INPUT_SYSTEM
+float _lastRightTrigger, _lastLeftTrigger;   // for axis→button edge detection
+#endif
+
 
         [Header("UI Blocking")]
         [Tooltip("If true, clicks over UI are ignored (EventSystem).")]
@@ -230,27 +236,46 @@ namespace Pitech.XR.Interactables
         bool PressedThisFrame()
         {
 #if ENABLE_INPUT_SYSTEM
-    // 1) Preferred: explicit action (works for OpenXR, Quest, Desktop).
+    // A) If you assign an action it wins.
     if (selectAction != null && selectAction.action != null && selectAction.action.triggered)
         return true;
 
-    // 2) Desktop/mobile fallbacks.
+    // B) Desktop/mobile fallbacks.
     if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) return true;
     if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame) return true;
 
-    // 3) XR OpenXR fallback: read right/left controller triggerPressed
-    var r = UnityEngine.InputSystem.XR.XRController.rightHand;
-    if (r != null)
+    // C) OpenXR/Meta: try triggerPressed (button), else trigger (axis) with edge detect
+    bool XRPressed(XRController ctrl, ref float lastAxis)
     {
-        var tPressed = r.TryGetChildControl<UnityEngine.InputSystem.Controls.ButtonControl>("triggerPressed");
-        if (tPressed != null && tPressed.wasPressedThisFrame) return true;
+        if (ctrl == null) return false;
+
+        // Prefer boolean button if present
+        var trigBtn = ctrl.TryGetChildControl<ButtonControl>("triggerPressed");
+        if (trigBtn != null && trigBtn.wasPressedThisFrame) return true;
+
+        // Fallback to axis with threshold crossing
+        var trigAxis = ctrl.TryGetChildControl<AxisControl>("trigger");
+        if (trigAxis != null)
+        {
+            float v = trigAxis.ReadValue();
+            float pressPoint = (InputSystem.settings != null)
+                ? InputSystem.settings.defaultButtonPressPoint
+                : 0.5f;
+
+            bool pressedNow = (lastAxis < pressPoint) && (v >= pressPoint);
+            lastAxis = v;
+            if (pressedNow) return true;
+        }
+
+        // Some profiles map “select” to grip
+        var gripBtn = ctrl.TryGetChildControl<ButtonControl>("gripPressed");
+        if (gripBtn != null && gripBtn.wasPressedThisFrame) return true;
+
+        return false;
     }
-    var l = UnityEngine.InputSystem.XR.XRController.leftHand;
-    if (l != null)
-    {
-        var tPressed = l.TryGetChildControl<UnityEngine.InputSystem.Controls.ButtonControl>("triggerPressed");
-        if (tPressed != null && tPressed.wasPressedThisFrame) return true;
-    }
+
+    if (XRPressed(XRController.rightHand, ref _lastRightTrigger)) return true;
+    if (XRPressed(XRController.leftHand,  ref _lastLeftTrigger))  return true;
 
     // Optional: gamepad
     var gp = Gamepad.current;
@@ -266,7 +291,6 @@ namespace Pitech.XR.Interactables
 
             return false;
         }
-
 
         // --------------- selection state & visuals ----------------
         public void ClearAll(bool alsoTurnOffHighlights)
