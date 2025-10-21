@@ -2,6 +2,11 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;                 // Mouse, Touchscreen, Gamepad, etc.
+using UnityEngine.InputSystem.UI;             // (optional, not required)
+#endif
+
 namespace Pitech.XR.Interactables
 {
     [AddComponentMenu("Pi tech XR/Scenario/Selectables Manager")]
@@ -14,6 +19,13 @@ namespace Pitech.XR.Interactables
             public GameObject highlight;      // OPTIONAL: toggled when selected
         }
 
+        public enum RaycastSource
+        {
+            CameraScreenPoint,    // mobile/desktop (mouse/touch)
+            TransformRay,         // VR controller or head/gaze (forward ray)
+            External              // you call TriggerWithRay from your own input code
+        }
+
         [Header("Catalog")]
         [Tooltip("Where to auto-collect from (optional).")]
         public Transform collectRoot;
@@ -21,7 +33,7 @@ namespace Pitech.XR.Interactables
         [Tooltip("Auto-collect colliders at Awake from 'collectRoot'.")]
         public bool autoCollectInChildren = true;
 
-        [Tooltip("Layers considered selectable when clicking.")]
+        [Tooltip("Layers considered selectable when raycasting.")]
         public LayerMask selectableLayers = ~0;
 
         [Tooltip("How to treat trigger colliders when raycasting.")]
@@ -30,14 +42,34 @@ namespace Pitech.XR.Interactables
         [Tooltip("All selectable items. No scripts on the objects.")]
         public List<Entry> items = new();
 
+        [Header("Picking")]
+        public bool pickingEnabled = true;
+
+        [Tooltip("How to build the ray used for selection.")]
+        public RaycastSource raySource = RaycastSource.CameraScreenPoint;
+
+        [Tooltip("Transform used when Ray Source = TransformRay (e.g., VR controller).")]
+        public Transform rayTransform;
+
+        [Tooltip("Max ray distance when using TransformRay/External.")]
+        public float rayLength = 100f;
+
+#if ENABLE_INPUT_SYSTEM
+        [Header("Input (New Input System)")]
+        [Tooltip("Optional: action that represents 'Select/Click'. If not set, we fall back to Mouse/Touch/Gamepad checks.")]
+        public InputActionReference selectAction;
+#endif
+
+        [Header("UI Blocking")]
+        [Tooltip("If true, clicks over UI are ignored (EventSystem).")]
+        public bool ignoreUI = true;
+
         [Header("Visuals (fallback if no 'highlight' object)")]
         public bool tintSelected = true;
         public Color tintColor = new Color(1f, 0.85f, 0.1f, 1f);
         [Tooltip("If true, also sets _EmissionColor to the tint color (URP/BiRP that support it).")]
         public bool useEmission = true;
 
-        [Header("Runtime")]
-        public bool pickingEnabled = true;
         public event System.Action SelectionChanged;
 
         // state
@@ -51,7 +83,6 @@ namespace Pitech.XR.Interactables
         void Awake()
         {
             _mpb = new MaterialPropertyBlock();
-
             _cam = Camera.main;
 
             if (autoCollectInChildren && collectRoot)
@@ -60,6 +91,20 @@ namespace Pitech.XR.Interactables
             RebuildIndex();
             CacheRenderers();
             SetAll(false); // ensure visuals off
+
+#if ENABLE_INPUT_SYSTEM
+            // Enable action if provided (for play-in-editor convenience)
+            if (selectAction != null && selectAction.action != null && !selectAction.action.enabled)
+                selectAction.action.Enable();
+#endif
+        }
+
+        void OnDestroy()
+        {
+#if ENABLE_INPUT_SYSTEM
+            if (selectAction != null && selectAction.action != null && selectAction.action.enabled)
+                selectAction.action.Disable();
+#endif
         }
 
         void RebuildIndex()
@@ -104,14 +149,33 @@ namespace Pitech.XR.Interactables
             if (!pickingEnabled) return;
 
             // ignore clicks on UI
-            if (EventSystem.current && EventSystem.current.IsPointerOverGameObject()) return;
+            if (ignoreUI && EventSystem.current && EventSystem.current.IsPointerOverGameObject())
+                return;
+
+            // If the source is External, we don't read input here.
+            if (raySource == RaycastSource.External)
+                return;
 
             if (!PressedThisFrame()) return;
 
-            if (!_cam) _cam = Camera.main;
-            var ray = _cam ? _cam.ScreenPointToRay(Input.mousePosition) : default;
+            Ray ray;
+            if (!BuildRay(out ray)) return;
 
-            if (Physics.Raycast(ray, out var hit, Mathf.Infinity, selectableLayers, triggerHits))
+            TrySelectFromRay(ray);
+        }
+
+        // -------- external use (XR line / custom pointer) ----------
+        /// <summary>Trigger a selection check from an external ray (e.g., XR controller line) when your own input fires.</summary>
+        public void TriggerWithRay(Ray ray)
+        {
+            if (!pickingEnabled) return;
+            TrySelectFromRay(ray);
+        }
+
+        // -------- core picking logic ----------
+        void TrySelectFromRay(Ray ray)
+        {
+            if (Physics.Raycast(ray, out var hit, rayLength > 0 ? rayLength : Mathf.Infinity, selectableLayers, triggerHits))
             {
                 var id = hit.collider.GetInstanceID();
                 if (_indexById.TryGetValue(id, out int idx))
@@ -122,14 +186,71 @@ namespace Pitech.XR.Interactables
             }
         }
 
-        static bool PressedThisFrame()
+        bool BuildRay(out Ray ray)
         {
-            if (Input.GetMouseButtonDown(0)) return true;
-            for (int i = 0; i < Input.touchCount; i++)
-                if (Input.GetTouch(i).phase == TouchPhase.Began) return true;
+            ray = default;
+
+            switch (raySource)
+            {
+                case RaycastSource.CameraScreenPoint:
+                    {
+                        if (!_cam) _cam = Camera.main;
+                        if (!_cam) return false;
+
+                        Vector2 pos = GetPointerPosition();
+                        ray = _cam.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+                        return true;
+                    }
+
+                case RaycastSource.TransformRay:
+                    {
+                        Transform t = rayTransform ? rayTransform : (_cam ? _cam.transform : null);
+                        if (!t) return false;
+                        ray = new Ray(t.position, t.forward);
+                        return true;
+                    }
+            }
+
             return false;
         }
 
+        Vector2 GetPointerPosition()
+        {
+#if ENABLE_INPUT_SYSTEM
+            if (Mouse.current != null) return Mouse.current.position.ReadValue();
+            if (Touchscreen.current != null) return Touchscreen.current.primaryTouch.position.ReadValue();
+            var gp = Gamepad.current;
+            if (gp != null) return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f); // center fallback
+            return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+#else
+            return Input.mousePosition;
+#endif
+        }
+
+        bool PressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            // Explicit action (bind to XR trigger / A button / mouse / touch)
+            if (selectAction != null && selectAction.action != null && selectAction.action.triggered)
+                return true;
+
+            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) return true;
+            if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame) return true;
+
+            var gp = Gamepad.current;
+            if (gp != null && (gp.buttonSouth.wasPressedThisFrame || gp.leftStickButton.wasPressedThisFrame))
+                return true;
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+            if (Input.GetMouseButtonDown(0)) return true;
+            for (int i = 0; i < Input.touchCount; i++)
+                if (Input.GetTouch(i).phase == TouchPhase.Began) return true;
+#endif
+            return false;
+        }
+
+        // --------------- selection state & visuals ----------------
         public void ClearAll(bool alsoTurnOffHighlights)
         {
             _selected.Clear();
@@ -190,17 +311,13 @@ namespace Pitech.XR.Interactables
                 if (on)
                 {
                     _mpb.Clear();
-                    // Try common color properties
                     if (r.sharedMaterial && r.sharedMaterial.HasProperty("_BaseColor"))
                         _mpb.SetColor("_BaseColor", tintColor);     // URP Lit
                     else
                         _mpb.SetColor("_Color", tintColor);          // Standard/BiRP
 
                     if (useEmission)
-                    {
                         _mpb.SetColor("_EmissionColor", tintColor);
-                        // Some shaders gate emission by keyword; MPB can still push the color for URP
-                    }
                 }
                 else
                 {
