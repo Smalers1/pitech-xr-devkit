@@ -6,20 +6,22 @@ using Pitech.XR.Interactables;
 [CustomEditor(typeof(SelectablesManager))]
 public class SelectablesManagerEditor : Editor
 {
+    // Mode
+    SerializedProperty _mode;
+
     // Catalog
     SerializedProperty _collectRoot, _auto, _layers, _trigger, _items;
 
-    // Picking
-    SerializedProperty _pickingEnabled, _raySource, _rayTransform, _rayLength, _ignoreUI;
-#if ENABLE_INPUT_SYSTEM
-    SerializedProperty _selectAction;
-#endif
+    // Desktop/Mobile picking (στο VR αγνοείται)
+    SerializedProperty _pickingEnabled, _rayLength, _ignoreUI;
 
     // Visuals
     SerializedProperty _tintSelected, _tintColor, _useEmission;
 
     void OnEnable()
     {
+        _mode = serializedObject.FindProperty("mode");
+
         // Catalog
         _collectRoot = serializedObject.FindProperty("collectRoot");
         _auto = serializedObject.FindProperty("autoCollectInChildren");
@@ -27,15 +29,10 @@ public class SelectablesManagerEditor : Editor
         _trigger = serializedObject.FindProperty("triggerHits");
         _items = serializedObject.FindProperty("items");
 
-        // Picking
+        // Picking (Desktop/Mobile)
         _pickingEnabled = serializedObject.FindProperty("pickingEnabled");
-        _raySource = serializedObject.FindProperty("raySource");
-        _rayTransform = serializedObject.FindProperty("rayTransform");
         _rayLength = serializedObject.FindProperty("rayLength");
         _ignoreUI = serializedObject.FindProperty("ignoreUI");
-#if ENABLE_INPUT_SYSTEM
-        _selectAction   = serializedObject.FindProperty("selectAction");
-#endif
 
         // Visuals
         _tintSelected = serializedObject.FindProperty("tintSelected");
@@ -48,47 +45,35 @@ public class SelectablesManagerEditor : Editor
         serializedObject.Update();
 
         EditorGUILayout.HelpBox(
-            "Selectables Manager\n" +
-            "• No components on objects needed.\n" +
-            "• Clicks are raycasted against the listed Colliders.\n" +
-            "• Optional highlight object per entry is toggled when selected.\n" +
-            "• Use ‘Collect From Children’ to bulk grab colliders.",
+            "Selectables Manager (Meta VR Ready)\n" +
+            "• VR (Meta): Χρήση Ray Interactor + Event Wrappers → κάλεσε MetaSelect/MetaUnselect.\n" +
+            "• Desktop/Mobile: Click-to-select με Camera.ScreenPointToRay.\n" +
+            "• Δεν χρειάζονται custom raycasts στο VR.",
             MessageType.Info);
 
-        // ---------------- Picking ----------------
+        // ---------------- Mode & Input ----------------
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            EditorGUILayout.LabelField("Picking (Input & Ray)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Mode & Input", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(_mode, new GUIContent("Platform Mode"));
 
-            EditorGUILayout.PropertyField(_pickingEnabled, new GUIContent("Picking Enabled"));
-            EditorGUILayout.PropertyField(_raySource, new GUIContent("Ray Source"));
+            var modeEnum = (SelectablesManager.PlatformMode)_mode.enumValueIndex;
 
-            var source = (SelectablesManager.RaycastSource)_raySource.enumValueIndex;
-            switch (source)
+            if (modeEnum == SelectablesManager.PlatformMode.ForceVRMeta)
             {
-                case SelectablesManager.RaycastSource.TransformRay:
-                    EditorGUILayout.PropertyField(_rayTransform, new GUIContent("Ray Transform"));
-                    EditorGUILayout.PropertyField(_rayLength, new GUIContent("Ray Length"));
-                    break;
-
-                case SelectablesManager.RaycastSource.CameraScreenPoint:
-                    EditorGUILayout.LabelField("Ray", "Camera.main ScreenPoint", EditorStyles.miniLabel);
-                    break;
-
-                case SelectablesManager.RaycastSource.External:
-                    EditorGUILayout.HelpBox("External: call TriggerWithRay(ray) from your XR/OVR pointer.", MessageType.None);
-                    EditorGUILayout.PropertyField(_rayLength, new GUIContent("Ray Length"));
-                    break;
+                EditorGUILayout.HelpBox(
+                    "VR (Meta) mode: Η επιλογή γίνεται από τα Meta Event Wrappers.\n" +
+                    "Δέσε στα UnityEvents:\n" +
+                    " • OnSelect → SelectablesManager.MetaSelect(GameObject)\n" +
+                    " • (προαιρετικό) OnUnselect → SelectablesManager.MetaUnselect(GameObject)",
+                    MessageType.None);
             }
-
-#if ENABLE_INPUT_SYSTEM
-            EditorGUILayout.PropertyField(_selectAction, new GUIContent("Select Action (Input System)"));
-#else
-            EditorGUILayout.HelpBox(
-                "Legacy Input in use. To bind XR trigger via the Input System, install/enable the Input System package and set Player → Active Input Handling to Both or Input System.",
-                MessageType.None);
-#endif
-            EditorGUILayout.PropertyField(_ignoreUI, new GUIContent("Ignore UI (EventSystem)"));
+            else
+            {
+                EditorGUILayout.PropertyField(_pickingEnabled, new GUIContent("Picking Enabled (Desktop/Mobile)"));
+                EditorGUILayout.PropertyField(_rayLength, new GUIContent("Ray Length (Desktop/Mobile)"));
+                EditorGUILayout.PropertyField(_ignoreUI, new GUIContent("Ignore UI (EventSystem)"));
+            }
         }
 
         // ---------------- Catalog ----------------
@@ -105,7 +90,7 @@ public class SelectablesManagerEditor : Editor
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
             EditorGUILayout.LabelField("Entries", EditorStyles.boldLabel);
-            EditorGUILayout.PropertyField(_items, true);
+            EditorGUILayout.PropertyField(_items, includeChildren: true);
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -119,6 +104,7 @@ public class SelectablesManagerEditor : Editor
                         EditorUtility.SetDirty(mgr);
                     }
                 }
+
                 if (GUILayout.Button("Clear All"))
                     _items.ClearArray();
             }
