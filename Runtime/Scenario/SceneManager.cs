@@ -6,6 +6,10 @@ using UnityEngine.Playables;
 using UnityEngine.UI;
 using Pitech.XR.Stats;
 using Pitech.XR.Interactables;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
 
 namespace Pitech.XR.Scenario
 {
@@ -507,35 +511,83 @@ namespace Pitech.XR.Scenario
         // ---------------- helpers ----------------
         static bool AnyPointerDown()
         {
-            if (Input.GetMouseButton(0)) return true;
-            if (Input.touchCount > 0)
+#if ENABLE_INPUT_SYSTEM
+            // Αν δεν υπάρχουν pointer devices (VR-only), θεωρούμε ότι "δεν πατιέται τίποτα"
+            bool hasMouse = Mouse.current != null;
+            bool hasTouch = Touchscreen.current != null;
+
+            if (hasMouse && Mouse.current.leftButton.isPressed) return true;
+
+            if (hasTouch)
             {
-                for (int i = 0; i < Input.touchCount; i++)
+                var ts = Touchscreen.current;
+                foreach (var t in ts.touches)
                 {
-                    var ph = Input.GetTouch(i).phase;
-                    if (ph == TouchPhase.Began || ph == TouchPhase.Moved || ph == TouchPhase.Stationary) return true;
+                    if (t.press.isPressed) return true;
                 }
             }
             return false;
+#else
+    if (UnityEngine.Input.GetMouseButton(0)) return true;
+
+    for (int i = 0; i < UnityEngine.Input.touchCount; i++)
+    {
+        var ph = UnityEngine.Input.GetTouch(i).phase;
+        if (ph == UnityEngine.TouchPhase.Began ||
+            ph == UnityEngine.TouchPhase.Moved ||
+            ph == UnityEngine.TouchPhase.Stationary)
+            return true;
+    }
+    return false;
+#endif
         }
 
         static bool JustClicked()
         {
-            if (Input.GetMouseButtonDown(0)) return true;
-            for (int i = 0; i < Input.touchCount; i++)
-                if (Input.GetTouch(i).phase == TouchPhase.Began) return true;
+#if ENABLE_INPUT_SYSTEM
+            bool hasMouse = Mouse.current != null;
+            bool hasTouch = Touchscreen.current != null;
+
+            if (hasMouse && Mouse.current.leftButton.wasPressedThisFrame) return true;
+
+            if (hasTouch)
+            {
+                var ts = Touchscreen.current;
+                foreach (var t in ts.touches)
+                {
+                    if (t.press.wasPressedThisFrame) return true;
+                }
+            }
             return false;
+#else
+    if (UnityEngine.Input.GetMouseButtonDown(0)) return true;
+
+    for (int i = 0; i < UnityEngine.Input.touchCount; i++)
+    {
+        if (UnityEngine.Input.GetTouch(i).phase == UnityEngine.TouchPhase.Began)
+            return true;
+    }
+    return false;
+#endif
         }
 
-        static IEnumerator WaitForPointerRelease()
+        static System.Collections.IEnumerator WaitForPointerRelease()
         {
-            // wait until there is no mouse button held and no active touch
+#if ENABLE_INPUT_SYSTEM
+            // Σε VR (χωρίς mouse/touch), μην περιμένεις τίποτα — επέστρεψε άμεσα.
+            if (Mouse.current == null && Touchscreen.current == null)
+                yield break;
+#endif
             while (AnyPointerDown()) yield return null;
         }
 
-        static IEnumerator WaitForCleanClick()
+        static System.Collections.IEnumerator WaitForCleanClick()
         {
-            // wait for the next press then release (debounced)
+#if ENABLE_INPUT_SYSTEM
+            // Σε VR (χωρίς mouse/touch), δεν μπορεί να υπάρξει "clean click" -> μην μπλοκάρεις.
+            if (Mouse.current == null && Touchscreen.current == null)
+                yield break;
+#endif
             while (!JustClicked()) yield return null;
             while (AnyPointerDown()) yield return null;
         }
@@ -569,5 +621,6 @@ namespace Pitech.XR.Scenario
                 }
             }
         }
+
     }
 }
