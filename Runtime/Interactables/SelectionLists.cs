@@ -16,7 +16,7 @@ namespace Pitech.XR.Interactables
         public List<Collider> correct = new();
 
         [Header("UI (World-space)")]
-        public GameObject buttonRoot;     // optional (will auto-wire Button on it)
+        public GameObject buttonRoot;     // optional (θα auto-wire Button/Graphic πάνω του)
         public Animator buttonAnimator;   // optional
         public TMP_Text title;            // optional
 
@@ -27,7 +27,7 @@ namespace Pitech.XR.Interactables
 
         [NonSerialized] public bool isCompleted;
 
-        // cache for fast scoring
+        // === Cache για scoring ===
         [NonSerialized] HashSet<int> _ids;
         public void EnsureCache()
         {
@@ -40,6 +40,38 @@ namespace Pitech.XR.Interactables
 
         public void RefreshLabel() { if (title) title.text = name; }
         public void Fire(string trigger) { if (buttonAnimator && !string.IsNullOrEmpty(trigger)) buttonAnimator.SetTrigger(trigger); }
+
+        // === Cache για χρώματα κουμπιού ===
+        [NonSerialized] public Button cachedButton;
+        [NonSerialized] public Graphic cachedGraphic;    // Image, TMP_Text, οτιδήποτε παράγει χρώμα
+        [NonSerialized] public Color originalColor;      // για επαναφορά σε Normal όταν δεν έχεις global normal
+        [NonSerialized] public bool hasGraphic;
+
+        public void CacheButtonGraphic()
+        {
+            cachedButton = null;
+            cachedGraphic = null;
+            hasGraphic = false;
+
+            if (buttonRoot == null) return;
+
+            buttonRoot.TryGetComponent(out cachedButton);
+            if (cachedButton && cachedButton.targetGraphic)
+            {
+                cachedGraphic = cachedButton.targetGraphic;
+            }
+            else
+            {
+                // αλλιώς πιάσε οποιοδήποτε Graphic επάνω στο root
+                buttonRoot.TryGetComponent(out cachedGraphic);
+            }
+
+            if (cachedGraphic)
+            {
+                hasGraphic = true;
+                originalColor = cachedGraphic.color;
+            }
+        }
     }
 
     [AddComponentMenu("Pi tech XR/Interactables/Selection Lists (Controller)")]
@@ -56,17 +88,30 @@ namespace Pitech.XR.Interactables
         public Button completeButton;  // onClick wired automatically if present
         public Button retryButton;     // onClick wired automatically if present
 
+        // ---------- Feedback Texts ----------
+        [Header("Feedback Texts")]
+        [TextArea] public string textStart = "Select a list to begin.";
+        [TextArea] public string textPrompt = "Select the correct items for <b>{list}</b>, then press <b>Complete</b>.";
+        [TextArea] public string textCorrect = "Correct! ({correct})";
+        [TextArea] public string textWrong = "Not quite.\nMissed: {missed}  •  Extra: {extras}  •  Correct: {correct}\nPress Retry and try again.";
+        [TextArea] public string textRetry = "Try again for <b>{list}</b> and press <b>Complete</b>.";
+
+        // ---------- Button Colors ----------
+        [Header("Button Colors (optional)")]
+        [Tooltip("Αν είναι ενεργό, θα βάφει τα κουμπιά των λιστών ανάλογα με την κατάσταση.")]
+        public bool useButtonColors = true;
+        public Color buttonNormalColor = Color.white;
+        public Color buttonSelectedColor = new Color(0.20f, 0.55f, 1f, 1f);  // μπλε-ish
+        public Color buttonCompletedColor = new Color(0.20f, 0.80f, 0.25f, 1f); // πράσινο
+
         [SerializeField] int activeIndex = -1;
         public int Count => lists?.Count ?? 0;
         public int ActiveIndex => activeIndex;
 
-        /// <summary>
-        /// Raised whenever the active list selection changes (or active list changes).
-        /// Call <see cref="NotifySelectionChanged"/> from your selectable toggle code if your SelectablesManager doesn't raise an event.
-        /// </summary>
+        /// Raised whenever the active list selection changes (ή όταν αλλάξει active list).
         public event Action OnSelectionChanged;
 
-        /// <summary>Convenience: how many items are correct in the currently active list.</summary>
+        /// Convenience: πόσα σωστά έχει η ενεργή λίστα.
         public int ActiveTotalCorrect => (activeIndex >= 0 && activeIndex < Count && lists[activeIndex] != null)
             ? lists[activeIndex].CorrectCount : 0;
 
@@ -75,31 +120,37 @@ namespace Pitech.XR.Interactables
             // disable picking until a list is chosen
             if (selectables) selectables.pickingEnabled = false;
 
-            // Set titles & auto-wire list buttons
+            // Set titles, auto-wire list buttons & cache button graphics
             for (int i = 0; i < Count; i++)
             {
                 var l = lists[i];
                 if (l == null) continue;
                 l.RefreshLabel();
 
+                // auto-wire
                 if (l.buttonRoot && l.buttonRoot.TryGetComponent<Button>(out var b))
                 {
                     int captured = i; // avoid closure pitfall
                     b.onClick.AddListener(() => ActivateList(captured));
                 }
+
+                // cache graphic for coloring
+                l.CacheButtonGraphic();
             }
 
             // Wire global buttons if assigned
             if (completeButton) completeButton.onClick.AddListener(CompleteActive);
             if (retryButton) retryButton.onClick.AddListener(RetryActive);
 
-            ShowText("Select a list to begin.");
+            ShowText(textStart);
             SetButtons(false, false);
+
+            // Βεβαιώσου ότι όλα τα κουμπιά είναι σε normal στην εκκίνηση
+            RefreshButtonColors();
         }
 
         // ========= NEW: Scenario-facing helpers =========
 
-        /// <summary>Activate by list name. Returns the active index or -1 on failure.</summary>
         public int ShowList(string listName, bool reset = true)
         {
             for (int i = 0; i < Count; i++)
@@ -110,7 +161,6 @@ namespace Pitech.XR.Interactables
             return -1;
         }
 
-        /// <summary>Activate by index. Returns the active index or -1 on failure.</summary>
         public int ShowList(int index, bool reset = true)
         {
             if (index < 0 || index >= Count || lists[index] == null)
@@ -119,12 +169,11 @@ namespace Pitech.XR.Interactables
             ActivateList(index);
 
             if (reset) ResetActive();
-            else NotifySelectionChanged(); // still notify change so listeners know active list changed
+            else NotifySelectionChanged();
 
             return activeIndex;
         }
 
-        /// <summary>Clear the current selection for the active list.</summary>
         public void ResetActive()
         {
             if (selectables)
@@ -132,21 +181,19 @@ namespace Pitech.XR.Interactables
                 selectables.ClearAll(alsoTurnOffHighlights: true);
                 selectables.pickingEnabled = true;
             }
-            // notify
             NotifySelectionChanged();
         }
 
-        /// <summary>Lightweight evaluation snapshot for the active list.</summary>
+        // ----- Evaluation snapshot -----
         public struct Evaluation
         {
-            public int totalCorrect;     // how many items are correct in this list
-            public int selectedTotal;    // how many currently selected (any)
-            public int selectedCorrect;  // selected & correct
-            public int selectedWrong;    // selected & not-correct
-            public bool allCorrectSelected; // selectedCorrect == totalCorrect && selectedWrong == 0
+            public int totalCorrect;
+            public int selectedTotal;
+            public int selectedCorrect;
+            public int selectedWrong;
+            public bool allCorrectSelected;
         }
 
-        /// <summary>Compute counts for the currently active list without mutating UI.</summary>
         public Evaluation EvaluateActive()
         {
             var e = new Evaluation();
@@ -170,20 +217,15 @@ namespace Pitech.XR.Interactables
             return e;
         }
 
-        /// <summary>
-        /// Call this from your 3D selectable toggle/pick code whenever the selection changes.
-        /// The Scenario runner listens to this for Auto-complete behavior.
-        /// </summary>
         public void NotifySelectionChanged() => OnSelectionChanged?.Invoke();
 
         // ============= Existing UI-driven flow =============
 
-        // Call from auto-wired or manual button
         public void ActivateList(int index)
         {
             if (index < 0 || index >= Count) return;
 
-            // send previous (incomplete) back
+            // previous comes back (αν δεν ολοκληρώθηκε)
             if (activeIndex >= 0 && activeIndex < Count)
             {
                 var prev = lists[activeIndex];
@@ -200,13 +242,13 @@ namespace Pitech.XR.Interactables
             if (selectables)
             {
                 selectables.ClearAll(alsoTurnOffHighlights: true);
-                selectables.pickingEnabled = true;            // <<< enable selection
+                selectables.pickingEnabled = true;
             }
 
-            ShowText($"Select the correct items for <b>{cur.name}</b>, then press <b>Complete</b>.");
+            ShowText(textPrompt.Replace("{list}", cur.name));
             SetButtons(true, false);
 
-            // let any listeners know active list changed
+            RefreshButtonColors();
             NotifySelectionChanged();
         }
 
@@ -232,16 +274,20 @@ namespace Pitech.XR.Interactables
                 l.isCompleted = true;
                 l.Fire(l.triggerCompleted);
                 l.Fire(l.triggerGoBack);
-                ShowText($"Correct! ({correctSelected})");
+                ShowText(textCorrect
+                    .Replace("{correct}", correctSelected.ToString()));
                 SetButtons(false, false);
             }
             else
             {
-                ShowText($"Not quite.\nMissed: {missed}  •  Extra: {extras}  •  Correct: {correctSelected}\nPress Retry and try again.");
+                ShowText(textWrong
+                    .Replace("{missed}", missed.ToString())
+                    .Replace("{extras}", extras.ToString())
+                    .Replace("{correct}", correctSelected.ToString()));
                 SetButtons(false, true);
             }
 
-            // selections were evaluated; notify in case someone listens for completion attempts
+            RefreshButtonColors();
             NotifySelectionChanged();
         }
 
@@ -257,12 +303,12 @@ namespace Pitech.XR.Interactables
 
             var l = lists[activeIndex];
             ShowText(l != null && !l.isCompleted
-                ? $"Try again for <b>{l.name}</b> and press <b>Complete</b>."
-                : "Select a list to begin.");
+                ? textRetry.Replace("{list}", l.name)
+                : textStart);
 
             SetButtons(true, false);
 
-            // after clearing, selections changed
+            RefreshButtonColors();
             NotifySelectionChanged();
         }
 
@@ -277,6 +323,41 @@ namespace Pitech.XR.Interactables
         {
             if (completeButton) completeButton.interactable = canComplete;
             if (retryButton) retryButton.interactable = canRetry;
+        }
+
+        // ---------- Button color logic ----------
+        void RefreshButtonColors()
+        {
+            if (!useButtonColors || lists == null) return;
+
+            for (int i = 0; i < lists.Count; i++)
+            {
+                var l = lists[i];
+                if (l == null || !l.hasGraphic) continue;
+
+                Color c;
+                if (l.isCompleted)
+                    c = buttonCompletedColor;
+                else if (i == activeIndex)
+                    c = buttonSelectedColor;
+                else
+                    c = buttonNormalColor;
+
+                // βάψε targetGraphic (Image/TMP/etc.)
+                l.cachedGraphic.color = c;
+
+                // προαιρετικά μπορείς να πειράξεις και τα ButtonColors (Transition=ColorTint)
+                if (l.cachedButton && l.cachedButton.transition == Selectable.Transition.ColorTint)
+                {
+                    var cb = l.cachedButton.colors;
+                    cb.normalColor = buttonNormalColor;
+                    cb.selectedColor = buttonSelectedColor;
+                    cb.highlightedColor = buttonSelectedColor;
+                    cb.pressedColor = buttonSelectedColor;
+                    cb.disabledColor = new Color(cb.disabledColor.r, cb.disabledColor.g, cb.disabledColor.b, cb.disabledColor.a);
+                    l.cachedButton.colors = cb;
+                }
+            }
         }
     }
 }

@@ -12,18 +12,19 @@ namespace Pitech.XR.Interactables.Editor
         // Serialized fields
         SerializedProperty _selectables, _lists, _feedback, _completeBtn, _retryBtn;
 
-        // UI state (static so it persists while selecting other objects)
-        static readonly Dictionary<int, bool> s_Foldout = new();        // listIndex -> open?
-        static readonly Dictionary<int, Vector2> s_ListScroll = new();  // listIndex -> scroll
+        // Feedback
+        SerializedProperty _textStart, _textPrompt, _textCorrect, _textWrong, _textRetry;
+
+        // Colors
+        SerializedProperty _useBtnColors, _colNormal, _colSelected, _colCompleted;
+
+        // UI state
+        static readonly Dictionary<int, bool> s_Foldout = new();
+        static readonly Dictionary<int, Vector2> s_ListScroll = new();
         static string s_Filter = string.Empty;
 
-        // Cached catalog from SelectablesManager (to avoid rebuilding each repaint)
-        struct CatalogCache
-        {
-            public int hash;
-            public Collider[] items;
-            public string[] names;
-        }
+        // Cached catalog from SelectablesManager
+        struct CatalogCache { public int hash; public Collider[] items; public string[] names; }
         CatalogCache _cache;
 
         void OnEnable()
@@ -33,6 +34,17 @@ namespace Pitech.XR.Interactables.Editor
             _feedback = serializedObject.FindProperty("feedback");
             _completeBtn = serializedObject.FindProperty("completeButton");
             _retryBtn = serializedObject.FindProperty("retryButton");
+
+            _textStart = serializedObject.FindProperty("textStart");
+            _textPrompt = serializedObject.FindProperty("textPrompt");
+            _textCorrect = serializedObject.FindProperty("textCorrect");
+            _textWrong = serializedObject.FindProperty("textWrong");
+            _textRetry = serializedObject.FindProperty("textRetry");
+
+            _useBtnColors = serializedObject.FindProperty("useButtonColors");
+            _colNormal = serializedObject.FindProperty("buttonNormalColor");
+            _colSelected = serializedObject.FindProperty("buttonSelectedColor");
+            _colCompleted = serializedObject.FindProperty("buttonCompletedColor");
         }
 
         public override void OnInspectorGUI()
@@ -69,23 +81,46 @@ namespace Pitech.XR.Interactables.Editor
                 EditorGUILayout.PropertyField(_retryBtn, new GUIContent("Retry Button"));
             }
 
+            // ----- Feedback Texts -----
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Feedback Texts", EditorStyles.boldLabel);
+                EditorGUILayout.HelpBox("{list}, {correct}, {missed}, {extras} είναι διαθέσιμα placeholders.", MessageType.None);
+                EditorGUILayout.PropertyField(_textStart, new GUIContent("Start"));
+                EditorGUILayout.PropertyField(_textPrompt, new GUIContent("Prompt"));
+                EditorGUILayout.PropertyField(_textCorrect, new GUIContent("Correct"));
+                EditorGUILayout.PropertyField(_textWrong, new GUIContent("Wrong"));
+                EditorGUILayout.PropertyField(_textRetry, new GUIContent("Retry"));
+            }
+
+            // ----- Button Colors -----
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Button Colors", EditorStyles.boldLabel);
+                EditorGUILayout.PropertyField(_useBtnColors, new GUIContent("Use Button Colors"));
+                if (_useBtnColors.boolValue)
+                {
+                    EditorGUILayout.PropertyField(_colNormal, new GUIContent("Normal"));
+                    EditorGUILayout.PropertyField(_colSelected, new GUIContent("Selected (Active)"));
+                    EditorGUILayout.PropertyField(_colCompleted, new GUIContent("Completed"));
+                }
+            }
+
             DrawLists();
 
             serializedObject.ApplyModifiedProperties();
         }
 
         // ---------------------------------------------------------------------
-        // Blocks
-        // ---------------------------------------------------------------------
 
         void HeaderHelp()
         {
             EditorGUILayout.HelpBox(
                 "Selection Lists (Controller)\n" +
-                "• Logic lives here, no scripts on selectable objects.\n" +
-                "• Each list can reference a world-space button root and Animator.\n" +
-                "• The 'Correct Items' checklist pulls from the Selectables Manager colliders.\n" +
-                "• Hook list buttons to SelectionLists.ActivateList(index).",
+                "• Λογική εδώ, όχι scripts πάνω στα selectable objects.\n" +
+                "• Κάθε λίστα μπορεί να έχει world-space button & Animator.\n" +
+                "• Οι 'Correct Items' τραβιούνται από τον Selectables Manager.\n" +
+                "• Τα κουμπιά βάφονται (Normal/Selected/Completed) αν ενεργοποιήσεις το 'Use Button Colors'.",
                 MessageType.Info);
         }
 
@@ -93,7 +128,7 @@ namespace Pitech.XR.Interactables.Editor
         {
             var mgr = _selectables.objectReferenceValue as SelectablesManager;
             if (mgr != null)
-                RefreshCatalog(mgr); // lazy/no-op if unchanged
+                RefreshCatalog(mgr); // lazy cache
 
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
@@ -113,7 +148,6 @@ namespace Pitech.XR.Interactables.Editor
                     var trigBack = list.FindPropertyRelative("triggerGoBack");
                     var trigDone = list.FindPropertyRelative("triggerCompleted");
 
-                    // Foldout header row
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         bool open = s_Foldout.TryGetValue(i, out var v) ? v : false;
@@ -125,27 +159,23 @@ namespace Pitech.XR.Interactables.Editor
                             removeAt = i;
                     }
 
-                    if (!s_Foldout[i]) continue; // collapsed: draw nothing else
+                    if (!s_Foldout[i]) continue;
 
                     using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                     {
-                        // Name
                         name.stringValue = EditorGUILayout.TextField("Name", name.stringValue);
 
-                        // World-space UI refs
                         EditorGUILayout.Space(2);
                         EditorGUILayout.LabelField("UI (World-space)", EditorStyles.miniBoldLabel);
                         EditorGUILayout.PropertyField(btnRoot, new GUIContent("Button Root"));
                         EditorGUILayout.PropertyField(btnAnim, new GUIContent("Button Animator"));
 
-                        // Triggers (vertical order)
                         EditorGUILayout.Space(2);
                         EditorGUILayout.LabelField("Animator Triggers", EditorStyles.miniBoldLabel);
                         EditorGUILayout.PropertyField(trigFwd, new GUIContent("Trigger • ComeForward"));
                         EditorGUILayout.PropertyField(trigBack, new GUIContent("Trigger • GoBack"));
                         EditorGUILayout.PropertyField(trigDone, new GUIContent("Trigger • Completed"));
 
-                        // Correct items
                         EditorGUILayout.Space(4);
                         EditorGUILayout.LabelField("Correct Items", EditorStyles.miniBoldLabel);
 
@@ -153,15 +183,13 @@ namespace Pitech.XR.Interactables.Editor
                         {
                             EditorGUILayout.HelpBox(
                                 "No colliders found in Selectables Manager. " +
-                                "Open the manager and use 'Collect From Children'.",
+                                "Άνοιξε τον manager και πάτα 'Collect From Children'.",
                                 MessageType.None);
                         }
                         else
                         {
-                            // Filtered view
                             var items = FilteredCatalog();
 
-                            // Scroll (per list)
                             if (!s_ListScroll.TryGetValue(i, out var scroll)) scroll = Vector2.zero;
                             using (var sv = new EditorGUILayout.ScrollViewScope(scroll, GUILayout.MaxHeight(220)))
                             {
@@ -210,7 +238,7 @@ namespace Pitech.XR.Interactables.Editor
                         nl.FindPropertyRelative("triggerComeForward").stringValue = "ComeForward";
                         nl.FindPropertyRelative("triggerGoBack").stringValue = "GoBack";
                         nl.FindPropertyRelative("triggerCompleted").stringValue = "Completed";
-                        s_Foldout[idx] = true; // open the new one
+                        s_Foldout[idx] = true;
                     }
                     if (GUILayout.Button("Clear All"))
                         _lists.ClearArray();
@@ -220,9 +248,7 @@ namespace Pitech.XR.Interactables.Editor
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Catalog caching / filtering
-        // ---------------------------------------------------------------------
+        // ---------- Catalog cache / filter ----------
 
         void RefreshCatalog(SelectablesManager mgr, bool force = false)
         {
@@ -260,7 +286,7 @@ namespace Pitech.XR.Interactables.Editor
             }
         }
 
-        IEnumerable<int> FilteredCatalog()
+        System.Collections.Generic.IEnumerable<int> FilteredCatalog()
         {
             if (_cache.items == null || _cache.items.Length == 0) yield break;
 
@@ -276,9 +302,7 @@ namespace Pitech.XR.Interactables.Editor
                     yield return i;
         }
 
-        // ---------------------------------------------------------------------
-        // List helpers for the SerializedProperty<Collider[]>
-        // ---------------------------------------------------------------------
+        // ---------- SerializedProperty<Collider[]> helpers ----------
 
         static bool Contains(SerializedProperty list, Collider c)
         {
