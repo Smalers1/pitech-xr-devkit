@@ -9,29 +9,30 @@ using UnityEngine.InputSystem;
 
 namespace Pitech.XR.Interactables
 {
-    [AddComponentMenu("Pi tech XR/Scenario/Selectables Manager (Meta VR Ready)")]
+    [AddComponentMenu("Pi tech XR/Scenario/Selectables Manager (Meta VR Ready + AR Safe)")]
     public class SelectablesManager : MonoBehaviour
     {
         [Serializable]
         public class Entry
         {
-            public Collider collider;      // selectable surface (μπορεί να είναι Trigger)
-            public GameObject highlight;   // OPTIONAL: ενεργοποιείται όταν επιλέγεται
+            public Collider collider;      // selectable surface (can be Trigger)
+            public GameObject highlight;   // OPTIONAL: toggled when selected
         }
 
         public enum PlatformMode
         {
-            Auto,           // VR αν υπάρχει XR device, αλλιώς Desktop/Mobile
-            ForceDesktop,   // πάντα desktop/mobile λογική
-            ForceVRMeta     // πάντα VR events (για testing σε Editor)
+            Auto,           // VR if an HMD is active, otherwise Desktop/Mobile
+            ForceDesktop,   // always desktop/mobile logic
+            ForceVRMeta     // always VR events (for Editor testing)
         }
 
         [Header("Mode")]
-        [Tooltip("Auto: VR (Meta events) όταν υπάρχει HMD, αλλιώς Desktop click.")]
+        [Tooltip("Auto: VR (Meta events) when HMD is active, otherwise Desktop/Touch. " +
+                 "For AR with Vuforia/ARF, prefer ForceDesktop if Auto mis-detects VR.")]
         public PlatformMode mode = PlatformMode.Auto;
 
         [Header("Catalog")]
-        [Tooltip("Αν το δώσεις, θα κάνει auto-collect colliders από κάτω.")]
+        [Tooltip("Optional: auto-collect colliders from this root at Awake.")]
         public Transform collectRoot;
         public bool autoCollectInChildren = true;
         public LayerMask selectableLayers = ~0;
@@ -39,8 +40,11 @@ namespace Pitech.XR.Interactables
         public List<Entry> items = new();
 
         [Header("Desktop/Mobile Picking")]
-        public bool pickingEnabled = true;               // ισχύει μόνο για Desktop/Mobile
-        public bool ignoreUI = true;                     // αγνοεί UI clicks
+        [Tooltip("Used only in Desktop/Mobile/AR mode. In VR we rely on Meta events.")]
+        public bool pickingEnabled = true;
+        [Tooltip("If true, taps/clicks over UI are ignored (EventSystem).")]
+        public bool ignoreUI = true;
+        [Tooltip("Ray length for screen-point selection.")]
         public float rayLength = 100f;
 
         [Header("Visuals (fallback)")]
@@ -50,9 +54,11 @@ namespace Pitech.XR.Interactables
 
         public event Action SelectionChanged;
 
+        // state
         readonly HashSet<int> _selected = new();
         readonly Dictionary<int, int> _indexById = new();            // colliderID -> items index
         readonly Dictionary<int, Renderer[]> _renderersById = new();  // colliderID -> renderers
+
         MaterialPropertyBlock _mpb;
         Camera _cam;
 
@@ -63,7 +69,6 @@ namespace Pitech.XR.Interactables
         static bool XRPresent()
         {
 #if UNITY_2020_3_OR_NEWER
-            // απλός και αρκετά αξιόπιστος τρόπος
             return UnityEngine.XR.XRSettings.isDeviceActive;
 #else
             return false;
@@ -80,10 +85,7 @@ namespace Pitech.XR.Interactables
 
             RebuildIndex();
             CacheRenderers();
-            SetAll(false); // σβήσε visuals
-
-            // Στο VR ΔΕΝ διαβάζουμε input. Τα events έρχονται από τους Meta Event Wrappers.
-            // Στο Desktop/Mobile χρησιμοποιούμε click λογική στο Update().
+            SetAll(false); // visuals off at start
         }
 
         public void CollectFromChildren()
@@ -126,62 +128,93 @@ namespace Pitech.XR.Interactables
 
         void Update()
         {
-            // Desktop/Mobile μόνο — στο VR περιμένουμε Meta events
+            // In VR we don't read input here; we wait for Meta events.
             if (IsVR) return;
             if (!pickingEnabled) return;
 
-            if (ignoreUI && EventSystem.current && EventSystem.current.IsPointerOverGameObject())
-                return;
+            HandleDesktopOrARInputThisFrame();
+        }
 
-            if (!PressedThisFrame()) return;
+        // -------- robust desktop/AR input (Input System & Legacy) --------
+        void HandleDesktopOrARInputThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            // 1) Mouse click (editor/desktop)
+            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                var pos = Mouse.current.position.ReadValue();
+                if (!IsOverUI_Mouse())
+                    TriggerWithScreenPoint(pos);
+            }
 
+            // 2) Touch taps (AR/mobile). Loop ALL touches; primaryTouch can be unreliable.
+            var ts = Touchscreen.current;
+            if (ts != null)
+            {
+                foreach (var t in ts.touches)
+                {
+                    if (!t.press.wasPressedThisFrame) continue;
+
+                    var pos = t.position.ReadValue();
+                    var pointerId = t.touchId.ReadValue(); // IMPORTANT for EventSystem UI blocking
+
+                    if (ignoreUI && EventSystem.current != null &&
+                        EventSystem.current.IsPointerOverGameObject(pointerId))
+                        continue;
+
+                    TriggerWithScreenPoint(pos);
+                    // if you want to process only one tap per frame, uncomment next line:
+                    // break;
+                }
+            }
+#else
+            // Legacy Input: mouse
+            if (Input.GetMouseButtonDown(0))
+            {
+                if (!IsOverUI_Mouse())
+                    TriggerWithScreenPoint(Input.mousePosition);
+            }
+
+            // Legacy Input: touch
+            for (int i = 0; i < Input.touchCount; i++)
+            {
+                var touch = Input.GetTouch(i);
+                if (touch.phase != UnityEngine.TouchPhase.Began) continue;
+
+                if (ignoreUI && EventSystem.current != null &&
+                    EventSystem.current.IsPointerOverGameObject(touch.fingerId))
+                    continue;
+
+                TriggerWithScreenPoint(touch.position);
+                // break; // if only one tap per frame
+            }
+#endif
+        }
+
+        bool IsOverUI_Mouse()
+        {
+            if (!ignoreUI || EventSystem.current == null) return false;
+            // For mouse, Input System UI module uses the default IsPointerOverGameObject()
+            return EventSystem.current.IsPointerOverGameObject();
+        }
+
+        void TriggerWithScreenPoint(Vector2 screenPos)
+        {
             if (!_cam) _cam = Camera.main;
             if (!_cam) return;
 
-            Vector2 pos = GetPointerPosition();
-            var ray = _cam.ScreenPointToRay(new Vector3(pos.x, pos.y, 0f));
+            var ray = _cam.ScreenPointToRay(new Vector3(screenPos.x, screenPos.y, 0f));
+            float maxDist = rayLength > 0 ? rayLength : Mathf.Infinity;
 
-            if (Physics.Raycast(ray, out var hit, rayLength > 0 ? rayLength : Mathf.Infinity, selectableLayers, triggerHits))
+            if (Physics.Raycast(ray, out var hit, maxDist, selectableLayers, triggerHits))
             {
                 Toggle(hit.collider);
                 SelectionChanged?.Invoke();
             }
         }
 
-        Vector2 GetPointerPosition()
-        {
-#if ENABLE_INPUT_SYSTEM
-            if (Mouse.current != null) return Mouse.current.position.ReadValue();
-            if (Touchscreen.current != null) return Touchscreen.current.primaryTouch.position.ReadValue();
-            return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
-#else
-            return Input.mousePosition;
-#endif
-        }
-
-        bool PressedThisFrame()
-        {
-#if ENABLE_INPUT_SYSTEM
-            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame) return true;
-            if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame) return true;
-#endif
-#if ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetMouseButtonDown(0)) return true;
-            for (int i = 0; i < Input.touchCount; i++)
-            {
-                if (Input.GetTouch(i).phase == UnityEngine.TouchPhase.Began) return true;
-            }
-#endif
-            return false;
-        }
-
         // ========================= VR (Meta) API =========================
-        // Τα παρακάτω είναι ΟΛΑ ό,τι χρειάζεται να συνδέσεις στα Event Wrappers.
-        // Δεν απαιτούν compile-time references στον Meta SDK.
-
-        /// <summary>
-        /// Καλείται από Event Wrapper που δίνει GameObject (π.χ. OnSelect(GameObject)).
-        /// </summary>
+        /// <summary>Called by Meta Event Wrapper (OnSelect) with the GameObject.</summary>
         public void MetaSelect(GameObject go)
         {
             if (!IsVR || !go) return;
@@ -191,9 +224,7 @@ namespace Pitech.XR.Interactables
             SelectionChanged?.Invoke();
         }
 
-        /// <summary>
-        /// Καλείται από Event Wrapper που δίνει Collider (αν το επιτρέπεις στο Inspector).
-        /// </summary>
+        /// <summary>Called by Meta Event Wrapper (OnSelect) with Collider.</summary>
         public void MetaSelectCollider(Collider col)
         {
             if (!IsVR || !col) return;
@@ -201,10 +232,7 @@ namespace Pitech.XR.Interactables
             SelectionChanged?.Invoke();
         }
 
-        /// <summary>
-        /// Καλείται από Event Wrapper "Unselect" αν θέλεις explicit unselect (optional).
-        /// Αν δεν το χρησιμοποιείς, απλώς μένουμε σε toggle-συμπεριφορά.
-        /// </summary>
+        /// <summary>Optional explicit unselect.</summary>
         public void MetaUnselect(GameObject go)
         {
             if (!IsVR || !go) return;
@@ -213,14 +241,12 @@ namespace Pitech.XR.Interactables
 
             if (_indexById.TryGetValue(col.GetInstanceID(), out int idx))
             {
-                // επιβάλουμε off
                 SetSelected(idx, false);
                 SelectionChanged?.Invoke();
             }
         }
 
         // ====================== Selection & Visuals ======================
-
         public IReadOnlyCollection<int> SelectedIds => _selected;
 
         public void ClearAll(bool alsoTurnOffHighlights)
@@ -295,32 +321,18 @@ namespace Pitech.XR.Interactables
                     if (useEmission)
                         _mpb.SetColor("_EmissionColor", tintColor);
                 }
-                // else _mpb είναι κενό => καθαρίζει overrides
 
                 r.SetPropertyBlock(_mpb);
             }
         }
 
-        // ================= Optional Helper (για εύκολη σύνδεση) =================
-        // Βάλε αυτό το component πάνω στο selectable prefab.
-        // Στον Meta Interactable Unity Event Wrapper:
-        //  - OnSelect  -> MetaSelectRelay.CallSelect()
-        //  - OnUnselect(optional) -> MetaSelectRelay.CallUnselect()
+        // ============ Optional helper to bind from Meta wrapper ============
         [AddComponentMenu("Pi tech XR/Scenario/Meta Select Relay (optional)")]
         public class MetaSelectRelay : MonoBehaviour
         {
             public SelectablesManager manager;
-
-            // Αν ο Event Wrapper μπορεί να δώσει GameObject, μπορείς να καλέσεις manager.MetaSelect(gameObject) απευθείας.
-            // Κρατάμε αυτά τα methods για one-click binding στον Inspector.
-            public void CallSelect()
-            {
-                if (manager) manager.MetaSelect(gameObject);
-            }
-            public void CallUnselect()
-            {
-                if (manager) manager.MetaUnselect(gameObject);
-            }
+            public void CallSelect() { if (manager) manager.MetaSelect(gameObject); }
+            public void CallUnselect() { if (manager) manager.MetaUnselect(gameObject); }
         }
     }
 }
