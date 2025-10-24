@@ -27,9 +27,15 @@ namespace Pitech.XR.Interactables
         }
 
         [Header("Mode")]
-        [Tooltip("Auto: VR (Meta events) when HMD is active, otherwise Desktop/Touch. " +
-                 "For AR with Vuforia/ARF, prefer ForceDesktop if Auto mis-detects VR.")]
+        [Tooltip("Auto: VR (Meta events) when HMD is active, otherwise Desktop/Touch.")]
         public PlatformMode mode = PlatformMode.Auto;
+
+        [Header("Platform Safeguards")]
+        [Tooltip("On Android/iOS always use screen-tap picking, never VR events.")]
+        public bool forceDesktopOnMobile = true;
+
+        [Tooltip("Treat XR as VR only if Meta Interactors exist in the scene.")]
+        public bool xrIsVrOnlyIfMetaPresent = true;
 
         [Header("Catalog")]
         [Tooltip("Optional: auto-collect colliders from this root at Awake.")]
@@ -42,10 +48,15 @@ namespace Pitech.XR.Interactables
         [Header("Desktop/Mobile Picking")]
         [Tooltip("Used only in Desktop/Mobile/AR mode. In VR we rely on Meta events.")]
         public bool pickingEnabled = true;
+
         [Tooltip("If true, taps/clicks over UI are ignored (EventSystem).")]
         public bool ignoreUI = true;
-        [Tooltip("Ray length for screen-point selection.")]
-        public float rayLength = 100f;
+
+        [Tooltip("Ray length for screen-point selection (set large for AR meters).")]
+        public float rayLength = 10000f;
+
+        [Tooltip("If set, rays originate from this camera (assign ARCamera). If null, uses Camera.main.")]
+        public Camera rayCamera;
 
         [Header("Visuals (fallback)")]
         public bool tintSelected = true;
@@ -62,23 +73,49 @@ namespace Pitech.XR.Interactables
         MaterialPropertyBlock _mpb;
         Camera _cam;
 
-        bool IsVR =>
-            mode == PlatformMode.ForceVRMeta ||
-            (mode == PlatformMode.Auto && XRPresent());
+        Camera Cam => rayCamera ? rayCamera : (_cam ? _cam : (_cam = Camera.main));
 
-        static bool XRPresent()
+        bool IsVR
         {
+            get
+            {
+                if (mode == PlatformMode.ForceVRMeta) return true;
+                if (mode == PlatformMode.ForceDesktop) return false;
+
+                if (forceDesktopOnMobile && Application.isMobilePlatform) return false;
+
 #if UNITY_2020_3_OR_NEWER
-            return UnityEngine.XR.XRSettings.isDeviceActive;
+                bool xrActive = UnityEngine.XR.XRSettings.isDeviceActive;
 #else
-            return false;
+                bool xrActive = false;
 #endif
+                if (!xrActive) return false;
+
+                if (xrIsVrOnlyIfMetaPresent && !MetaStuffPresent()) return false;
+                return true;
+            }
+        }
+
+        static bool MetaStuffPresent()
+        {
+            return HasTypeInScene("RayInteractor")
+                || HasTypeInScene("InteractableUnityEventWrapper");
+        }
+        static bool HasTypeInScene(string shortTypeName)
+        {
+            var all = Resources.FindObjectsOfTypeAll<Component>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                var t = all[i]?.GetType();
+                if (t != null && t.Name == shortTypeName) return true;
+            }
+            return false;
         }
 
         void Awake()
         {
             _mpb = new MaterialPropertyBlock();
-            _cam = Camera.main;
+            _cam = rayCamera ? rayCamera : Camera.main;
 
             if (autoCollectInChildren && collectRoot)
                 CollectFromChildren();
@@ -143,8 +180,7 @@ namespace Pitech.XR.Interactables
             if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
             {
                 var pos = Mouse.current.position.ReadValue();
-                if (!IsOverUI_Mouse())
-                    TriggerWithScreenPoint(pos);
+                if (!IsOverUI_Mouse()) TriggerWithScreenPoint(pos);
             }
 
             // 2) Touch taps (AR/mobile). Loop ALL touches; primaryTouch can be unreliable.
@@ -156,23 +192,21 @@ namespace Pitech.XR.Interactables
                     if (!t.press.wasPressedThisFrame) continue;
 
                     var pos = t.position.ReadValue();
-                    var pointerId = t.touchId.ReadValue(); // IMPORTANT for EventSystem UI blocking
+                    var pointerId = t.touchId.ReadValue(); // needed for UI blocking per touch
 
                     if (ignoreUI && EventSystem.current != null &&
                         EventSystem.current.IsPointerOverGameObject(pointerId))
                         continue;
 
                     TriggerWithScreenPoint(pos);
-                    // if you want to process only one tap per frame, uncomment next line:
-                    // break;
+                    // break; // uncomment if you want only one selection per frame
                 }
             }
 #else
             // Legacy Input: mouse
             if (Input.GetMouseButtonDown(0))
             {
-                if (!IsOverUI_Mouse())
-                    TriggerWithScreenPoint(Input.mousePosition);
+                if (!IsOverUI_Mouse()) TriggerWithScreenPoint(Input.mousePosition);
             }
 
             // Legacy Input: touch
@@ -186,7 +220,7 @@ namespace Pitech.XR.Interactables
                     continue;
 
                 TriggerWithScreenPoint(touch.position);
-                // break; // if only one tap per frame
+                // break;
             }
 #endif
         }
@@ -194,16 +228,15 @@ namespace Pitech.XR.Interactables
         bool IsOverUI_Mouse()
         {
             if (!ignoreUI || EventSystem.current == null) return false;
-            // For mouse, Input System UI module uses the default IsPointerOverGameObject()
             return EventSystem.current.IsPointerOverGameObject();
         }
 
         void TriggerWithScreenPoint(Vector2 screenPos)
         {
-            if (!_cam) _cam = Camera.main;
-            if (!_cam) return;
+            var cam = Cam;
+            if (!cam) return;
 
-            var ray = _cam.ScreenPointToRay(new Vector3(screenPos.x, screenPos.y, 0f));
+            var ray = cam.ScreenPointToRay(new Vector3(screenPos.x, screenPos.y, 0f));
             float maxDist = rayLength > 0 ? rayLength : Mathf.Infinity;
 
             if (Physics.Raycast(ray, out var hit, maxDist, selectableLayers, triggerHits))
@@ -262,13 +295,6 @@ namespace Pitech.XR.Interactables
             if (!on) _selected.Clear();
         }
 
-        public void Toggle(Collider col)
-        {
-            if (!col) return;
-            if (_indexById.TryGetValue(col.GetInstanceID(), out int idx))
-                Toggle(idx);
-        }
-
         public void Toggle(int index)
         {
             if (index < 0 || index >= items.Count) return;
@@ -278,6 +304,13 @@ namespace Pitech.XR.Interactables
             int id = c.GetInstanceID();
             bool now = !_selected.Contains(id);
             SetSelected(index, now);
+        }
+
+        public void Toggle(Collider col)
+        {
+            if (!col) return;
+            if (_indexById.TryGetValue(col.GetInstanceID(), out int idx))
+                Toggle(idx);
         }
 
         void SetSelected(int index, bool on)
@@ -321,7 +354,6 @@ namespace Pitech.XR.Interactables
                     if (useEmission)
                         _mpb.SetColor("_EmissionColor", tintColor);
                 }
-
                 r.SetPropertyBlock(_mpb);
             }
         }

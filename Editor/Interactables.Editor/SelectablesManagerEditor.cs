@@ -7,20 +7,23 @@ using Pitech.XR.Interactables;
 public class SelectablesManagerEditor : Editor
 {
     // Mode
-    SerializedProperty _mode;
+    SerializedProperty _mode, _forceDesktopOnMobile, _xrIsVrOnlyIfMetaPresent;
 
     // Catalog
     SerializedProperty _collectRoot, _auto, _layers, _trigger, _items;
 
-    // Desktop/Mobile picking (στο VR αγνοείται)
-    SerializedProperty _pickingEnabled, _rayLength, _ignoreUI;
+    // Picking (Desktop/Mobile/AR)
+    SerializedProperty _pickingEnabled, _rayLength, _ignoreUI, _rayCamera;
 
     // Visuals
     SerializedProperty _tintSelected, _tintColor, _useEmission;
 
     void OnEnable()
     {
+        // Mode
         _mode = serializedObject.FindProperty("mode");
+        _forceDesktopOnMobile = serializedObject.FindProperty("forceDesktopOnMobile");
+        _xrIsVrOnlyIfMetaPresent = serializedObject.FindProperty("xrIsVrOnlyIfMetaPresent");
 
         // Catalog
         _collectRoot = serializedObject.FindProperty("collectRoot");
@@ -29,10 +32,11 @@ public class SelectablesManagerEditor : Editor
         _trigger = serializedObject.FindProperty("triggerHits");
         _items = serializedObject.FindProperty("items");
 
-        // Picking (Desktop/Mobile)
+        // Picking
         _pickingEnabled = serializedObject.FindProperty("pickingEnabled");
-        _rayLength = serializedObject.FindProperty("rayLength");
         _ignoreUI = serializedObject.FindProperty("ignoreUI");
+        _rayLength = serializedObject.FindProperty("rayLength");
+        _rayCamera = serializedObject.FindProperty("rayCamera");
 
         // Visuals
         _tintSelected = serializedObject.FindProperty("tintSelected");
@@ -45,10 +49,10 @@ public class SelectablesManagerEditor : Editor
         serializedObject.Update();
 
         EditorGUILayout.HelpBox(
-            "Selectables Manager (Meta VR Ready)\n" +
-            "• VR (Meta): Χρήση Ray Interactor + Event Wrappers → κάλεσε MetaSelect/MetaUnselect.\n" +
-            "• Desktop/Mobile: Click-to-select με Camera.ScreenPointToRay.\n" +
-            "• Δεν χρειάζονται custom raycasts στο VR.",
+            "Selectables Manager (Meta VR + AR)\n" +
+            "• VR: Use Meta Ray Interactor + Event Wrappers → call MetaSelect/MetaUnselect.\n" +
+            "• Desktop/AR: ScreenPointToRay from the Ray Camera (assign your ARCamera).\n" +
+            "• UI still works; world taps are blocked only when really over UI.",
             MessageType.Info);
 
         // ---------------- Mode & Input ----------------
@@ -57,22 +61,43 @@ public class SelectablesManagerEditor : Editor
             EditorGUILayout.LabelField("Mode & Input", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(_mode, new GUIContent("Platform Mode"));
 
+            EditorGUILayout.Space(2);
+            EditorGUILayout.LabelField("Platform Safeguards", EditorStyles.miniBoldLabel);
+            EditorGUILayout.PropertyField(_forceDesktopOnMobile, new GUIContent("Force Desktop On Mobile"));
+            EditorGUILayout.PropertyField(_xrIsVrOnlyIfMetaPresent, new GUIContent("XR is VR Only If Meta Present"));
+
             var modeEnum = (SelectablesManager.PlatformMode)_mode.enumValueIndex;
 
             if (modeEnum == SelectablesManager.PlatformMode.ForceVRMeta)
             {
                 EditorGUILayout.HelpBox(
-                    "VR (Meta) mode: Η επιλογή γίνεται από τα Meta Event Wrappers.\n" +
-                    "Δέσε στα UnityEvents:\n" +
-                    " • OnSelect → SelectablesManager.MetaSelect(GameObject)\n" +
-                    " • (προαιρετικό) OnUnselect → SelectablesManager.MetaUnselect(GameObject)",
+                    "VR (Meta): selection comes from Meta Event Wrappers.\n" +
+                    "Bind:\n" +
+                    "• OnSelect → SelectablesManager.MetaSelect(GameObject)\n" +
+                    "• (optional) OnUnselect → SelectablesManager.MetaUnselect(GameObject)",
                     MessageType.None);
             }
             else
             {
-                EditorGUILayout.PropertyField(_pickingEnabled, new GUIContent("Picking Enabled (Desktop/Mobile)"));
-                EditorGUILayout.PropertyField(_rayLength, new GUIContent("Ray Length (Desktop/Mobile)"));
+                EditorGUILayout.PropertyField(_pickingEnabled, new GUIContent("Picking Enabled (Desktop/AR)"));
+                EditorGUILayout.PropertyField(_rayCamera, new GUIContent("Ray Camera (ARCamera)"));
+                EditorGUILayout.PropertyField(_rayLength, new GUIContent("Ray Length (Desktop/AR)"));
                 EditorGUILayout.PropertyField(_ignoreUI, new GUIContent("Ignore UI (EventSystem)"));
+
+                // Quick AR preset
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("Apply AR Preset", GUILayout.Width(140)))
+                    {
+                        _mode.enumValueIndex = (int)SelectablesManager.PlatformMode.Auto;
+                        _forceDesktopOnMobile.boolValue = true;
+                        _xrIsVrOnlyIfMetaPresent.boolValue = true;
+                        if (_rayLength.floatValue < 10000f) _rayLength.floatValue = 10000f;
+                        _pickingEnabled.boolValue = true;
+                        _ignoreUI.boolValue = true;
+                    }
+                }
             }
         }
 
@@ -104,7 +129,6 @@ public class SelectablesManagerEditor : Editor
                         EditorUtility.SetDirty(mgr);
                     }
                 }
-
                 if (GUILayout.Button("Clear All"))
                     _items.ClearArray();
             }
