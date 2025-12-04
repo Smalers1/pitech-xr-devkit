@@ -178,6 +178,7 @@ namespace Pitech.XR.Scenario.Editor
                 menu.AddItem(new GUIContent("Add Question"), false, () => AddStep(typeof(Runtime.QuestionStep)));
                 menu.AddItem(new GUIContent("Add Selection"), false, () => AddStep(typeof(Runtime.SelectionStep)));
                 menu.AddItem(new GUIContent("Add Insert"), false, () => AddStep(typeof(Runtime.InsertStep)));
+                menu.AddItem(new GUIContent("Add Event"), false, () => AddStep(typeof(Runtime.EventStep)));
                 menu.ShowAsContext();
             };
 
@@ -224,7 +225,9 @@ namespace Pitech.XR.Scenario.Editor
                     full.Contains(nameof(Runtime.QuestionStep)) ? "Question" :
                     full.Contains(nameof(Runtime.SelectionStep)) ? "Selection" :
                     full.Contains(nameof(Runtime.InsertStep)) ? "Insert" :
+                    full.Contains(nameof(Runtime.EventStep)) ? "Event" :
                     "Step";
+
 
                 var header2 = new Rect(rect.x + 4, rect.y + 4, rect.width - 8, EditorGUIUtility.singleLineHeight);
                 DrawStepHeader(header2, index, kind);
@@ -426,6 +429,21 @@ namespace Pitech.XR.Scenario.Editor
                             }
                         }
                     }
+                    else if (s is Runtime.EventStep ev)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Label("Next", GUILayout.Width(60));
+                            int choice = Popup(ev.nextGuid);
+                            string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                            if (newGuid != ev.nextGuid)
+                            {
+                                Undo.RecordObject(sc, "Route Change");
+                                ev.nextGuid = newGuid;
+                                EditorUtility.SetDirty(sc);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -518,6 +536,11 @@ namespace Pitech.XR.Scenario.Editor
                     if (ins.positionTolerance <= 0f)
                         Styles.Info($"Step {i}: Insert position tolerance is 0 or negative, step may never complete.");
                 }
+                else if (s is Runtime.EventStep ev)
+                {
+                    if (ev.onEnter == null || ev.onEnter.GetPersistentEventCount() == 0)
+                        Styles.Info($"Step {i}: Event has no listeners. It will only wait {ev.waitSeconds} seconds then continue.");
+                }
             }
 
             if (warnings == 0)
@@ -534,7 +557,8 @@ namespace Pitech.XR.Scenario.Editor
             static readonly Color cBadgeCards = new Color(0.32f, 0.62f, 0.32f);
             static readonly Color cBadgeQuestion = new Color(0.76f, 0.45f, 0.22f);
             static readonly Color cBadgeSelection = new Color(0.58f, 0.38f, 0.78f);
-            static readonly Color cBadgeInsert = new Color(0.90f, 0.75f, 0.25f); // yellow-ish for 'Insert'
+            static readonly Color cBadgeInsert = new Color(0.90f, 0.75f, 0.25f);
+            static readonly Color cBadgeEvent = new Color(0.30f, 0.70f, 0.75f);
 
             public static readonly GUIStyle SectionBox;
             public static readonly Color HeaderBg = new Color(0.11f, 0.12f, 0.15f);
@@ -613,6 +637,7 @@ namespace Pitech.XR.Scenario.Editor
                 else if (kind == "Question") col = cBadgeQuestion;
                 else if (kind == "Selection") col = cBadgeSelection;
                 else if (kind == "Insert") col = cBadgeInsert;
+                else if (kind == "Event") col = cBadgeEvent;
 
                 var bg = new Rect(r.x, r.y, r.width, r.height);
                 EditorGUI.DrawRect(bg, col);
@@ -839,7 +864,6 @@ namespace Pitech.XR.Scenario.Editor
         }
     }
 
-    // -------- NEW: InsertStep drawer --------
     [CustomPropertyDrawer(typeof(Runtime.InsertStep))]
     class InsertStepDrawer : PropertyDrawer
     {
@@ -894,5 +918,49 @@ namespace Pitech.XR.Scenario.Editor
             }
         }
     }
+    [CustomPropertyDrawer(typeof(Runtime.EventStep))]
+    class EventStepDrawer : PropertyDrawer
+    {
+        static readonly string[] fields = { "onEnter", "waitSeconds" };
+
+        public override float GetPropertyHeight(SerializedProperty p, GUIContent label)
+        {
+            if (p == null) return 0f;
+            float h = 0f;
+            foreach (var f in fields)
+            {
+                var sp = p.FindPropertyRelative(f);
+                h += ((sp != null) ? EditorGUI.GetPropertyHeight(sp, true) : EditorGUIUtility.singleLineHeight)
+                   + EditorGUIUtility.standardVerticalSpacing;
+            }
+            return h;
+        }
+
+        public override void OnGUI(Rect r, SerializedProperty p, GUIContent label)
+        {
+            if (p == null) return;
+
+            foreach (var f in fields)
+            {
+                var sp = p.FindPropertyRelative(f);
+                string nice =
+                    f == "onEnter" ? "On Enter Events" :
+                    f == "waitSeconds" ? "Wait Seconds Before Next" :
+                    ObjectNames.NicifyVariableName(f);
+
+                if (sp == null)
+                {
+                    EditorGUI.LabelField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), nice);
+                    r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                    continue;
+                }
+
+                var h = EditorGUI.GetPropertyHeight(sp, true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(nice), true);
+                r.y += h + EditorGUIUtility.standardVerticalSpacing;
+            }
+        }
+    }
+
 }
 #endif

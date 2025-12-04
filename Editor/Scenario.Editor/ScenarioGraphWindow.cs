@@ -18,12 +18,18 @@ using UIEButton = UnityEngine.UIElements.Button;
 
 public class ScenarioGraphWindow : EditorWindow
 {
+    [SerializeField]
     Scenario scenario;
     ScenarioGraphView view;
     readonly Dictionary<string, StepNode> nodes = new();
     Vector2 mouseWorld;
 
-    // NEW: guard to avoid wiping links while rebuilding UI
+    string _activeGuid;
+    string _prevGuid;
+
+    Color _edgeDefaultColor = new Color(0.7f, 0.7f, 0.7f);
+    int _edgeDefaultWidth = 2;
+
     bool _isLoading;
 
     [MenuItem("Pi tech/Scenario Graph")]
@@ -62,13 +68,25 @@ public class ScenarioGraphWindow : EditorWindow
         view.OnContextAdd += ShowCreateMenu;
         view.OnMouseWorld += p => mouseWorld = p;
         rootVisualElement.Add(view);
+
+        // NEW: start listening to playmode updates
+        EditorApplication.update += OnEditorUpdate;
+
+        if (scenario != null)
+        {
+            Load(scenario);
+        }
     }
 
     void OnDisable()
     {
         view?.RemoveFromHierarchy();
         nodes.Clear();
+
+        // NEW: stop listening
+        EditorApplication.update -= OnEditorUpdate;
     }
+
 
     // ---------- load graph from component ----------
     void Load(Scenario sc)
@@ -77,6 +95,10 @@ public class ScenarioGraphWindow : EditorWindow
         titleContent = new GUIContent(sc ? $"Scenario Graph • {sc.gameObject.name}" : "Scenario Graph");
 
         _isLoading = true; // begin guarded load
+        
+        _activeGuid = null;
+        _prevGuid = null;
+        UpdateNodeHighlights(null, null);
 
         view.ClearGraph();
         nodes.Clear();
@@ -141,6 +163,9 @@ public class ScenarioGraphWindow : EditorWindow
             }
             if (s is InsertStep ins && !string.IsNullOrEmpty(ins.nextGuid) && nodes.TryGetValue(ins.guid, out var insNode))
                 Connect(insNode.outNext, ins.nextGuid);
+            
+            if (s is EventStep ev && !string.IsNullOrEmpty(ev.nextGuid) && nodes.TryGetValue(ev.guid, out var evNode))
+                Connect(evNode.outNext, ev.nextGuid);
         }
         // Selection edges (Correct/Wrong)
         foreach (var s in scenario.steps)
@@ -204,11 +229,13 @@ public class ScenarioGraphWindow : EditorWindow
                 sl.wrongNextGuid = "";
             }
 
-            // NEW: Insert route
             if (st is InsertStep ins)
             {
                 ins.nextGuid = "";
             }
+            
+            else if (st is EventStep ev)
+                ev.nextGuid = "";
         }
 
         // re-assign from visible edges
@@ -236,6 +263,10 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 oins.nextGuid = inNode.step.guid;
             }
+
+            else if (outMeta.owner is EventStep oev)
+                oev.nextGuid = inNode.step.guid;
+
         }
 
         Dirty(scenario, "Route Change");
@@ -270,6 +301,120 @@ public class ScenarioGraphWindow : EditorWindow
         var edge = src.ConnectTo(dstNode.inPort);
         view.AddElement(edge);
     }
+
+    void OnEditorUpdate()
+    {
+        // Only highlight during play
+        if (!Application.isPlaying)
+        {
+            UpdateNodeHighlights(null, null);
+            return;
+        }
+
+        // Find any SceneManager in the scene
+        var managers = UnityEngine.Object.FindObjectsOfType<Pitech.XR.Scenario.SceneManager>();
+        if (managers == null || managers.Length == 0)
+        {
+            UpdateNodeHighlights(null, null);
+            return;
+        }
+
+        // Prefer one whose scenario matches ours, otherwise just take the first
+        var mgr = managers.FirstOrDefault(m => m && m.scenario == scenario)
+                  ?? managers.FirstOrDefault(m => m && m.scenario != null);
+
+        if (!mgr || mgr.scenario == null || mgr.scenario.steps == null)
+        {
+            UpdateNodeHighlights(null, null);
+            return;
+        }
+
+        // Make sure the window is looking at the same Scenario as the running manager
+        if (scenario != mgr.scenario)
+        {
+            scenario = mgr.scenario;
+            Load(scenario);         // rebuild nodes for the runtime scenario
+        }
+
+        var sc = mgr.scenario;
+
+        int idx = mgr.StepIndex;
+        if (idx < 0 || idx >= sc.steps.Count)
+        {
+            UpdateNodeHighlights(null, null);
+            return;
+        }
+
+        var curStep = sc.steps[idx];
+        if (curStep == null || string.IsNullOrEmpty(curStep.guid))
+        {
+            UpdateNodeHighlights(null, null);
+            return;
+        }
+
+        string curGuid = curStep.guid;
+
+        // Drive the active / previous flow
+        if (curGuid != _activeGuid)
+        {
+            _prevGuid = _activeGuid;
+            _activeGuid = curGuid;
+            UpdateNodeHighlights(_activeGuid, _prevGuid);
+        }
+    }
+
+
+    void UpdateNodeHighlights(string activeGuid, string prevGuid)
+    {
+        // Nodes
+        foreach (var kv in nodes)
+        {
+            bool isActive = kv.Key == activeGuid;
+            kv.Value.SetActiveHighlight(isActive);
+        }
+
+        // Edges
+        if (view == null) return;
+
+        var edges = view.graphElements.ToList().OfType<Edge>().ToList();
+        foreach (var e in edges)
+        {
+            var fromNode = e.output?.node as StepNode;
+            var toNode = e.input?.node as StepNode;
+
+            if (fromNode == null || toNode == null)
+                continue;
+
+            bool isTransitionEdge =
+                !string.IsNullOrEmpty(activeGuid) &&
+                !string.IsNullOrEmpty(prevGuid) &&
+                fromNode.step != null && toNode.step != null &&
+                fromNode.step.guid == prevGuid &&
+                toNode.step.guid == activeGuid;
+
+            var ec = e.edgeControl;
+            if (ec == null)
+                continue;
+
+            Color activeColor = new Color(0.3f, 0.7f, 1f); // μπλε-κυανό
+
+            if (isTransitionEdge)
+            {
+                ec.inputColor = activeColor;
+                ec.outputColor = activeColor;
+                ec.edgeWidth = 3;          // int, όχι float
+            }
+            else
+            {
+                ec.inputColor = _edgeDefaultColor;
+                ec.outputColor = _edgeDefaultColor;
+                ec.edgeWidth = _edgeDefaultWidth;
+            }
+
+            e.MarkDirtyRepaint();
+        }
+    }
+
 
     // ---------- context menu ----------
     void ShowCreateMenu(ContextualMenuPopulateEvent evt)
@@ -370,6 +515,8 @@ public class ScenarioGraphWindow : EditorWindow
 
         static readonly ECListener edgeListener = new ECListener();
 
+        bool _isActive;
+
         public StepNode(Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks)
         {
             scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks;
@@ -402,6 +549,7 @@ public class ScenarioGraphWindow : EditorWindow
                 else if (step is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
                 else if (step is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
                 else if (step is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
+                else if (step is EventStep ev) StepEditWindow.OpenEvent(scenario, ev);
             })
             { text = "Edit…" };
 
@@ -533,12 +681,90 @@ public class ScenarioGraphWindow : EditorWindow
                 outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
                 outputContainer.Add(outNext);
             }
+            else if (s is EventStep ev)
+            {
+                // Cache SerializedObject + this step's SerializedProperty once
+                var so = new SerializedObject(scenario);
+                var stepsProp = so.FindProperty("steps");
+                SerializedProperty stepProp = null;
 
+                if (stepsProp != null)
+                {
+                    for (int i = 0; i < stepsProp.arraySize; i++)
+                    {
+                        var el = stepsProp.GetArrayElementAtIndex(i);
+                        var g = el.FindPropertyRelative("guid");
+                        if (g != null && g.stringValue == ev.guid)
+                        {
+                            stepProp = el;
+                            break;
+                        }
+                    }
+                }
 
+                // IMGUIContainer that actually draws the fields
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    if (stepProp == null) return; // nothing to draw
+
+                    so.Update();
+                    EditorGUI.BeginChangeCheck();
+
+                    var onEnterProp = stepProp.FindPropertyRelative("onEnter");
+                    var waitProp = stepProp.FindPropertyRelative("waitSeconds");
+
+                    if (onEnterProp != null)
+                        EditorGUILayout.PropertyField(onEnterProp, new GUIContent("On Enter Events"));
+
+                    if (waitProp != null)
+                        EditorGUILayout.PropertyField(waitProp, new GUIContent("Wait Seconds Before Next"));
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        so.ApplyModifiedProperties();
+                        Dirty(scenario, "Edit Event");
+                    }
+                }));
+
+                // Normal Next output like the other linear steps
+                outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                outputContainer.Add(outNext);
+            }
 
 
             RefreshExpandedState();
             RefreshPorts();
+        }
+
+        public void SetActiveHighlight(bool active)
+        {
+            if (_isActive == active) return;
+            _isActive = active;
+
+            // Θα βάλουμε “glow” με border πάνω στο mainContainer
+            var mc = this.mainContainer;
+
+            if (active)
+            {
+                mc.style.borderTopWidth = 3;
+                mc.style.borderBottomWidth = 3;
+                mc.style.borderLeftWidth = 3;
+                mc.style.borderRightWidth = 3;
+                var c = new Color(0.3f, 0.7f, 1f);
+                mc.style.borderTopColor = c;
+                mc.style.borderBottomColor = c;
+                mc.style.borderLeftColor = c;
+                mc.style.borderRightColor = c;
+            }
+            else
+            {
+                mc.style.borderTopWidth = 0;
+                mc.style.borderBottomWidth = 0;
+                mc.style.borderLeftWidth = 0;
+                mc.style.borderRightWidth = 0;
+            }
+
+            this.MarkDirtyRepaint();
         }
 
         Port MakePort(Direction dir, Port.Capacity cap, string label, int choiceIndex)
@@ -635,6 +861,10 @@ sealed class StepEditWindow : EditorWindow
 
     public static void OpenInsert(Scenario sc, InsertStep ins)
     => Open(sc, ins.guid, "Insert", w => w.DrawInsert());
+
+    public static void OpenEvent(Scenario sc, EventStep ev)
+    => Open(sc, ev.guid, "Event", w => w.DrawEvent());
+
 
     static void Open(Scenario sc, string guid, string title, Action<StepEditWindow> draw, Action afterApply = null)
     {
@@ -830,6 +1060,22 @@ sealed class StepEditWindow : EditorWindow
 
         DrawNextGuid();
     }
+
+    void DrawEvent()
+    {
+        EditorGUILayout.LabelField("Event", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(
+            stepProp.FindPropertyRelative("onEnter"),
+            new GUIContent("On Enter Events")
+        );
+        EditorGUILayout.PropertyField(
+            stepProp.FindPropertyRelative("waitSeconds"),
+            new GUIContent("Wait Seconds Before Next")
+        );
+
+        DrawNextGuid();
+    }
+
 
     void DrawCorrectWrongGuids()
     {

@@ -124,11 +124,15 @@ namespace Pitech.XR.Scenario
                     yield return RunSelection(sel);
                     branchGuid = _nextGuidFromSelection; // null or ""
                 }
-
                 else if (step is InsertStep ins)
                 {
                     yield return RunInsert(ins);
                     branchGuid = ins.nextGuid;
+                }
+                else if (step is EventStep ev)
+                {
+                    yield return RunEvent(ev);
+                    branchGuid = ev.nextGuid;
                 }
 
                 // compute next index. empty guid means "next in list"
@@ -144,6 +148,7 @@ namespace Pitech.XR.Scenario
 
                 yield return null;
             }
+
 
             DeactivateAllVisuals();
             StepIndex = -1;
@@ -619,6 +624,36 @@ namespace Pitech.XR.Scenario
             yield return WaitForPointerRelease();
         }
 
+        // ---------------- EVENT ----------------
+        IEnumerator RunEvent(EventStep ev)
+        {
+            if (ev == null)
+                yield break;
+
+            // Fire the event safely
+            try
+            {
+                ev.onEnter?.Invoke();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex, this);
+            }
+
+            // Optional wait
+            float wait = ev.waitSeconds;
+            if (wait > 0f)
+            {
+                float t = 0f;
+                while (t < wait)
+                {
+                    t += Time.deltaTime;
+                    yield return null;
+                }
+            }
+
+            // Then we simply return, and the main Run() loop advances to next step
+        }
 
         // ---------------- helpers ----------------
         static bool AnyPointerDown()

@@ -160,7 +160,7 @@ namespace Pitech.XR.Scenario
         public override string Kind => "Selection";
     }
 
-    // -------- NEW: InsertStep --------
+    // -------- InsertStep --------
     [Serializable]
     public sealed class InsertStep : Step
     {
@@ -200,6 +200,23 @@ namespace Pitech.XR.Scenario
         public string nextGuid = "";
 
         public override string Kind => "Insert";
+    }
+
+    [Serializable]
+    public sealed class EventStep : Step
+    {
+        [Header("Events")]
+        [Tooltip("Invoked when this step starts")]
+        public UnityEngine.Events.UnityEvent onEnter = new UnityEngine.Events.UnityEvent();
+
+        [Header("Flow")]
+        [Tooltip("Optional delay before we advance to the next step (seconds). 0 = advance immediately")]
+        public float waitSeconds = 0f;
+
+        [Tooltip("Next step (GUID). Empty = next item in list")]
+        public string nextGuid = "";
+
+        public override string Kind => "Event";
     }
 
 

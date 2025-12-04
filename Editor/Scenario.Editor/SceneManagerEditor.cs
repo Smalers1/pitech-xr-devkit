@@ -305,6 +305,14 @@ namespace Pitech.XR.Scenario.Editor
                             string targetName = ins.targetTrigger ? ins.targetTrigger.name : "no target";
                             EditorGUILayout.LabelField($"{itemName} → {targetName}");
                         }
+                        else if (s is Pitech.XR.Scenario.EventStep ev)
+                        {
+                            EditorGUILayout.LabelField($"{i:00}. Event", GUILayout.Width(170));
+                            string waitTxt = ev.waitSeconds > 0f
+                                ? $"wait {ev.waitSeconds:0.##}s then next"
+                                : "no wait, immediate next";
+                            EditorGUILayout.LabelField(waitTxt);
+                        }
                         else
                         {
                             // Fallback για οποιοδήποτε μελλοντικό step type
