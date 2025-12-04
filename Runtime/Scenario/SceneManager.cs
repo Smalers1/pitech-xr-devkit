@@ -125,6 +125,12 @@ namespace Pitech.XR.Scenario
                     branchGuid = _nextGuidFromSelection; // null or ""
                 }
 
+                else if (step is InsertStep ins)
+                {
+                    yield return RunInsert(ins);
+                    branchGuid = ins.nextGuid;
+                }
+
                 // compute next index. empty guid means "next in list"
                 if (string.IsNullOrEmpty(branchGuid))
                 {
@@ -380,10 +386,9 @@ namespace Pitech.XR.Scenario
                 s.submitButton.onClick.AddListener(submitCb);
             }
 
-            // Listen to selection changes for auto-complete mode
-            bool changed = true;
-            System.Action onChanged = () => { changed = true; };
-            lists.OnSelectionChanged += onChanged;
+            // Cleanup listeners
+            if (submitCb != null && s.submitButton)
+                s.submitButton.onClick.RemoveListener(submitCb);
 
             float t = 0f;
             bool done = false;
@@ -434,9 +439,9 @@ namespace Pitech.XR.Scenario
 
 
             // Cleanup listeners
-            lists.OnSelectionChanged -= onChanged;
             if (submitCb != null && s.submitButton)
                 s.submitButton.onClick.RemoveListener(submitCb);
+
 
             // Hide UI & disable picking to avoid spill into next step
             if (lists.selectables != null) lists.selectables.pickingEnabled = false;
@@ -507,6 +512,113 @@ namespace Pitech.XR.Scenario
                 runtime[eff.key] = nxt;
             }
         }
+
+        // ---------------- INSERT ----------------
+        IEnumerator RunInsert(InsertStep ins)
+        {
+            if (ins == null || ins.item == null || ins.targetTrigger == null)
+            {
+                Debug.LogWarning("[Scenario] InsertStep requires Item and TargetTrigger.", this);
+                yield break;
+            }
+
+            // Ensure item & trigger visible
+            SafeSet(ins.item.gameObject, true);
+            SafeSet(ins.targetTrigger.gameObject, true);
+
+            // Avoid consuming previous click
+            yield return WaitForPointerRelease();
+
+            // Find all item colliders
+            var itemColliders = ins.item.GetComponentsInChildren<Collider>();
+            if (itemColliders == null || itemColliders.Length == 0)
+            {
+                Debug.LogWarning("[Scenario] InsertStep: Item has no Colliders. Completing immediately.", this);
+            }
+            else
+            {
+                bool hit = false;
+
+                while (!hit)
+                {
+                    if (!ins.targetTrigger)
+                        yield break;
+
+                    foreach (var col in itemColliders)
+                    {
+                        if (!col) continue;
+                        if (AreCollidersOverlapping(col, ins.targetTrigger))
+                        {
+                            hit = true;
+                            break;
+                        }
+                    }
+
+                    if (!hit)
+                        yield return null;
+                }
+            }
+
+            // We consider it "inserted" here
+            var body = ins.item.GetComponentInChildren<Rigidbody>();
+            if (body != null)
+            {
+                // Always stop any crazy motion
+                body.velocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+                // BUT: do NOT touch isKinematic here
+                // that depends on smoothAttach
+            }
+
+            // Only if smoothAttach is enabled we do the snapping / parenting style behaviour
+            if (ins.smoothAttach)
+            {
+                Transform targetPose =
+                    ins.attachTransform != null
+                        ? ins.attachTransform
+                        : ins.targetTrigger.transform;
+
+                if (targetPose != null)
+                {
+                    // For smooth attach we usually want to freeze physics
+                    if (body != null)
+                        body.isKinematic = true;
+
+                    if (ins.parentToAttach)
+                        ins.item.SetParent(targetPose, true);
+
+                    while (true)
+                    {
+                        ins.item.position = Vector3.MoveTowards(
+                            ins.item.position,
+                            targetPose.position,
+                            ins.moveSpeed * Time.deltaTime
+                        );
+
+                        ins.item.rotation = Quaternion.Slerp(
+                            ins.item.rotation,
+                            targetPose.rotation,
+                            ins.rotateSpeed * Time.deltaTime
+                        );
+
+                        float posDist = Vector3.Distance(ins.item.position, targetPose.position);
+                        float ang = Quaternion.Angle(ins.item.rotation, targetPose.rotation);
+
+                        if (posDist < 0.01f && ang < 1f)
+                            break;
+
+                        yield return null;
+                    }
+                }
+            }
+
+            // If smoothAttach == false we did NOT change isKinematic
+            // The object just stays where the user left it after entering the trigger
+
+            // Debounce any grab / click
+            yield return WaitForPointerRelease();
+        }
+
 
         // ---------------- helpers ----------------
         static bool AnyPointerDown()
@@ -619,8 +731,25 @@ namespace Pitech.XR.Scenario
                     if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
                     if (sel.hint) SafeSet(sel.hint, false);
                 }
+                else if (s is InsertStep ins)
+                {
+                }
             }
         }
+
+        static bool AreCollidersOverlapping(Collider a, Collider b)
+        {
+            if (!a || !b) return false;
+
+            // Ακριβής έλεγχος overlap, ουσιαστικά σαν OnTriggerEnter αλλά με polling
+            return Physics.ComputePenetration(
+                a, a.transform.position, a.transform.rotation,
+                b, b.transform.position, b.transform.rotation,
+                out _, out _
+            );
+        }
+
+
 
     }
 }

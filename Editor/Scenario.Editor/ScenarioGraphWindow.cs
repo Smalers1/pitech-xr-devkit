@@ -97,8 +97,10 @@ public class ScenarioGraphWindow : EditorWindow
             var s = scenario.steps[i];
             if (s == null) continue;
 
-            // pass a guarded rebuild callback
-            var node = new StepNode(scenario, s, i, view, () =>
+            var stepRef = s;         // optional, but fine
+            int indexCopy = i;       // *** this is the important one ***
+
+            var node = new StepNode(scenario, stepRef, indexCopy, view, () =>
             {
                 if (!_isLoading) RebuildLinksFromGraph();
             });
@@ -106,13 +108,18 @@ public class ScenarioGraphWindow : EditorWindow
             var pos = s.graphPos == default ? new Vector2(80 + 340 * i, 220) : s.graphPos;
             node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
             view.AddElement(node);
-            nodes[s.guid] = node;
+            nodes[stepRef.guid] = node;
 
             node.AddManipulator(new ContextualMenuManipulator(evt =>
             {
-                evt.menu.AppendAction("Delete Step", _ => DeleteStep(s));
+                evt.menu.AppendAction("Delete Step", _ =>
+                {
+                    DeleteStep(indexCopy);   // <- delete by index
+                });
             }));
         }
+
+
 
         // draw edges from persisted data
         foreach (var s in scenario.steps)
@@ -132,6 +139,8 @@ public class ScenarioGraphWindow : EditorWindow
                         Connect(src.outChoices[c], g);
                 }
             }
+            if (s is InsertStep ins && !string.IsNullOrEmpty(ins.nextGuid) && nodes.TryGetValue(ins.guid, out var insNode))
+                Connect(insNode.outNext, ins.nextGuid);
         }
         // Selection edges (Correct/Wrong)
         foreach (var s in scenario.steps)
@@ -169,21 +178,37 @@ public class ScenarioGraphWindow : EditorWindow
 
     void RebuildLinksFromGraph()
     {
-        if (!scenario || _isLoading) return; // guard: do not clear while loading
+        if (!scenario || _isLoading) return;
 
         // clear all links
         foreach (var st in scenario.steps)
         {
-            if (st is TimelineStep tl) tl.nextGuid = "";
-            else if (st is CueCardsStep cc) cc.nextGuid = "";
+            if (st is TimelineStep tl)
+            {
+                tl.nextGuid = "";
+            }
+            else if (st is CueCardsStep cc)
+            {
+                cc.nextGuid = "";
+            }
             else if (st is QuestionStep q && q.choices != null)
+            {
                 foreach (var ch in q.choices)
                     if (ch != null) ch.nextGuid = "";
-                    else if (st is SelectionStep sl)
-                    {
-                        sl.correctNextGuid = "";
-                        sl.wrongNextGuid = "";
-                    }
+            }
+
+            // Selection routes (Correct/Wrong)
+            if (st is SelectionStep sl)
+            {
+                sl.correctNextGuid = "";
+                sl.wrongNextGuid = "";
+            }
+
+            // NEW: Insert route
+            if (st is InsertStep ins)
+            {
+                ins.nextGuid = "";
+            }
         }
 
         // re-assign from visible edges
@@ -193,31 +218,50 @@ public class ScenarioGraphWindow : EditorWindow
             var inNode = e.input?.node as StepNode;
             if (outMeta == null || inNode == null) continue;
 
-            if (outMeta.owner is TimelineStep otl) otl.nextGuid = inNode.step.guid;
-            else if (outMeta.owner is CueCardsStep occ) occ.nextGuid = inNode.step.guid;
+            if (outMeta.owner is TimelineStep otl)
+                otl.nextGuid = inNode.step.guid;
+            else if (outMeta.owner is CueCardsStep occ)
+                occ.nextGuid = inNode.step.guid;
             else if (outMeta.owner is QuestionStep oq && outMeta.choiceIndex >= 0 &&
                      oq.choices != null && outMeta.choiceIndex < oq.choices.Count)
                 oq.choices[outMeta.choiceIndex].nextGuid = inNode.step.guid;
-            // NEW:
             else if (outMeta.owner is SelectionStep osl)
             {
-                // -2 => Correct, -3 => Wrong (see ports below)
+                // -2 => Correct, -3 => Wrong (όπως ήδη έχεις)
                 if (outMeta.choiceIndex == -2) osl.correctNextGuid = inNode.step.guid;
                 else if (outMeta.choiceIndex == -3) osl.wrongNextGuid = inNode.step.guid;
             }
-
+            // NEW: InsertStep
+            else if (outMeta.owner is InsertStep oins)
+            {
+                oins.nextGuid = inNode.step.guid;
+            }
         }
 
         Dirty(scenario, "Route Change");
     }
 
-    void DeleteStep(Step s)
+
+    void DeleteStep(int index)
     {
-        if (!EditorUtility.DisplayDialog("Delete Step", $"Delete “{s.Kind}” step?", "Delete", "Cancel")) return;
+        if (!scenario || scenario.steps == null) return;
+        if (index < 0 || index >= scenario.steps.Count) return;
+
+        var s = scenario.steps[index];
+
+        if (!EditorUtility.DisplayDialog(
+                "Delete Step",
+                $"Delete “{s.Kind}” step ({index:00})?",
+                "Delete",
+                "Cancel"))
+            return;
+
         Dirty(scenario, "Delete Step");
-        scenario.steps.Remove(s);
-        Load(scenario);
+
+        scenario.steps.RemoveAt(index);   // <- index based, no reference tricks
+        Load(scenario);                   // rebuild graph from the real data
     }
+
 
     void Connect(Port src, string dstGuid)
     {
@@ -234,6 +278,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Cue Cards", _ => CreateStep(typeof(CueCardsStep)));
         evt.menu.AppendAction("Add/Question", _ => CreateStep(typeof(QuestionStep)));
         evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
+        evt.menu.AppendAction("Add/Insert", _ => CreateStep(typeof(InsertStep)));
     }
 
     void CreateStep(Type t)
@@ -331,11 +376,18 @@ public class ScenarioGraphWindow : EditorWindow
 
             title = $"{idx:00}. {s.Kind}";
             var tbox = this.Q("title");
+            var titleLabel = tbox?.Q<Label>();
+
             if (s is TimelineStep) tbox.style.backgroundColor = new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) tbox.style.backgroundColor = new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) tbox.style.backgroundColor = new Color(0.76f, 0.45f, 0.22f);
             if (s is SelectionStep) tbox.style.backgroundColor = new Color(0.58f, 0.38f, 0.78f);
-
+            if (s is InsertStep)
+            {
+                tbox.style.backgroundColor = new Color(0.90f, 0.75f, 0.25f);
+                if (titleLabel != null)
+                    titleLabel.style.color = Color.black;   // μαύρο text για το κίτρινο
+            }
 
             // In
             inPort = MakePort(Direction.Input, Port.Capacity.Multi, "In", -1);
@@ -348,8 +400,8 @@ public class ScenarioGraphWindow : EditorWindow
                 if (step is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (step is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
                 else if (step is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
-                // NEW:
                 else if (step is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
+                else if (step is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
             })
             { text = "Edit…" };
 
@@ -445,12 +497,44 @@ public class ScenarioGraphWindow : EditorWindow
                     if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Selection");
                 }));
 
+
+
                 // Two outputs
                 outCorrect = MakePort(Direction.Output, Port.Capacity.Single, "Correct", -2);
                 outWrong = MakePort(Direction.Output, Port.Capacity.Single, "Wrong", -3);
                 outputContainer.Add(outCorrect);
                 outputContainer.Add(outWrong);
             }
+
+            else if (s is InsertStep ins)
+            {
+                // Inline mini-inspector για γρήγορο authoring
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    EditorGUI.BeginChangeCheck();
+
+                    ins.item = (Transform)EditorGUILayout.ObjectField("Item", ins.item, typeof(Transform), true);
+                    ins.targetTrigger = (Collider)EditorGUILayout.ObjectField("Target Trigger", ins.targetTrigger, typeof(Collider), true);
+                    ins.attachTransform = (Transform)EditorGUILayout.ObjectField("Attach Transform", ins.attachTransform, typeof(Transform), true);
+
+                    EditorGUILayout.Space(4);
+                    ins.smoothAttach = EditorGUILayout.Toggle("Smooth Attach", ins.smoothAttach);
+                    ins.parentToAttach = EditorGUILayout.Toggle("Parent To Attach", ins.parentToAttach);
+                    ins.moveSpeed = EditorGUILayout.FloatField("Move Speed", ins.moveSpeed);
+                    ins.rotateSpeed = EditorGUILayout.FloatField("Rotate Speed", ins.rotateSpeed);
+
+                    EditorGUILayout.Space(4);
+                    ins.positionTolerance = EditorGUILayout.FloatField("Position Tolerance", ins.positionTolerance);
+                    ins.angleTolerance = EditorGUILayout.FloatField("Angle Tolerance", ins.angleTolerance);
+
+                    if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Insert");
+                }));
+
+                outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                outputContainer.Add(outNext);
+            }
+
+
 
 
             RefreshExpandedState();
@@ -548,6 +632,9 @@ sealed class StepEditWindow : EditorWindow
         => Open(sc, q.guid, "Question", w => w.DrawQuestion(), afterApply);
     public static void OpenSelection(Scenario sc, SelectionStep sel)
     => Open(sc, sel.guid, "Selection", w => w.DrawSelection());
+
+    public static void OpenInsert(Scenario sc, InsertStep ins)
+    => Open(sc, ins.guid, "Insert", w => w.DrawInsert());
 
     static void Open(Scenario sc, string guid, string title, Action<StepEditWindow> draw, Action afterApply = null)
     {
@@ -720,6 +807,28 @@ sealed class StepEditWindow : EditorWindow
         EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("onWrongEffects"), true);
 
         DrawCorrectWrongGuids();
+    }
+
+    void DrawInsert()
+    {
+        EditorGUILayout.LabelField("Insert", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("item"), new GUIContent("Item"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("targetTrigger"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("attachTransform"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Attach Behaviour", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("smoothAttach"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("parentToAttach"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("moveSpeed"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("rotateSpeed"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Detection", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("positionTolerance"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("angleTolerance"));
+
+        DrawNextGuid();
     }
 
     void DrawCorrectWrongGuids()

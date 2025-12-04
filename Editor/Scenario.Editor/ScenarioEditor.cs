@@ -48,14 +48,6 @@ namespace Pitech.XR.Scenario.Editor
             stepsProp = serializedObject.FindProperty("steps");
             titleProp = serializedObject.FindProperty("title");
         }
-        static Rect InsetLikeHelpBox(Rect r)
-        {
-            // Use the same margins Unity applies to "HelpBox"
-            var m = EditorStyles.helpBox.margin;
-            r.x += m.left;
-            r.width -= (m.left + m.right);
-            return r;
-        }
 
         public override void OnInspectorGUI()
         {
@@ -73,10 +65,10 @@ namespace Pitech.XR.Scenario.Editor
             {
                 EditorGUILayout.LabelField("Authoring", Styles.Bold);
                 EditorGUILayout.LabelField("• Timeline: assign the scene PlayableDirector", Styles.Small);
-                EditorGUILayout.LabelField("• Cue Cards: add cards and Cue Times (sec). Empty = tap only", Styles.Small);
+                EditorGUILayout.LabelField("• Cue Cards: add cards and Cue Times (sec). Empty = tap-only", Styles.Small);
                 EditorGUILayout.LabelField("• Question: set Panel Root, Animator and Buttons then add Effects", Styles.Small);
                 EditorGUILayout.LabelField("• Selection: set SelectionLists, choose list (Key or Index), rule & completion.", Styles.Small);
-
+                EditorGUILayout.LabelField("• Insert: set item, target trigger and optional attach behaviour.", Styles.Small);
             }
 
             // STEPS SECTION
@@ -127,16 +119,15 @@ namespace Pitech.XR.Scenario.Editor
                     }
                 }
 
-                // Full-width CTA, no clipping + light blue
+                // Big button
                 EditorGUILayout.Space(4);
                 var r = GUILayoutUtility.GetRect(
                     GUIContent.none, Styles.BigButton, GUILayout.Height(34), GUILayout.ExpandWidth(true)
                 );
 
-                // Light blue + white text
                 var prevBg = GUI.backgroundColor;
                 var prevCt = GUI.contentColor;
-                GUI.backgroundColor = new Color(0.55f, 0.72f, 1.00f); // lighter blue
+                GUI.backgroundColor = new Color(0.55f, 0.72f, 1.00f);
                 GUI.contentColor = Color.white;
 
                 if (GUI.Button(r, "★  Open Scenario Graph", Styles.BigButton))
@@ -145,8 +136,6 @@ namespace Pitech.XR.Scenario.Editor
                 GUI.contentColor = prevCt;
                 GUI.backgroundColor = prevBg;
 
-
-                // Secondary actions on a separate right-aligned row
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.FlexibleSpace();
@@ -166,7 +155,6 @@ namespace Pitech.XR.Scenario.Editor
             }
         }
 
-
         // ================== Reorderable List ==================
 
         void BuildList()
@@ -175,16 +163,12 @@ namespace Pitech.XR.Scenario.Editor
 
             list = new ReorderableList(serializedObject, stepsProp, true, true, true, true);
 
-            // when you build the list
             list.drawHeaderCallback = r =>
             {
-                // Align with SectionBox content rect
                 r.x += Styles.SectionBox.padding.left;
                 r.width -= Styles.SectionBox.padding.horizontal;
                 EditorGUI.LabelField(r, "Create Steps (Example: Timeline → Cue Cards → Question → …)", Styles.Bold);
             };
-
-
 
             list.onAddDropdownCallback = (rect, _) =>
             {
@@ -192,8 +176,8 @@ namespace Pitech.XR.Scenario.Editor
                 menu.AddItem(new GUIContent("Add Timeline"), false, () => AddStep(typeof(Runtime.TimelineStep)));
                 menu.AddItem(new GUIContent("Add Cue Cards"), false, () => AddStep(typeof(Runtime.CueCardsStep)));
                 menu.AddItem(new GUIContent("Add Question"), false, () => AddStep(typeof(Runtime.QuestionStep)));
-                // NEW:
                 menu.AddItem(new GUIContent("Add Selection"), false, () => AddStep(typeof(Runtime.SelectionStep)));
+                menu.AddItem(new GUIContent("Add Insert"), false, () => AddStep(typeof(Runtime.InsertStep)));
                 menu.ShowAsContext();
             };
 
@@ -204,13 +188,11 @@ namespace Pitech.XR.Scenario.Editor
                     return EditorGUIUtility.singleLineHeight * 2 + 12;
 
                 float inner = EditorGUI.GetPropertyHeight(p, true);
-                // extra for header
                 return inner + EditorGUIUtility.singleLineHeight + 10;
             };
 
             list.drawElementBackgroundCallback = (rect, index, active, focused) =>
             {
-                // zebra rows
                 if (Event.current.type == EventType.Repaint)
                 {
                     var c = (index % 2 == 0) ? Styles.RowEven : Styles.RowOdd;
@@ -241,43 +223,36 @@ namespace Pitech.XR.Scenario.Editor
                     full.Contains(nameof(Runtime.CueCardsStep)) ? "Cue Cards" :
                     full.Contains(nameof(Runtime.QuestionStep)) ? "Question" :
                     full.Contains(nameof(Runtime.SelectionStep)) ? "Selection" :
+                    full.Contains(nameof(Runtime.InsertStep)) ? "Insert" :
                     "Step";
 
-
-                // Header line with badge
                 var header2 = new Rect(rect.x + 4, rect.y + 4, rect.width - 8, EditorGUIUtility.singleLineHeight);
                 DrawStepHeader(header2, index, kind);
 
-                // Body
                 var body = new Rect(
                     rect.x + 4, header2.y + header2.height + 3,
                     rect.width - 8, EditorGUI.GetPropertyHeight(el, true));
 
                 EditorGUI.PropertyField(body, el, GUIContent.none, true);
 
-                // tiny remove button on the right of the header line
                 var xRect = new Rect(rect.xMax - 22, rect.y + 2, 18, EditorGUIUtility.singleLineHeight - 2);
                 if (GUI.Button(xRect, "✕", EditorStyles.miniButton))
                     RemoveStepAt(index);
             };
 
-            // allow removing any row, not just the last
             list.onCanRemoveCallback = l => l.count > 0;
 
             list.onRemoveCallback = l =>
             {
                 RemoveStepAt(l.index);
             };
-
         }
 
         void DrawStepHeader(Rect r, int index, string kind)
         {
-            // left: index
             var left = new Rect(r.x, r.y, 50, r.height);
             EditorGUI.LabelField(left, $"{index:00}", Styles.Index);
 
-            // badge
             var badge = new Rect(left.xMax + 4, r.y + 1, 82, r.height - 2);
             Styles.DrawBadge(badge, kind);
         }
@@ -291,6 +266,7 @@ namespace Pitech.XR.Scenario.Editor
             el.managedReferenceValue = Activator.CreateInstance(t);
             serializedObject.ApplyModifiedProperties();
         }
+
         void RemoveStepAt(int index)
         {
             if (stepsProp == null) return;
@@ -298,10 +274,8 @@ namespace Pitech.XR.Scenario.Editor
 
             Undo.RecordObject(target, "Remove Step");
 
-            // First delete: clears managed reference
             stepsProp.DeleteArrayElementAtIndex(index);
 
-            // Second delete: actually removes the array slot (needed for ManagedReference/ObjectReference)
             if (index < stepsProp.arraySize)
             {
                 var el = stepsProp.GetArrayElementAtIndex(index);
@@ -312,7 +286,7 @@ namespace Pitech.XR.Scenario.Editor
             }
 
             serializedObject.ApplyModifiedProperties();
-            GUI.FocusControl(null); // avoid stuck focus on a now-removed field
+            GUI.FocusControl(null);
         }
 
         // ================== Routing ==================
@@ -325,7 +299,6 @@ namespace Pitech.XR.Scenario.Editor
                 return;
             }
 
-            // build names/guids
             var names = new List<string> { "(next in list)" };
             var guids = new List<string> { "" };
 
@@ -344,7 +317,6 @@ namespace Pitech.XR.Scenario.Editor
                 return EditorGUILayout.Popup(idx, names.ToArray());
             }
 
-            // per step rows, boxed
             for (int i = 0; i < sc.steps.Count; i++)
             {
                 var s = sc.steps[i];
@@ -439,7 +411,21 @@ namespace Pitech.XR.Scenario.Editor
                             }
                         }
                     }
-
+                    else if (s is Runtime.InsertStep ins)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Label("Next", GUILayout.Width(60));
+                            int choice = Popup(ins.nextGuid);
+                            string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                            if (newGuid != ins.nextGuid)
+                            {
+                                Undo.RecordObject(sc, "Route Change");
+                                ins.nextGuid = newGuid;
+                                EditorUtility.SetDirty(sc);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -493,11 +479,9 @@ namespace Pitech.XR.Scenario.Editor
                     if (!sel.lists)
                     { Styles.Warn($"Step {i}: Selection has no SelectionLists reference."); warnings++; }
 
-                    // Require at least one way to identify the list
                     if (string.IsNullOrEmpty(sel.listKey) && sel.listIndex < 0)
                         Styles.Info($"Step {i}: Selection has neither List Key nor List Index set.");
 
-                    // If lists is known, sanity-check the index/key
                     if (sel.lists)
                     {
                         if (sel.listIndex >= sel.lists.Count)
@@ -513,16 +497,27 @@ namespace Pitech.XR.Scenario.Editor
                         }
                     }
 
-                    // Completion mode
                     var comp = (Runtime.SelectionStep.CompleteMode)sel.completion;
                     if (comp == Runtime.SelectionStep.CompleteMode.OnSubmitButton && !sel.submitButton)
                         Styles.Info($"Step {i}: Selection is OnSubmitButton but Submit Button is not set.");
 
-                    // Requirement sanity
                     if (sel.requiredSelections <= 0)
                         Styles.Info($"Step {i}: Required Selections is 0 (step may pass immediately).");
                 }
+                else if (s is Runtime.InsertStep ins)
+                {
+                    if (!ins.item)
+                    { Styles.Warn($"Step {i}: Insert has no Item assigned."); warnings++; }
+                    if (!ins.targetTrigger)
+                    { Styles.Warn($"Step {i}: Insert has no Target Trigger assigned."); warnings++; }
+                    else if (!ins.targetTrigger.isTrigger)
+                    {
+                        Styles.Info($"Step {i}: Insert target collider is not marked as Trigger (recommended).");
+                    }
 
+                    if (ins.positionTolerance <= 0f)
+                        Styles.Info($"Step {i}: Insert position tolerance is 0 or negative, step may never complete.");
+                }
             }
 
             if (warnings == 0)
@@ -533,16 +528,15 @@ namespace Pitech.XR.Scenario.Editor
 
         static class Styles
         {
-            // palette (dark UI)
-            static readonly Color cHeader = new Color(0.12f, 0.14f, 0.17f);
             static readonly Color cRowEven = new Color(0.16f, 0.18f, 0.22f);
             static readonly Color cRowOdd = new Color(0.14f, 0.16f, 0.19f);
             static readonly Color cBadgeTimeline = new Color(0.20f, 0.42f, 0.85f);
             static readonly Color cBadgeCards = new Color(0.32f, 0.62f, 0.32f);
             static readonly Color cBadgeQuestion = new Color(0.76f, 0.45f, 0.22f);
-            static readonly Color cBadgeSelection = new Color(0.58f, 0.38f, 0.78f); // purple-ish
+            static readonly Color cBadgeSelection = new Color(0.58f, 0.38f, 0.78f);
+            static readonly Color cBadgeInsert = new Color(0.90f, 0.75f, 0.25f); // yellow-ish for 'Insert'
 
-            public static readonly GUIStyle SectionBox;   // NEW: a HelpBox that wraps header+body
+            public static readonly GUIStyle SectionBox;
             public static readonly Color HeaderBg = new Color(0.11f, 0.12f, 0.15f);
             public static readonly GUIStyle HeaderTitle;
             public static readonly GUIStyle Bold;
@@ -553,7 +547,6 @@ namespace Pitech.XR.Scenario.Editor
             public static readonly GUIStyle Mid;
             public static readonly GUIStyle OuterBox;
             public static readonly GUIStyle InfoBox;
-
             public static readonly Color RowEven = cRowEven;
             public static readonly Color RowOdd = cRowOdd;
             public static readonly GUIStyle BigButton;
@@ -589,25 +582,15 @@ namespace Pitech.XR.Scenario.Editor
 
                 SectionBox = new GUIStyle("HelpBox")
                 {
-                    margin = EditorStyles.helpBox.margin,           // match Unity defaults
-                    padding = new RectOffset(8, 8, 8, 8)              // nice breathing room
+                    margin = EditorStyles.helpBox.margin,
+                    padding = new RectOffset(8, 8, 8, 8)
                 };
             }
 
-            public static void DrawHeaderBackground(Rect r)
-            {
-                EditorGUI.DrawRect(r, cHeader);
-                var bottom = new Rect(r.x, r.yMax - 1, r.width, 1);
-                EditorGUI.DrawRect(bottom, new Color(0, 0, 0, 0.35f));
-            }
-
-            // inside ScenarioEditor
             public static bool Section(string title, bool open, Action drawBody)
             {
-                // Wrap header + body in the SAME HelpBox => no left/right bleed
                 using (new EditorGUILayout.VerticalScope(SectionBox))
                 {
-                    // Header strip drawn INSIDE the box (respects padding)
                     var header = GUILayoutUtility.GetRect(0, 24, GUILayout.ExpandWidth(true));
                     EditorGUI.DrawRect(header, HeaderBg);
 
@@ -623,14 +606,13 @@ namespace Pitech.XR.Scenario.Editor
                 return open;
             }
 
-
-
             public static void DrawBadge(Rect r, string kind)
             {
                 var col = cBadgeTimeline;
                 if (kind == "Cue Cards") col = cBadgeCards;
                 else if (kind == "Question") col = cBadgeQuestion;
                 else if (kind == "Selection") col = cBadgeSelection;
+                else if (kind == "Insert") col = cBadgeInsert;
 
                 var bg = new Rect(r.x, r.y, r.width, r.height);
                 EditorGUI.DrawRect(bg, col);
@@ -643,7 +625,7 @@ namespace Pitech.XR.Scenario.Editor
         }
     }
 
-    // -------- Custom drawers (unchanged, just organized) --------
+    // -------- Custom drawers --------
 
     [CustomPropertyDrawer(typeof(Runtime.TimelineStep))]
     class TimelineStepDrawer : PropertyDrawer
@@ -793,10 +775,10 @@ namespace Pitech.XR.Scenario.Editor
             }
         }
     }
+
     [CustomPropertyDrawer(typeof(Runtime.SelectionStep))]
     class SelectionStepDrawer : PropertyDrawer
     {
-        // Δεν βάζουμε routing εδώ (Correct/Wrong είναι στο Routing section)
         static readonly string[] fields =
         {
             "lists",
@@ -805,10 +787,8 @@ namespace Pitech.XR.Scenario.Editor
             "completion","submitButton",
             "requiredSelections","requireExactCount","allowedWrong","timeoutSeconds",
             "panelRoot","panelAnimator","showTrigger","hideTrigger","hint",
-            "onCorrect","onWrong" // UnityEvents shown in inspector
-            // (stats lists are hidden by [HideInInspector] on the step)
+            "onCorrect","onWrong"
         };
-
 
         public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
         {
@@ -817,7 +797,6 @@ namespace Pitech.XR.Scenario.Editor
             foreach (var f in fields)
             {
                 var sp = p.FindPropertyRelative(f);
-                // προϋπολογισμός ύψους (αν δεν υπάρχει, δώσε μια γραμμή)
                 h += ((sp != null) ? EditorGUI.GetPropertyHeight(sp, true) : EditorGUIUtility.singleLineHeight)
                    + EditorGUIUtility.standardVerticalSpacing;
             }
@@ -829,16 +808,15 @@ namespace Pitech.XR.Scenario.Editor
             if (p == null) return;
 
             var completionProp = p.FindPropertyRelative("completion");
-            int completionMode = completionProp != null ? completionProp.enumValueIndex : 0; // 0 = AutoWhenRequirementMet
+            int completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
 
             foreach (var f in fields)
             {
-                if (f == "submitButton" && completionMode == 0) // hide Submit in Auto mode
+                if (f == "submitButton" && completionMode == 0)
                     continue;
 
                 var sp = p.FindPropertyRelative(f);
 
-                // --- custom labels ---
                 string label =
                     f == "listKey" ? "List Name" :
                     f == "listIndex" ? "(or) List Index" :
@@ -859,9 +837,62 @@ namespace Pitech.XR.Scenario.Editor
                     completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
             }
         }
-
     }
 
+    // -------- NEW: InsertStep drawer --------
+    [CustomPropertyDrawer(typeof(Runtime.InsertStep))]
+    class InsertStepDrawer : PropertyDrawer
+    {
+        static readonly string[] fields =
+        {
+            "item",
+            "targetTrigger","attachTransform",
+            "smoothAttach","parentToAttach","moveSpeed","rotateSpeed",
+            "positionTolerance","angleTolerance"
+        };
 
+
+        public override float GetPropertyHeight(SerializedProperty p, GUIContent label)
+        {
+            if (p == null) return 0f;
+            float h = 0f;
+            foreach (var f in fields)
+            {
+                var sp = p.FindPropertyRelative(f);
+                h += ((sp != null) ? EditorGUI.GetPropertyHeight(sp, true) : EditorGUIUtility.singleLineHeight)
+                   + EditorGUIUtility.standardVerticalSpacing;
+            }
+            return h;
+        }
+
+        public override void OnGUI(Rect r, SerializedProperty p, GUIContent label)
+        {
+            if (p == null) return;
+
+            foreach (var f in fields)
+            {
+                var sp = p.FindPropertyRelative(f);
+                string nice =
+                    f == "item" ? "Item" :
+                    f == "targetTrigger" ? "Target Trigger" :
+                    f == "attachTransform" ? "Attach Transform" :
+                    f == "smoothAttach" ? "Smooth Attach" :
+                    f == "parentToAttach" ? "Parent To Attach Point" :
+                    ObjectNames.NicifyVariableName(f);
+
+
+                if (sp == null)
+                {
+                    EditorGUI.LabelField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), nice);
+                    r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                    continue;
+                }
+
+                var h = EditorGUI.GetPropertyHeight(sp, true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(nice), true);
+                r.y += h + EditorGUIUtility.standardVerticalSpacing;
+            }
+        }
+    }
 }
 #endif

@@ -233,15 +233,24 @@ namespace Pitech.XR.Scenario.Editor
             Selection.activeObject = go;
         }
 
+        static Pitech.XR.Scenario.Scenario GetScenarioFromManager(Pitech.XR.Scenario.SceneManager gm)
+        {
+            if (gm == null) return null;
+
+            var scField = gm.GetType().GetField("scenario",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+            return scField != null
+                ? scField.GetValue(gm) as Pitech.XR.Scenario.Scenario
+                : null;
+        }
 
         // --------------------------------------------------------------------
         // Overview (restored)
         // --------------------------------------------------------------------
         void DrawScenarioOverview(Pitech.XR.Scenario.SceneManager gm)
         {
-            var scField = gm.GetType().GetField("scenario",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            var sc = scField != null ? scField.GetValue(gm) as Pitech.XR.Scenario.Scenario : null;
+            var sc = GetScenarioFromManager(gm);
             if (!sc) return;
 
             EditorGUILayout.LabelField("Scenario Overview", TitleStyle);
@@ -256,30 +265,56 @@ namespace Pitech.XR.Scenario.Editor
                 for (int i = 0; i < sc.steps.Count; i++)
                 {
                     var s = sc.steps[i];
+                    if (s == null)
+                    {
+                        EditorGUILayout.LabelField($"{i:00}. <null>");
+                        continue;
+                    }
+
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         if (s is Pitech.XR.Scenario.TimelineStep tl)
                         {
                             var ok = tl.director ? "✓" : "✗";
-                            EditorGUILayout.LabelField($"{i:00}. Timeline {ok}", GUILayout.Width(150));
+                            EditorGUILayout.LabelField($"{i:00}. Timeline {ok}", GUILayout.Width(170));
                             EditorGUILayout.ObjectField(tl.director, typeof(PlayableDirector), true);
                             if (!tl.director) EditorGUILayout.HelpBox("Director not set", MessageType.Warning);
                         }
                         else if (s is Pitech.XR.Scenario.CueCardsStep cc)
                         {
-                            EditorGUILayout.LabelField($"{i:00}. Cue Cards", GUILayout.Width(150));
                             var times = cc.cueTimes != null ? cc.cueTimes.Length : 0;
+                            EditorGUILayout.LabelField($"{i:00}. Cue Cards", GUILayout.Width(170));
                             EditorGUILayout.LabelField(times == 0 ? "tap-only" : $"{times} cue time(s)");
                         }
                         else if (s is Pitech.XR.Scenario.QuestionStep q)
                         {
                             int btns = q.choices?.Count ?? 0;
-                            EditorGUILayout.LabelField($"{i:00}. Question  • Buttons {btns}");
+                            EditorGUILayout.LabelField($"{i:00}. Question", GUILayout.Width(170));
+                            EditorGUILayout.LabelField($"Buttons {btns}");
+                        }
+                        else if (s is Pitech.XR.Scenario.SelectionStep sel)
+                        {
+                            EditorGUILayout.LabelField($"{i:00}. Selection", GUILayout.Width(170));
+                            var mode = sel.completion.ToString();
+                            EditorGUILayout.LabelField($"{mode} / Required {sel.requiredSelections}");
+                        }
+                        else if (s is Pitech.XR.Scenario.InsertStep ins)
+                        {
+                            EditorGUILayout.LabelField($"{i:00}. Insert", GUILayout.Width(170));
+                            string itemName = ins.item ? ins.item.name : "no item";
+                            string targetName = ins.targetTrigger ? ins.targetTrigger.name : "no target";
+                            EditorGUILayout.LabelField($"{itemName} → {targetName}");
+                        }
+                        else
+                        {
+                            // Fallback για οποιοδήποτε μελλοντικό step type
+                            EditorGUILayout.LabelField($"{i:00}. {s.GetType().Name}");
                         }
                     }
                 }
             }
         }
+
 
         // --------------------------------------------------------------------
         // Runtime (restored)
@@ -288,23 +323,62 @@ namespace Pitech.XR.Scenario.Editor
         {
             EditorGUILayout.LabelField("Runtime", TitleStyle);
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-            using (new EditorGUI.DisabledScope(!Application.isPlaying))
             {
+                var sc = GetScenarioFromManager(gm);
+                int totalSteps = (sc != null && sc.steps != null) ? sc.steps.Count : 0;
+
+                // Τρέχον index
+                int currentIndex = -1;
                 var idxProp = gm.GetType().GetProperty("StepIndex",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                var idxText = idxProp != null ? (idxProp.GetValue(gm)?.ToString() ?? "n/a") : "n/a";
-                EditorGUILayout.LabelField("Current Step", idxText);
+                if (idxProp != null)
+                {
+                    try
+                    {
+                        var val = idxProp.GetValue(gm, null);
+                        if (val is int i) currentIndex = i;
+                    }
+                    catch { }
+                }
 
-                var restart = gm.GetType().GetMethod("Restart",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                if (GUILayout.Button("Restart") && restart != null)
-                    restart.Invoke(gm, null);
-
+                // Γραμμή κατάστασης
+                string status;
                 if (!Application.isPlaying)
-                    EditorGUILayout.HelpBox("Enter Play mode to control.", MessageType.None);
+                    status = "Editor idle (enter Play mode)";
+                else if (currentIndex < 0 || totalSteps == 0)
+                    status = "Idle / finished";
+                else
+                    status = $"Step {currentIndex + 1} of {totalSteps}";
+
+                EditorGUILayout.LabelField(status);
+
+                // Progress bar (μόνο αν έχουμε valid steps)
+                if (totalSteps > 0)
+                {
+                    float progress = 0f;
+                    if (currentIndex >= 0 && currentIndex < totalSteps)
+                        progress = (currentIndex + 1) / (float)totalSteps;
+
+                    var rect = GUILayoutUtility.GetRect(18, 18);
+                    EditorGUI.ProgressBar(rect, progress, $"{Mathf.RoundToInt(progress * 100f)}%");
+                }
+
+                EditorGUILayout.Space(4);
+
+                using (new EditorGUI.DisabledScope(!Application.isPlaying))
+                {
+                    var restart = gm.GetType().GetMethod("Restart",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                    if (GUILayout.Button("Restart Scenario") && restart != null)
+                        restart.Invoke(gm, null);
+
+                    if (!Application.isPlaying)
+                        EditorGUILayout.HelpBox("Enter Play mode to see live progress and restart.", MessageType.None);
+                }
             }
         }
+
 
         // --------------------------------------------------------------------
         // Creation helpers (Undo-friendly + robust property set)
