@@ -39,6 +39,9 @@ namespace Pitech.XR.Scenario
         string _nextGuidFromChoice;
         string _nextGuidFromSelection;
 
+        bool _editorSkip;
+        int _editorSkipBranchIndex;
+
         void Awake()
         {
             // Only set up stats if the feature is present (UI or config).
@@ -146,7 +149,12 @@ namespace Pitech.XR.Scenario
                     idx = jump >= 0 ? jump : idx + 1;
                 }
 
+                // reset editor skip flags after each step
+                _editorSkip = false;
+                _editorSkipBranchIndex = 0;
+
                 yield return null;
+
             }
 
 
@@ -192,6 +200,12 @@ namespace Pitech.XR.Scenario
             const double Eps = 1e-3;
             while (!done)
             {
+                if (_editorSkip)
+                {
+                    done = true;
+                    break;
+                }
+
                 // if timeline is not looping and we've reached (or passed) the end
                 bool atEnd = d.duration > 0 &&
                              d.extrapolationMode != DirectorWrapMode.Loop &&
@@ -228,6 +242,9 @@ namespace Pitech.XR.Scenario
 
             while (true)
             {
+                if (_editorSkip)
+                    break;
+
                 // if not auto showing the first card wait for first click to reveal it
                 if (cur < 0)
                 {
@@ -295,31 +312,11 @@ namespace Pitech.XR.Scenario
 
                     UnityAction fn = () =>
                     {
-                        // Only do stats work if feature is present (UI or Config).
-                        if (statsUI != null || statsConfig != null)
-                        {
-                            if (runtime == null)
-                                runtime = new StatsRuntime();   // ← no args
+                        // apply stat effects (shared helper)
+                        ApplyEffects(choice.effects);
 
-                            if (statsUI != null && !_statsBound)
-                            {
-                                statsUI.Init(runtime, syncNow: true);
-                                _statsBound = true;
-                            }
-
-                            if (choice.effects != null)
-                            {
-                                foreach (var eff in choice.effects)
-                                {
-                                    if (eff == null) continue;
-                                    var cur = runtime[eff.key];
-                                    var nxt = eff.Apply(cur);
-                                    runtime[eff.key] = nxt;
-                                }
-                            }
-                        }
-
-                        _nextGuidFromChoice = choice.nextGuid;
+                        // IMPORTANT: use FallbackGuid so "" means "linear next"
+                        _nextGuidFromChoice = FallbackGuid(choice.nextGuid);
 
                         // hide
                         if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
@@ -333,8 +330,8 @@ namespace Pitech.XR.Scenario
                 }
             }
 
-            // wait for a click only. no auto advance. user must choose
-            while (string.IsNullOrEmpty(_nextGuidFromChoice))
+            // wait until *something* sets it (normal click or editor skip)
+            while (_nextGuidFromChoice == null)
                 yield return null;
 
             // remove listeners to avoid double fires later
@@ -391,10 +388,6 @@ namespace Pitech.XR.Scenario
                 s.submitButton.onClick.AddListener(submitCb);
             }
 
-            // Cleanup listeners
-            if (submitCb != null && s.submitButton)
-                s.submitButton.onClick.RemoveListener(submitCb);
-
             float t = 0f;
             bool done = false;
             bool isCorrect = false;
@@ -409,6 +402,20 @@ namespace Pitech.XR.Scenario
                     {
                         isCorrect = false;
                         break;
+                    }
+                }
+                // Editor graph skip override
+                if (_editorSkip)
+                {
+                    if (_editorSkipBranchIndex == -2) // Correct
+                    {
+                        isCorrect = true;
+                        done = true;
+                    }
+                    else if (_editorSkipBranchIndex == -3) // Wrong
+                    {
+                        isCorrect = false;
+                        done = true;
                     }
                 }
 
@@ -546,6 +553,9 @@ namespace Pitech.XR.Scenario
 
                 while (!hit)
                 {
+                    if (_editorSkip)
+                        break;   // bail out early on editor skip
+
                     if (!ins.targetTrigger)
                         yield break;
 
@@ -647,6 +657,9 @@ namespace Pitech.XR.Scenario
                 float t = 0f;
                 while (t < wait)
                 {
+                    if (_editorSkip)
+                        break; // skip cancels waiting
+
                     t += Time.deltaTime;
                     yield return null;
                 }
@@ -771,6 +784,60 @@ namespace Pitech.XR.Scenario
                 }
             }
         }
+        public void EditorSkipFromGraph(string stepGuid, int branchIndex)
+        {
+            if (!Application.isPlaying) return;
+            if (scenario == null || scenario.steps == null) return;
+
+            if (StepIndex < 0 || StepIndex >= scenario.steps.Count) return;
+
+            var current = scenario.steps[StepIndex];
+            if (current == null || current.guid != stepGuid) return;
+
+            // Linear-ish steps: just mark skip, RunX θα το διαβάσει
+            if (current is TimelineStep ||
+                current is CueCardsStep ||
+                current is InsertStep ||
+                current is EventStep)
+            {
+                _editorSkip = true;
+                _editorSkipBranchIndex = branchIndex;
+                return;
+            }
+
+            // Question: choose specific choice by index
+            if (current is QuestionStep q)
+            {
+                if (branchIndex < 0) return;
+                if (q.choices == null) return;
+                if (branchIndex >= q.choices.Count) return;
+
+                var choice = q.choices[branchIndex];
+                if (choice == null) return;
+
+                // apply effects like button click
+                ApplyEffects(choice.effects);
+
+                _nextGuidFromChoice = FallbackGuid(choice.nextGuid);
+
+                // hide UI like in the normal path
+                if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
+                    q.panelAnimator.SetTrigger(q.hideTrigger);
+                else if (q.panelRoot)
+                    q.panelRoot.gameObject.SetActive(false);
+
+                return;
+            }
+
+            // Selection: mark skip and branch type (-2 correct, -3 wrong)
+            if (current is SelectionStep sel)
+            {
+                _editorSkip = true;
+                _editorSkipBranchIndex = branchIndex;
+                return;
+            }
+        }
+
 
         static bool AreCollidersOverlapping(Collider a, Collider b)
         {

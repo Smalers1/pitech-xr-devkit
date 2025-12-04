@@ -122,10 +122,15 @@ public class ScenarioGraphWindow : EditorWindow
             var stepRef = s;         // optional, but fine
             int indexCopy = i;       // *** this is the important one ***
 
-            var node = new StepNode(scenario, stepRef, indexCopy, view, () =>
-            {
-                if (!_isLoading) RebuildLinksFromGraph();
-            });
+            var node = new StepNode(
+                scenario,
+                stepRef,
+                indexCopy,
+                view,
+                () => { if (!_isLoading) RebuildLinksFromGraph(); },
+                OnSkipRequested              // <-- νέο delegate
+            );
+
 
             var pos = s.graphPos == default ? new Vector2(80 + 340 * i, 220) : s.graphPos;
             node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
@@ -200,6 +205,22 @@ public class ScenarioGraphWindow : EditorWindow
             return change;
         };
     }
+
+    void OnSkipRequested(Step step, int branchIndex)
+    {
+        if (!Application.isPlaying) return;
+
+        var mgr = UnityEngine.Object
+            .FindObjectsOfType<Pitech.XR.Scenario.SceneManager>()
+            .FirstOrDefault(m => m && m.scenario == scenario)
+            ?? UnityEngine.Object.FindObjectsOfType<Pitech.XR.Scenario.SceneManager>().FirstOrDefault();
+
+        if (!mgr) return;
+
+        mgr.EditorSkipFromGraph(step.guid, branchIndex);
+    }
+
+
 
     void RebuildLinksFromGraph()
     {
@@ -572,6 +593,9 @@ public class ScenarioGraphWindow : EditorWindow
 
         void DrawGlow(MeshGenerationContext ctx, System.Collections.Generic.IList<Vector2> cps, float tCenter)
         {
+            if (cps == null || cps.Count < 4)
+                return;
+
             float t0 = Mathf.Clamp01(tCenter - SegmentLength * 0.5f);
             float t1 = Mathf.Clamp01(tCenter + SegmentLength * 0.5f);
             if (t1 <= t0)
@@ -655,14 +679,15 @@ public class ScenarioGraphWindow : EditorWindow
 
         readonly ScenarioGraphView graph;
         readonly Action rebuild;
+        readonly Action<Step, int> skipRequest;
 
         static readonly ECListener edgeListener = new ECListener();
 
         bool _isActive;
 
-        public StepNode(Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks)
+        public StepNode(Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest)
         {
-            scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks;
+            scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks; skipRequest = onSkipRequest;
 
             title = $"{idx:00}. {s.Kind}";
             var tbox = this.Q("title");
@@ -884,9 +909,9 @@ public class ScenarioGraphWindow : EditorWindow
             if (_isActive == active) return;
             _isActive = active;
 
-            // Θα βάλουμε “glow” με border πάνω στο mainContainer
             var mc = this.mainContainer;
 
+            // borders (as you already do)
             if (active)
             {
                 mc.style.borderTopWidth = 3;
@@ -898,6 +923,9 @@ public class ScenarioGraphWindow : EditorWindow
                 mc.style.borderBottomColor = c;
                 mc.style.borderLeftColor = c;
                 mc.style.borderRightColor = c;
+
+                if (Application.isPlaying)
+                    EnsureSkipButtons();
             }
             else
             {
@@ -905,10 +933,66 @@ public class ScenarioGraphWindow : EditorWindow
                 mc.style.borderBottomWidth = 0;
                 mc.style.borderLeftWidth = 0;
                 mc.style.borderRightWidth = 0;
+                RemoveSkipButtons();
             }
 
             this.MarkDirtyRepaint();
         }
+        VisualElement skipRow;
+
+        void EnsureSkipButtons()
+        {
+            RemoveSkipButtons();
+
+            skipRow = new VisualElement();
+            skipRow.style.flexDirection = FlexDirection.Row;
+            skipRow.style.marginTop = 4;
+            skipRow.style.marginBottom = 2;
+
+            if (step is TimelineStep || step is CueCardsStep || step is InsertStep || step is EventStep)
+            {
+                var btn = new UIEButton(() => skipRequest?.Invoke(step, -1))
+                {
+                    text = "Skip ▶"
+                };
+                skipRow.Add(btn);
+            }
+            else if (step is SelectionStep)
+            {
+                var bCorrect = new UIEButton(() => skipRequest?.Invoke(step, -2)) { text = "Correct ▶" };
+                var bWrong = new UIEButton(() => skipRequest?.Invoke(step, -3)) { text = "Wrong ▶" };
+
+                bWrong.style.marginLeft = 4;
+
+                skipRow.Add(bCorrect);
+                skipRow.Add(bWrong);
+            }
+            else if (step is QuestionStep q)
+            {
+                int count = q.choices != null ? q.choices.Count : 0;
+                for (int i = 0; i < count; i++)
+                {
+                    int idx = i;
+                    var b = new UIEButton(() => skipRequest?.Invoke(step, idx))
+                    {
+                        text = $"Choice {idx} ▶"
+                    };
+                    if (i > 0) b.style.marginLeft = 2;
+                    skipRow.Add(b);
+                }
+            }
+
+            if (skipRow.childCount > 0)
+                mainContainer.Add(skipRow);
+        }
+
+        void RemoveSkipButtons()
+        {
+            if (skipRow != null && skipRow.parent == mainContainer)
+                mainContainer.Remove(skipRow);
+            skipRow = null;
+        }
+
 
         Port MakePort(Direction dir, Port.Capacity cap, string label, int choiceIndex)
         {

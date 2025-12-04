@@ -1,7 +1,7 @@
 {
   "name": "com.pitech.xr.devkit",
   "displayName": "Pi tech XR DevKit",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "unity": "2022.3",
   "description": "Modular in-house toolkit for XR apps.",
   "author": {
