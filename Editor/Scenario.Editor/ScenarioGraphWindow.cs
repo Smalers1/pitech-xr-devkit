@@ -141,7 +141,7 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 evt.menu.AppendAction("Delete Step", _ =>
                 {
-                    DeleteStep(indexCopy);   // <- delete by index
+                    DeleteStep(stepRef);   // <- delete by reference
                 });
             }));
         }
@@ -293,10 +293,11 @@ public class ScenarioGraphWindow : EditorWindow
         Dirty(scenario, "Route Change");
     }
 
-
-    void DeleteStep(int index)
+    void DeleteStep(Step step)
     {
-        if (!scenario || scenario.steps == null) return;
+        if (!scenario || scenario.steps == null || step == null) return;
+
+        int index = scenario.steps.IndexOf(step);
         if (index < 0 || index >= scenario.steps.Count) return;
 
         var s = scenario.steps[index];
@@ -310,10 +311,9 @@ public class ScenarioGraphWindow : EditorWindow
 
         Dirty(scenario, "Delete Step");
 
-        scenario.steps.RemoveAt(index);   // <- index based, no reference tricks
-        Load(scenario);                   // rebuild graph from the real data
+        scenario.steps.RemoveAt(index);
+        Load(scenario);   // rebuild graph from the real data
     }
-
 
     void Connect(Port src, string dstGuid)
     {
@@ -460,6 +460,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Question", _ => CreateStep(typeof(QuestionStep)));
         evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
         evt.menu.AppendAction("Add/Insert", _ => CreateStep(typeof(InsertStep)));
+        evt.menu.AppendAction("Add/Event", _ => CreateStep(typeof(EventStep)));
     }
 
     void CreateStep(Type t)
@@ -700,6 +701,12 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is InsertStep)
             {
                 tbox.style.backgroundColor = new Color(0.90f, 0.75f, 0.25f);
+                if (titleLabel != null)
+                    titleLabel.style.color = Color.black;   // μαύρο text για το κίτρινο
+            }
+            if (s is EventStep)
+            {
+                tbox.style.backgroundColor = new Color(0.25f, 0.70f, 0.70f);
                 if (titleLabel != null)
                     titleLabel.style.color = Color.black;   // μαύρο text για το κίτρινο
             }
