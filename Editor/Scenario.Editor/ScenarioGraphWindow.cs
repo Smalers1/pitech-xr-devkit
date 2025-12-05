@@ -31,6 +31,7 @@ public class ScenarioGraphWindow : EditorWindow
     int _edgeDefaultWidth = 2;
 
     bool _isLoading;
+    bool _wasPlaying;
 
     [MenuItem("Pi tech/Scenario Graph")]
     public static void OpenWindow() => GetWindow<ScenarioGraphWindow>("Scenario Graph");
@@ -62,6 +63,13 @@ public class ScenarioGraphWindow : EditorWindow
         frame.style.marginLeft = 6;
         bar.Add(frame);
 
+        var rearrange = new UIEButton(() => AutoLayout())
+        {
+            text = "Rearrange"
+        };
+        rearrange.style.marginLeft = 6;
+        bar.Add(rearrange);
+
         rootVisualElement.Add(bar);
 
         view = new ScenarioGraphView();
@@ -71,6 +79,8 @@ public class ScenarioGraphWindow : EditorWindow
 
         // NEW: start listening to playmode updates
         EditorApplication.update += OnEditorUpdate;
+
+        _wasPlaying = Application.isPlaying;
 
         if (scenario != null)
         {
@@ -109,9 +119,22 @@ public class ScenarioGraphWindow : EditorWindow
         }
 
         // ensure guids
+        bool addedGuids = false;
         foreach (var s in scenario.steps)
+        {
             if (s != null && string.IsNullOrEmpty(s.guid))
+            {
                 s.guid = Guid.NewGuid().ToString();
+                addedGuids = true;
+            }
+        }
+
+        if (addedGuids)
+        {
+            EditorUtility.SetDirty(scenario);
+            if (scenario is Component c)
+                EditorSceneManager.MarkSceneDirty(c.gameObject.scene);
+        }
 
         // nodes
         for (int i = 0; i < scenario.steps.Count; i++)
@@ -119,16 +142,16 @@ public class ScenarioGraphWindow : EditorWindow
             var s = scenario.steps[i];
             if (s == null) continue;
 
-            var stepRef = s;         // optional, but fine
-            int indexCopy = i;       // *** this is the important one ***
+            var stepRef = s;
 
             var node = new StepNode(
                 scenario,
                 stepRef,
-                indexCopy,
+                i,
                 view,
                 () => { if (!_isLoading) RebuildLinksFromGraph(); },
-                OnSkipRequested              // <-- νέο delegate
+                OnSkipRequested,
+                DeleteStep
             );
 
 
@@ -136,14 +159,6 @@ public class ScenarioGraphWindow : EditorWindow
             node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
             view.AddElement(node);
             nodes[stepRef.guid] = node;
-
-            node.AddManipulator(new ContextualMenuManipulator(evt =>
-            {
-                evt.menu.AppendAction("Delete Step", _ =>
-                {
-                    DeleteStep(stepRef);   // <- delete by reference
-                });
-            }));
         }
 
 
@@ -185,7 +200,14 @@ public class ScenarioGraphWindow : EditorWindow
 
         _isLoading = false; // end guarded load
 
-        view.FrameAll();
+        _isLoading = false;
+
+        // Defer FrameAll one tick so layout is valid
+        EditorApplication.delayCall += () =>
+        {
+            if (this != null && view != null)
+                view.FrameAll();
+        };
 
         view.graphViewChanged = change =>
         {
@@ -205,6 +227,142 @@ public class ScenarioGraphWindow : EditorWindow
             return change;
         };
     }
+
+    void AutoLayout()
+    {
+        if (scenario == null || scenario.steps == null || nodes.Count == 0)
+            return;
+
+        // Build incoming edge count and adjacency
+        var incoming = new Dictionary<string, int>();
+        var neighbors = new Dictionary<string, List<string>>();
+
+        foreach (var kv in nodes)
+        {
+            incoming[kv.Key] = 0;
+            neighbors[kv.Key] = new List<string>();
+        }
+
+        void AddEdge(string fromGuid, string toGuid)
+        {
+            if (string.IsNullOrEmpty(fromGuid) || string.IsNullOrEmpty(toGuid))
+                return;
+            if (!neighbors.ContainsKey(fromGuid) || !incoming.ContainsKey(toGuid))
+                return;
+
+            neighbors[fromGuid].Add(toGuid);
+            incoming[toGuid] += 1;
+        }
+
+        foreach (var st in scenario.steps)
+        {
+            if (st == null || string.IsNullOrEmpty(st.guid)) continue;
+
+            string from = st.guid;
+
+            if (st is TimelineStep tl && !string.IsNullOrEmpty(tl.nextGuid))
+                AddEdge(from, tl.nextGuid);
+            else if (st is CueCardsStep cc && !string.IsNullOrEmpty(cc.nextGuid))
+                AddEdge(from, cc.nextGuid);
+            else if (st is InsertStep ins && !string.IsNullOrEmpty(ins.nextGuid))
+                AddEdge(from, ins.nextGuid);
+            else if (st is EventStep ev && !string.IsNullOrEmpty(ev.nextGuid))
+                AddEdge(from, ev.nextGuid);
+
+            if (st is QuestionStep q && q.choices != null)
+            {
+                foreach (var ch in q.choices)
+                    if (ch != null && !string.IsNullOrEmpty(ch.nextGuid))
+                        AddEdge(from, ch.nextGuid);
+            }
+
+            if (st is SelectionStep sel)
+            {
+                if (!string.IsNullOrEmpty(sel.correctNextGuid))
+                    AddEdge(from, sel.correctNextGuid);
+                if (!string.IsNullOrEmpty(sel.wrongNextGuid))
+                    AddEdge(from, sel.wrongNextGuid);
+            }
+        }
+
+        // Roots = no incoming. If none, start from first step
+        var roots = incoming.Where(kv => kv.Value == 0).Select(kv => kv.Key).ToList();
+        if (roots.Count == 0 && scenario.steps.Count > 0 && !string.IsNullOrEmpty(scenario.steps[0].guid))
+            roots.Add(scenario.steps[0].guid);
+
+        var level = new Dictionary<string, int>();
+        var queue = new Queue<string>();
+
+        foreach (var r in roots)
+        {
+            level[r] = 0;
+            queue.Enqueue(r);
+        }
+
+        // BFS: assign each node a level ONCE → no infinite loop in cycles
+        while (queue.Count > 0)
+        {
+            var g = queue.Dequeue();
+            int l = level[g];
+
+            if (!neighbors.TryGetValue(g, out var neighList)) continue;
+
+            foreach (var n in neighList)
+            {
+                if (level.ContainsKey(n))   // already visited, do not enqueue again
+                    continue;
+
+                level[n] = l + 1;
+                queue.Enqueue(n);
+            }
+        }
+
+        // Nodes not reached from any root (disconnected or pure cycles)
+        int maxLevel = level.Count > 0 ? level.Values.Max() : 0;
+        foreach (var kv in nodes)
+        {
+            if (!level.ContainsKey(kv.Key))
+                level[kv.Key] = maxLevel + 1;
+        }
+
+        // Group by level
+        var levels = level
+            .GroupBy(kv => kv.Value)
+            .OrderBy(g => g.Key)
+            .ToDictionary(g => g.Key, g => g.Select(k => k.Key).ToList());
+
+        // Layout constants
+        float xStart = 80f;
+        float yStart = 120f;
+        float xStep = 280f;
+        float yStep = 260f;
+
+        _isLoading = true;
+
+        foreach (var lv in levels.OrderBy(k => k.Key))
+        {
+            int lvIndex = lv.Key;
+            var guidsAtLevel = lv.Value
+                .OrderBy(guid => scenario.steps.FindIndex(s => s != null && s.guid == guid))
+                .ToList();
+
+            for (int i = 0; i < guidsAtLevel.Count; i++)
+            {
+                var guid = guidsAtLevel[i];
+                if (!nodes.TryGetValue(guid, out var node)) continue;
+
+                float x = xStart + lvIndex * xStep;
+                float y = yStart + i * yStep;
+                var pos = new Vector2(x, y);
+                node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
+            }
+        }
+
+        _isLoading = false;
+
+        view?.FrameAll();
+    }
+
 
     void OnSkipRequested(Step step, int branchIndex)
     {
@@ -295,10 +453,16 @@ public class ScenarioGraphWindow : EditorWindow
 
     void DeleteStep(Step step)
     {
-        if (!scenario || scenario.steps == null || step == null) return;
+        if (!scenario || scenario.steps == null || step == null)
+            return;
 
+        // Find the exact object in the list (same instance we built the node from)
         int index = scenario.steps.IndexOf(step);
-        if (index < 0 || index >= scenario.steps.Count) return;
+        if (index < 0)
+        {
+            Debug.LogWarning($"[ScenarioGraph] DeleteStep: step not found in list (guid={step.guid})");
+            return;
+        }
 
         var s = scenario.steps[index];
 
@@ -309,10 +473,37 @@ public class ScenarioGraphWindow : EditorWindow
                 "Cancel"))
             return;
 
-        Dirty(scenario, "Delete Step");
+        // This is the ONLY place we mutate the list: same pattern as CreateStep.
+        Undo.RecordObject(scenario, "Delete Step");
 
         scenario.steps.RemoveAt(index);
-        Load(scenario);   // rebuild graph from the real data
+
+        // Optional: clear any dangling routing that pointed to this guid
+        string removedGuid = s.guid;
+        foreach (var st in scenario.steps)
+        {
+            if (st is TimelineStep tl && tl.nextGuid == removedGuid) tl.nextGuid = "";
+            else if (st is CueCardsStep cc && cc.nextGuid == removedGuid) cc.nextGuid = "";
+            else if (st is InsertStep ins && ins.nextGuid == removedGuid) ins.nextGuid = "";
+            else if (st is EventStep ev && ev.nextGuid == removedGuid) ev.nextGuid = "";
+            else if (st is QuestionStep q && q.choices != null)
+            {
+                foreach (var ch in q.choices)
+                    if (ch != null && ch.nextGuid == removedGuid)
+                        ch.nextGuid = "";
+            }
+            else if (st is SelectionStep sel)
+            {
+                if (sel.correctNextGuid == removedGuid) sel.correctNextGuid = "";
+                if (sel.wrongNextGuid == removedGuid) sel.wrongNextGuid = "";
+            }
+        }
+
+        EditorUtility.SetDirty(scenario);
+        EditorSceneManager.MarkSceneDirty(scenario.gameObject.scene);
+
+        // Rebuild graph from *actual* serialized state
+        Load(scenario);
     }
 
     void Connect(Port src, string dstGuid)
@@ -336,6 +527,20 @@ public class ScenarioGraphWindow : EditorWindow
 
     void OnEditorUpdate()
     {
+        // detect transitions
+        if (Application.isPlaying && !_wasPlaying)
+        {
+            // just entered Play
+            _wasPlaying = true;
+            view?.FrameAll();              // force FrameAll once on Play
+        }
+        else if (!Application.isPlaying && _wasPlaying)
+        {
+            // just exited Play
+            _wasPlaying = false;
+        }
+
+        // --- your existing code below ---
         // Only highlight during play
         if (!Application.isPlaying)
         {
@@ -489,13 +694,6 @@ public class ScenarioGraphWindow : EditorWindow
             this.AddManipulator(new RectangleSelector());
             Insert(0, new GridBackground() { name = "grid" });
             this.Q("grid")?.StretchToParentSize();
-
-            this.AddManipulator(new ContextualMenuManipulator(evt =>
-            {
-                if (evt.target is GraphElement) return;
-                OnContextAdd?.Invoke(evt);
-            }));
-
             RegisterCallback<MouseMoveEvent>(e =>
             {
                 var p = contentViewContainer.WorldToLocal(e.mousePosition);
@@ -522,7 +720,30 @@ public class ScenarioGraphWindow : EditorWindow
             });
             return results;
         }
+
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
+        {
+            // Kill ALL default items
+            evt.menu.ClearItems();
+
+            // Right-click on a node → let StepNode decide
+            if (evt.target is StepNode node)
+            {
+                node.BuildContextualMenu(evt);
+                return;
+            }
+
+            // Right-click on empty space → creation menu
+            if (!(evt.target is GraphElement))
+            {
+                OnContextAdd?.Invoke(evt);
+                return;
+            }
+
+            // Ports / edges: nothing special for now
+        }
     }
+
 
     // ======== metadata kept on ports ========
     sealed class PortMeta
@@ -681,14 +902,15 @@ public class ScenarioGraphWindow : EditorWindow
         readonly ScenarioGraphView graph;
         readonly Action rebuild;
         readonly Action<Step, int> skipRequest;
+        readonly Action<Step> deleteRequest;
 
         static readonly ECListener edgeListener = new ECListener();
 
         bool _isActive;
 
-        public StepNode(Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest)
+        public StepNode(Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest)
         {
-            scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks; skipRequest = onSkipRequest;
+            scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks; skipRequest = onSkipRequest; deleteRequest = onDeleteRequest;
 
             title = $"{idx:00}. {s.Kind}";
             var tbox = this.Q("title");
@@ -946,6 +1168,20 @@ public class ScenarioGraphWindow : EditorWindow
             this.MarkDirtyRepaint();
         }
         VisualElement skipRow;
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt)
+        {
+            // Kill Unity’s default items (Delete, Cut, etc)
+            evt.menu.ClearItems();
+
+            // Our single source of truth for deletion
+            evt.menu.AppendAction("Delete Step", _ =>
+            {
+                deleteRequest?.Invoke(step);
+            });
+
+            // If you want, you can also add Disconnect all etc here
+            // evt.menu.AppendAction("Disconnect all", _ => { ... });
+        }
 
         void EnsureSkipButtons()
         {
@@ -1013,8 +1249,6 @@ public class ScenarioGraphWindow : EditorWindow
 
             return p;
         }
-
-
 
         void RecreateChoicePorts()
         {
