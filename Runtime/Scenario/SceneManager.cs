@@ -474,10 +474,6 @@ namespace Pitech.XR.Scenario
             if (isCorrect) ApplyEffects(s.onCorrectEffects);
             else ApplyEffects(s.onWrongEffects);
 
-            // Apply effects
-            if (isCorrect) ApplyEffects(s.onCorrectEffects);
-            else ApplyEffects(s.onWrongEffects);
-
             // Route
             _nextGuidFromSelection = isCorrect ? FallbackGuid(s.correctNextGuid) : FallbackGuid(s.wrongNextGuid);
 

@@ -9,14 +9,14 @@ namespace Pitech.XR.Core.Editor
 {
     public sealed class DevkitHubWindow : EditorWindow
     {
-        enum PageKind { Dashboard, Modules, Tools, Settings }
+        enum PageKind { Dashboard, GuidedSetup, Docs, Settings }
 
         readonly Dictionary<PageKind, IDevkitPage> _pages = new()
         {
-            { PageKind.Dashboard, new DashboardPage() },
-            { PageKind.Modules,   new ModulesPage() },
-            { PageKind.Tools,     new ToolsPage() },
-            { PageKind.Settings,  new SettingsPage() },
+            { PageKind.Dashboard,  new DashboardPage() },
+            { PageKind.GuidedSetup,new GuidedSetupPage() },
+            { PageKind.Docs,       new DocsPage() },
+            { PageKind.Settings,   new SettingsPage() },
         };
 
         VisualElement _content;
@@ -67,9 +67,9 @@ namespace Pitech.XR.Core.Editor
             // Nav buttons
             side.Add(NavButton("Dashboard", PageKind.Dashboard));
             side.Add(DevkitTheme.VSpace(6));
-            side.Add(NavButton("Modules", PageKind.Modules));
+            side.Add(NavButton("Guided Setup", PageKind.GuidedSetup));
             side.Add(DevkitTheme.VSpace(6));
-            side.Add(NavButton("Tools", PageKind.Tools));
+            side.Add(NavButton("Docs", PageKind.Docs));
             side.Add(DevkitTheme.VSpace(6));
             side.Add(NavButton("Settings", PageKind.Settings));
 
@@ -77,13 +77,12 @@ namespace Pitech.XR.Core.Editor
             var top = DevkitTheme.Row();
             top.style.paddingLeft = 12; top.style.paddingRight = 12;
             top.style.paddingTop = 8; top.style.paddingBottom = 8;
-            var hdr = new Label($"Pi tech XR DevKit — {DevkitContext.Version}")
+            var hdr = new Label($"Pi tech XR DevKit ï¿½ {DevkitContext.Version}")
             {
                 style = { color = DevkitTheme.Text, unityFontStyleAndWeight = FontStyle.Bold }
             };
             top.Add(hdr);
             top.Add(DevkitTheme.Flex());
-            top.Add(DevkitTheme.Secondary("Docs", () => EditorApplication.ExecuteMenuItem("Window/Package Manager"))); // placeholder
             top.style.backgroundColor = DevkitTheme.Panel2;
 
             // Content

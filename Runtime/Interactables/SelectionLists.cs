@@ -20,6 +20,10 @@ namespace Pitech.XR.Interactables
         public Animator buttonAnimator;   // optional
         public TMP_Text title;            // optional
 
+        [Header("Optional Info Panel")]
+        [Tooltip("Optional panel (any UI) to show when the global Info button is pressed while this list is active.")]
+        public GameObject infoPanel;
+
         [Header("Animator Trigger Names")]
         public string triggerComeForward = "ComeForward";
         public string triggerGoBack = "GoBack";
@@ -87,6 +91,7 @@ namespace Pitech.XR.Interactables
         public TMP_Text feedback;
         public Button completeButton;  // onClick wired automatically if present
         public Button retryButton;     // onClick wired automatically if present
+        public Button infoButton;      // optional: opens info panel for active list
 
         // ---------- Feedback Texts ----------
         [Header("Feedback Texts")]
@@ -141,9 +146,13 @@ namespace Pitech.XR.Interactables
             // Wire global buttons if assigned
             if (completeButton) completeButton.onClick.AddListener(CompleteActive);
             if (retryButton) retryButton.onClick.AddListener(RetryActive);
+            if (infoButton) infoButton.onClick.AddListener(ShowActiveInfo);
 
             ShowText(textStart);
             SetButtons(false, false);
+
+            HideAllInfoPanels();
+            UpdateInfoButtonState();
 
             // Βεβαιώσου ότι όλα τα κουμπιά είναι σε normal στην εκκίνηση
             RefreshButtonColors();
@@ -239,6 +248,9 @@ namespace Pitech.XR.Interactables
             cur.RefreshLabel();
             cur.Fire(cur.triggerComeForward);
 
+            // If there are per-list info panels, keep them hidden until explicitly opened.
+            HideAllInfoPanels();
+
             if (selectables)
             {
                 selectables.ClearAll(alsoTurnOffHighlights: true);
@@ -247,6 +259,7 @@ namespace Pitech.XR.Interactables
 
             ShowText(textPrompt.Replace("{list}", cur.name));
             SetButtons(true, false);
+            UpdateInfoButtonState();
 
             RefreshButtonColors();
             NotifySelectionChanged();
@@ -288,6 +301,7 @@ namespace Pitech.XR.Interactables
             }
 
             RefreshButtonColors();
+            UpdateInfoButtonState();
             NotifySelectionChanged();
         }
 
@@ -307,6 +321,8 @@ namespace Pitech.XR.Interactables
                 : textStart);
 
             SetButtons(true, false);
+            HideAllInfoPanels();
+            UpdateInfoButtonState();
 
             RefreshButtonColors();
             NotifySelectionChanged();
@@ -323,6 +339,42 @@ namespace Pitech.XR.Interactables
         {
             if (completeButton) completeButton.interactable = canComplete;
             if (retryButton) retryButton.interactable = canRetry;
+        }
+
+        // ---------- Info panel ----------
+
+        void UpdateInfoButtonState()
+        {
+            if (!infoButton) return;
+            infoButton.interactable = HasActiveInfoPanel();
+        }
+
+        bool HasActiveInfoPanel()
+        {
+            if (activeIndex < 0 || activeIndex >= Count) return false;
+            var l = lists[activeIndex];
+            return l != null && l.infoPanel != null;
+        }
+
+        public void ShowActiveInfo()
+        {
+            if (activeIndex < 0 || activeIndex >= Count) return;
+            var l = lists[activeIndex];
+            if (l == null || l.infoPanel == null) return;
+
+            HideAllInfoPanels();
+            l.infoPanel.SetActive(true);
+        }
+
+        public void HideAllInfoPanels()
+        {
+            if (lists == null) return;
+            for (int i = 0; i < lists.Count; i++)
+            {
+                var l = lists[i];
+                if (l != null && l.infoPanel != null)
+                    l.infoPanel.SetActive(false);
+            }
         }
 
         // ---------- Button color logic ----------

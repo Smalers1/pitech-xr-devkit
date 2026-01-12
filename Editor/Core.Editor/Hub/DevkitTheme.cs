@@ -15,6 +15,9 @@ namespace Pitech.XR.Core.Editor
 
         public static VisualElement Row()
             => new() { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
+        
+        public static VisualElement WrapRow()
+            => new() { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center, flexWrap = Wrap.Wrap } };
 
         public static VisualElement Section(string title)
         {
@@ -34,6 +37,7 @@ namespace Pitech.XR.Core.Editor
             => new(text) { style = { color = dim ? SubText : Text, fontSize = 12 } };
 
         public static VisualElement VSpace(float h) => new() { style = { height = h } };
+        public static VisualElement HSpace(float w) => new() { style = { width = w } };
 
         public static VisualElement Flex() { var f = new VisualElement(); f.style.flexGrow = 1; return f; }
 

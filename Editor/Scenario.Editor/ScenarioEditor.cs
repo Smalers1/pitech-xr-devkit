@@ -54,6 +54,7 @@ namespace Pitech.XR.Scenario.Editor
             if (target == null) return;
 
             serializedObject.UpdateIfRequiredOrScript();
+            Styles.Ensure();
             if (stepsProp == null) FindProps();
             if (list == null) BuildList();
 
@@ -560,23 +561,31 @@ namespace Pitech.XR.Scenario.Editor
             static readonly Color cBadgeInsert = new Color(0.90f, 0.75f, 0.25f);
             static readonly Color cBadgeEvent = new Color(0.30f, 0.70f, 0.75f);
 
-            public static readonly GUIStyle SectionBox;
+            static bool _inited;
+
+            public static GUIStyle SectionBox;
             public static readonly Color HeaderBg = new Color(0.11f, 0.12f, 0.15f);
-            public static readonly GUIStyle HeaderTitle;
-            public static readonly GUIStyle Bold;
-            public static readonly GUIStyle Small;
-            public static readonly GUIStyle Muted;
-            public static readonly GUIStyle Index;
-            public static readonly GUIStyle Primary;
-            public static readonly GUIStyle Mid;
-            public static readonly GUIStyle OuterBox;
-            public static readonly GUIStyle InfoBox;
+            public static GUIStyle HeaderTitle;
+            public static GUIStyle Bold;
+            public static GUIStyle Small;
+            public static GUIStyle Muted;
+            public static GUIStyle Index;
+            public static GUIStyle Primary;
+            public static GUIStyle Mid;
+            public static GUIStyle OuterBox;
+            public static GUIStyle InfoBox;
             public static readonly Color RowEven = cRowEven;
             public static readonly Color RowOdd = cRowOdd;
-            public static readonly GUIStyle BigButton;
+            public static GUIStyle BigButton;
 
-            static Styles()
+            public static void Ensure()
             {
+                if (_inited) return;
+
+                // During domain reload, static constructors that touch EditorStyles can NRE.
+                // We initialize lazily the first time the inspector actually draws.
+                if (EditorStyles.boldLabel == null) return;
+
                 HeaderTitle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 13 };
 
                 Bold = new GUIStyle(EditorStyles.boldLabel);
@@ -609,10 +618,13 @@ namespace Pitech.XR.Scenario.Editor
                     margin = EditorStyles.helpBox.margin,
                     padding = new RectOffset(8, 8, 8, 8)
                 };
+
+                _inited = true;
             }
 
             public static bool Section(string title, bool open, Action drawBody)
             {
+                Ensure();
                 using (new EditorGUILayout.VerticalScope(SectionBox))
                 {
                     var header = GUILayoutUtility.GetRect(0, 24, GUILayout.ExpandWidth(true));
@@ -632,6 +644,7 @@ namespace Pitech.XR.Scenario.Editor
 
             public static void DrawBadge(Rect r, string kind)
             {
+                Ensure();
                 var col = cBadgeTimeline;
                 if (kind == "Cue Cards") col = cBadgeCards;
                 else if (kind == "Question") col = cBadgeQuestion;

@@ -20,7 +20,7 @@ namespace Pitech.XR.Core.Editor
             for (int i = 0; i < items.Length; i++)
             {
                 row.Add(StatusChip(items[i].ok, items[i].label));
-                if (i < items.Length - 1) row.Add(DevkitTheme.VSpace(10));
+                if (i < items.Length - 1) row.Add(DevkitTheme.HSpace(10));
             }
             return row;
         }
@@ -183,12 +183,35 @@ namespace Pitech.XR.Core.Editor
 
         public static VisualElement Actions(params VisualElement[] buttons)
         {
-            var r = DevkitTheme.Row();
-            foreach (var b in buttons) { r.Add(b); r.Add(DevkitTheme.VSpace(6)); }
+            var r = DevkitTheme.WrapRow();
+
+            foreach (var b in buttons)
+            {
+                if (b == null) continue;
+
+                // Make actions wrap nicely instead of overflowing/clipping.
+                b.style.marginRight = 0;
+                b.style.marginBottom = 0;
+                b.style.flexShrink = 0;
+
+                // Unity 2022 UIElements doesn't support rowGap/columnGap on IStyle.
+                // Use margins on children for consistent spacing.
+                b.style.marginRight = 8;
+                b.style.marginBottom = 8;
+
+                if (b is Button btn)
+                {
+                    btn.style.whiteSpace = WhiteSpace.NoWrap;
+                    btn.style.minWidth = 140;
+                }
+
+                r.Add(b);
+            }
+
             return r;
         }
 
-        // --- ADD: “Ribbon” status bar with chips + thick progress + caption ---
+        // --- ADD: ï¿½Ribbonï¿½ status bar with chips + thick progress + caption ---
         public static VisualElement StatusRibbon(VisualElement chips, float progress01, string caption)
         {
             var wrap = new VisualElement
@@ -247,11 +270,12 @@ namespace Pitech.XR.Core.Editor
                 style =
         {
             backgroundColor = DevkitTheme.Panel2,
-            borderTopLeftRadius = 18, borderTopRightRadius = 18,
-            borderBottomLeftRadius = 18, borderBottomRightRadius = 18,
+            // Slightly sharper than big "bubbly" rounding
+            borderTopLeftRadius = 12, borderTopRightRadius = 12,
+            borderBottomLeftRadius = 12, borderBottomRightRadius = 12,
             paddingLeft = 14, paddingRight = 14, paddingTop = 12, paddingBottom = 12,
             marginRight = 10, marginBottom = 10,
-            // Faux “depth”: thin outline darker than bg
+            // Faux ï¿½depthï¿½: thin outline darker than bg
             borderBottomWidth = 1, borderTopWidth = 1, borderLeftWidth = 1, borderRightWidth = 1,
             borderBottomColor = new Color(0.10f,0.12f,0.16f,1),
             borderTopColor    = new Color(0.10f,0.12f,0.16f,1),
@@ -322,11 +346,29 @@ namespace Pitech.XR.Core.Editor
 
             var pill = new VisualElement();
             pill.style.backgroundColor = bg;
-            pill.style.borderTopLeftRadius = 999; pill.style.borderTopRightRadius = 999;
-            pill.style.borderBottomLeftRadius = 999; pill.style.borderBottomRightRadius = 999;
-            pill.style.paddingLeft = 8; pill.style.paddingRight = 8; pill.style.paddingTop = 4; pill.style.paddingBottom = 4;
+            // Tags (NOT full pills): subtle radius reads more "pro" and less bubbly.
+            const int r = 7;
+            pill.style.borderTopLeftRadius = r; pill.style.borderTopRightRadius = r;
+            pill.style.borderBottomLeftRadius = r; pill.style.borderBottomRightRadius = r;
+            pill.style.paddingLeft = 8; pill.style.paddingRight = 8; pill.style.paddingTop = 3; pill.style.paddingBottom = 3;
 
-            var label = new Label(text) { style = { color = fg } };
+            // Thin outline for contrast against dark cards
+            pill.style.borderBottomWidth = 1; pill.style.borderTopWidth = 1; pill.style.borderLeftWidth = 1; pill.style.borderRightWidth = 1;
+            var outline = new Color(1f, 1f, 1f, 0.06f);
+            pill.style.borderBottomColor = outline;
+            pill.style.borderTopColor = outline;
+            pill.style.borderLeftColor = outline;
+            pill.style.borderRightColor = outline;
+
+            var label = new Label(text)
+            {
+                style =
+                {
+                    color = fg,
+                    unityFontStyleAndWeight = FontStyle.Bold,
+                    fontSize = 11
+                }
+            };
             pill.Add(label);
             return pill;
         }
@@ -337,7 +379,7 @@ namespace Pitech.XR.Core.Editor
             for (int i = 0; i < items.Length; i++)
             {
                 row.Add(Pill(items[i].text, items[i].kind));
-                if (i < items.Length - 1) row.Add(DevkitTheme.VSpace(8));
+                if (i < items.Length - 1) row.Add(DevkitTheme.HSpace(8));
             }
             return row;
         }

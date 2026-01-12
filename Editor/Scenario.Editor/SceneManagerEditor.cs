@@ -93,16 +93,13 @@ namespace Pitech.XR.Scenario.Editor
 
                 bool hasScenario = _scenarioProp != null && _scenarioProp.objectReferenceValue != null;
 
-                if (hasScenario)
+                MiniCaption("Scenario");
+                ObjectFieldWithPingClear(serializedObject, _scenarioProp, undoName: "Assign Scenario", simpleTypeName: "Scenario", ns: "Pitech.XR.Scenario");
+
+                if (!hasScenario)
                 {
-                    // Exactly like the Stats "UI Controller" row: mini caption + object field + Ping/Clear
-                    MiniCaption("Scenario");
-                    ObjectFieldWithPingClear(serializedObject, _scenarioProp, "Scenario", "Pitech.XR.Scenario");
-                }
-                else
-                {
-                    EditorGUILayout.LabelField("Not added", EditorStyles.miniLabel);
-                    if (GUILayout.Button("Add Scenario (create & assign)", GUILayout.Height(22)))
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign Scenario", GUILayout.Height(22)))
                         CreateAndAssignScenario();
                 }
             }
@@ -123,30 +120,23 @@ namespace Pitech.XR.Scenario.Editor
                 bool hasUI = _statsUIProp != null && _statsUIProp.objectReferenceValue != null;
                 bool hasConfig = _statsConfigProp != null && _statsConfigProp.objectReferenceValue != null;
 
-                if (!hasUI && !hasConfig)
-                    EditorGUILayout.LabelField("Not added", EditorStyles.miniLabel);
-
                 // UI Controller row
-                if (hasUI)
+                MiniCaption("UI Controller");
+                ObjectFieldWithPingClear(serializedObject, _statsUIProp, undoName: "Assign Stats UI", simpleTypeName: "StatsUIController", ns: "Pitech.XR.Stats");
+                if (!hasUI)
                 {
-                    MiniCaption("UI Controller");
-                    ObjectFieldWithPingClear(serializedObject, _statsUIProp, "StatsUIController", "Pitech.XR.Stats");
-                }
-                else
-                {
-                    if (GUILayout.Button("Create StatsUIController", GUILayout.Height(22)))
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign StatsUIController", GUILayout.Height(22)))
                         CreateAndAssignStatsUI();
                 }
 
                 // Config row
-                if (hasConfig)
+                MiniCaption("Config");
+                ObjectFieldWithPingClear(serializedObject, _statsConfigProp, undoName: "Assign Stats Config", simpleTypeName: "StatsConfig", ns: "Pitech.XR.Stats");
+                if (!hasConfig)
                 {
-                    MiniCaption("Config");
-                    ObjectFieldWithPingClear(serializedObject, _statsConfigProp, "StatsConfig", "Pitech.XR.Stats");
-                }
-                else
-                {
-                    if (GUILayout.Button("Create StatsConfig asset", GUILayout.Height(22)))
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign StatsConfig asset", GUILayout.Height(22)))
                         CreateAndAssignStatsConfig();
                 }
             }
@@ -161,30 +151,23 @@ namespace Pitech.XR.Scenario.Editor
                 bool hasSelMgr = _selectablesProp != null && _selectablesProp.objectReferenceValue != null;
                 bool hasSelList = _selectionListsProp != null && _selectionListsProp.objectReferenceValue != null;
 
-                if (!hasSelMgr && !hasSelList)
-                    EditorGUILayout.LabelField("Not added", EditorStyles.miniLabel);
-
                 // Selectables Manager row
-                if (hasSelMgr)
+                MiniCaption("Selectables Manager");
+                ObjectFieldWithPingClear(serializedObject, _selectablesProp, undoName: "Assign Selectables Manager", simpleTypeName: "SelectablesManager", ns: "Pitech.XR.Interactables");
+                if (!hasSelMgr)
                 {
-                    MiniCaption("Selectables Manager");
-                    ObjectFieldWithPingClear(serializedObject, _selectablesProp, "SelectablesManager", "Pitech.XR.Interactables");
-                }
-                else
-                {
-                    if (GUILayout.Button("Create Selectables Manager", GUILayout.Height(22)))
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign Selectables Manager", GUILayout.Height(22)))
                         CreateAndAssignSelectablesManager();
                 }
 
                 // Selection Lists row
-                if (hasSelList)
+                MiniCaption("Selection Lists");
+                ObjectFieldWithPingClear(serializedObject, _selectionListsProp, undoName: "Assign Selection Lists", simpleTypeName: "SelectionLists", ns: "Pitech.XR.Interactables");
+                if (!hasSelList)
                 {
-                    MiniCaption("Selection Lists");
-                    ObjectFieldWithPingClear(serializedObject, _selectionListsProp, "SelectionLists", "Pitech.XR.Interactables");
-                }
-                else
-                {
-                    if (GUILayout.Button("Create Selection Lists", GUILayout.Height(22)))
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign Selection Lists", GUILayout.Height(22)))
                         CreateAndAssignSelectionLists();
                 }
             }
@@ -203,9 +186,7 @@ namespace Pitech.XR.Scenario.Editor
             var comp = go.AddComponent(t) as Component;
             go.transform.SetParent(parent, false);
 
-            var so = new SerializedObject(target);
-            var prop = so.FindProperty("selectables");
-            if (prop != null) { prop.objectReferenceValue = comp; so.ApplyModifiedProperties(); }
+            AssignSceneObjectProperty(_selectablesProp, comp, "Assign Selectables Manager");
             Selection.activeObject = go;
         }
 
@@ -227,9 +208,7 @@ namespace Pitech.XR.Scenario.Editor
             var lists = comp as Pitech.XR.Interactables.SelectionLists;
             if (lists && sm.selectables) lists.selectables = sm.selectables;
 
-            var so = new SerializedObject(target);
-            var prop = so.FindProperty("selectionLists");
-            if (prop != null) { prop.objectReferenceValue = comp; so.ApplyModifiedProperties(); }
+            AssignSceneObjectProperty(_selectionListsProp, comp, "Assign Selection Lists");
             Selection.activeObject = go;
         }
 
@@ -435,9 +414,7 @@ namespace Pitech.XR.Scenario.Editor
             var comp = go.AddComponent(scenarioType) as Component;
             go.transform.SetParent(parent, false);
 
-            var so = new SerializedObject(target);
-            var prop = so.FindProperty("scenario");
-            if (prop != null) { prop.objectReferenceValue = comp; so.ApplyModifiedProperties(); }
+            AssignSceneObjectProperty(_scenarioProp, comp, "Assign Scenario");
 
             Selection.activeObject = go;
         }
@@ -460,9 +437,7 @@ namespace Pitech.XR.Scenario.Editor
             var comp = go.AddComponent(uiType) as Component;
             go.transform.SetParent(parent, false);
 
-            var so = new SerializedObject(target);
-            var prop = so.FindProperty("statsUI");
-            if (prop != null) { prop.objectReferenceValue = comp; so.ApplyModifiedProperties(); }
+            AssignSceneObjectProperty(_statsUIProp, comp, "Assign Stats UI");
 
             Selection.activeObject = go;
         }
@@ -488,9 +463,7 @@ namespace Pitech.XR.Scenario.Editor
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
-            var so = new SerializedObject(target);
-            var prop = so.FindProperty("statsConfig");
-            if (prop != null) { prop.objectReferenceValue = asset; so.ApplyModifiedProperties(); }
+            AssignSceneObjectProperty(_statsConfigProp, asset, "Assign Stats Config");
             EditorGUIUtility.PingObject(asset);
         }
 
@@ -507,6 +480,7 @@ namespace Pitech.XR.Scenario.Editor
         static void ObjectFieldWithPingClear(
     SerializedObject owner,
     SerializedProperty prop,
+    string undoName,
     string simpleTypeName = null,
     string ns = null)
         {
@@ -527,12 +501,20 @@ namespace Pitech.XR.Scenario.Editor
                 if (t != null) objectType = t;
             }
 
+            var undoTarget = owner?.targetObject;
             EditorGUI.BeginChangeCheck();
             var newObj = EditorGUI.ObjectField(field, GUIContent.none, prop.objectReferenceValue, objectType, true);
             if (EditorGUI.EndChangeCheck())
             {
+                if (undoTarget != null) Undo.RecordObject(undoTarget, undoName);
                 prop.objectReferenceValue = newObj;
                 owner.ApplyModifiedProperties();
+
+                if (undoTarget != null)
+                {
+                    EditorUtility.SetDirty(undoTarget);
+                    if (undoTarget is Component c) EditorSceneManager.MarkSceneDirty(c.gameObject.scene);
+                }
             }
 
             using (new EditorGUI.DisabledScope(prop.objectReferenceValue == null))
@@ -540,9 +522,27 @@ namespace Pitech.XR.Scenario.Editor
 
             if (GUI.Button(clear, "Clear"))
             {
+                if (undoTarget != null) Undo.RecordObject(undoTarget, undoName);
                 prop.objectReferenceValue = null;
                 owner.ApplyModifiedProperties();
+
+                if (undoTarget != null)
+                {
+                    EditorUtility.SetDirty(undoTarget);
+                    if (undoTarget is Component c) EditorSceneManager.MarkSceneDirty(c.gameObject.scene);
+                }
             }
+        }
+
+        void AssignSceneObjectProperty(SerializedProperty prop, UnityEngine.Object value, string undoName)
+        {
+            if (prop == null) return;
+
+            Undo.RecordObject(target, undoName);
+            prop.objectReferenceValue = value;
+            serializedObject.ApplyModifiedProperties();
+            EditorUtility.SetDirty(target);
+            if (target is Component c) EditorSceneManager.MarkSceneDirty(c.gameObject.scene);
         }
 
 

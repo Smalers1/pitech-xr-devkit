@@ -10,7 +10,7 @@ namespace Pitech.XR.Interactables.Editor
     public class SelectionListsEditor : UnityEditor.Editor
     {
         // Serialized fields
-        SerializedProperty _selectables, _lists, _feedback, _completeBtn, _retryBtn;
+        SerializedProperty _selectables, _lists, _feedback, _completeBtn, _retryBtn, _infoBtn;
 
         // Feedback
         SerializedProperty _textStart, _textPrompt, _textCorrect, _textWrong, _textRetry;
@@ -34,6 +34,7 @@ namespace Pitech.XR.Interactables.Editor
             _feedback = serializedObject.FindProperty("feedback");
             _completeBtn = serializedObject.FindProperty("completeButton");
             _retryBtn = serializedObject.FindProperty("retryButton");
+            _infoBtn = serializedObject.FindProperty("infoButton");
 
             _textStart = serializedObject.FindProperty("textStart");
             _textPrompt = serializedObject.FindProperty("textPrompt");
@@ -79,6 +80,10 @@ namespace Pitech.XR.Interactables.Editor
                 EditorGUILayout.PropertyField(_feedback, new GUIContent("Feedback (TMP_Text)"));
                 EditorGUILayout.PropertyField(_completeBtn, new GUIContent("Complete Button"));
                 EditorGUILayout.PropertyField(_retryBtn, new GUIContent("Retry Button"));
+                EditorGUILayout.PropertyField(_infoBtn, new GUIContent("Info Button (optional)"));
+                EditorGUILayout.LabelField(
+                    "Tip: Assign an 'i' button here. For each list you can optionally assign an Info Panel; when the active list changes, panels are hidden until the button is pressed.",
+                    EditorStyles.miniLabel);
             }
 
             // ----- Feedback Texts -----
@@ -169,6 +174,8 @@ namespace Pitech.XR.Interactables.Editor
                         EditorGUILayout.LabelField("UI (World-space)", EditorStyles.miniBoldLabel);
                         EditorGUILayout.PropertyField(btnRoot, new GUIContent("Button Root"));
                         EditorGUILayout.PropertyField(btnAnim, new GUIContent("Button Animator"));
+                        var infoPanel = list.FindPropertyRelative("infoPanel");
+                        EditorGUILayout.PropertyField(infoPanel, new GUIContent("Info Panel (optional)"));
 
                         EditorGUILayout.Space(2);
                         EditorGUILayout.LabelField("Animator Triggers", EditorStyles.miniBoldLabel);

@@ -32,6 +32,7 @@ public class ScenarioGraphWindow : EditorWindow
 
     bool _isLoading;
     bool _wasPlaying;
+    bool _pendingFullRouteSync;
 
     [MenuItem("Pi tech/Scenario Graph")]
     public static void OpenWindow() => GetWindow<ScenarioGraphWindow>("Scenario Graph");
@@ -75,6 +76,7 @@ public class ScenarioGraphWindow : EditorWindow
         view = new ScenarioGraphView();
         view.OnContextAdd += ShowCreateMenu;
         view.OnMouseWorld += p => mouseWorld = p;
+        view.OnEdgeDropped += ScheduleFullRouteSync;
         rootVisualElement.Add(view);
 
         // NEW: start listening to playmode updates
@@ -149,7 +151,7 @@ public class ScenarioGraphWindow : EditorWindow
                 stepRef,
                 i,
                 view,
-                () => { if (!_isLoading) RebuildLinksFromGraph(); },
+                () => { if (!_isLoading) ScheduleFullRouteSync(); },
                 OnSkipRequested,
                 DeleteStep
             );
@@ -200,8 +202,6 @@ public class ScenarioGraphWindow : EditorWindow
 
         _isLoading = false; // end guarded load
 
-        _isLoading = false;
-
         // Defer FrameAll one tick so layout is valid
         EditorApplication.delayCall += () =>
         {
@@ -221,11 +221,183 @@ public class ScenarioGraphWindow : EditorWindow
                     }
 
             // edges created/removed
-            if (change.edgesToCreate != null || change.elementsToRemove != null)
-                RebuildLinksFromGraph();
+            if (!_isLoading && scenario != null)
+            {
+                bool routesChanged = false;
+
+                if (change.elementsToRemove != null)
+                    routesChanged |= ApplyRouteRemovals(change.elementsToRemove);
+
+                if (change.edgesToCreate != null)
+                    routesChanged |= ApplyRouteCreates(change.edgesToCreate);
+
+                if (routesChanged)
+                    Dirty(scenario, "Route Change");
+            }
 
             return change;
         };
+    }
+
+    void ScheduleFullRouteSync()
+    {
+        if (_pendingFullRouteSync) return;
+        _pendingFullRouteSync = true;
+
+        // Defer one tick so GraphView has actually updated/remapped ports/edges.
+        EditorApplication.delayCall += () =>
+        {
+            _pendingFullRouteSync = false;
+            if (this == null || view == null) return;
+            SyncRoutesFromGraph();
+        };
+    }
+
+    void SyncRoutesFromGraph()
+    {
+        if (!scenario || _isLoading) return;
+
+        // Compute desired routing from current edges; then apply.
+        // (We avoid clearing everything up-front during an in-flight GraphView change.)
+
+        // Default everything to "linear next" (empty string)
+        foreach (var st in scenario.steps)
+        {
+            if (st is TimelineStep tl) tl.nextGuid = "";
+            else if (st is CueCardsStep cc) cc.nextGuid = "";
+            else if (st is InsertStep ins) ins.nextGuid = "";
+            else if (st is EventStep ev) ev.nextGuid = "";
+            else if (st is QuestionStep q && q.choices != null)
+            {
+                foreach (var ch in q.choices)
+                    if (ch != null) ch.nextGuid = "";
+            }
+
+            if (st is SelectionStep sl)
+            {
+                sl.correctNextGuid = "";
+                sl.wrongNextGuid = "";
+            }
+        }
+
+        // Apply from edges that exist in the view
+        foreach (var e in view.graphElements.ToList().OfType<Edge>())
+            ApplyRouteCreate(e);
+
+        Dirty(scenario, "Route Change");
+    }
+
+    bool ApplyRouteCreates(IEnumerable<Edge> edgesToCreate)
+    {
+        bool changed = false;
+        foreach (var e in edgesToCreate)
+            changed |= ApplyRouteCreate(e);
+        return changed;
+    }
+
+    bool ApplyRouteCreate(Edge e)
+    {
+        if (e == null) return false;
+        var outMeta = PortMeta.From(e.output);
+        var inNode = e.input?.node as StepNode;
+        if (outMeta == null || inNode?.step == null) return false;
+        if (string.IsNullOrEmpty(inNode.step.guid)) return false;
+
+        string dstGuid = inNode.step.guid;
+        bool changed = false;
+
+        if (outMeta.owner is TimelineStep otl)
+        {
+            if (otl.nextGuid != dstGuid) { otl.nextGuid = dstGuid; changed = true; }
+        }
+        else if (outMeta.owner is CueCardsStep occ)
+        {
+            if (occ.nextGuid != dstGuid) { occ.nextGuid = dstGuid; changed = true; }
+        }
+        else if (outMeta.owner is InsertStep oins)
+        {
+            if (oins.nextGuid != dstGuid) { oins.nextGuid = dstGuid; changed = true; }
+        }
+        else if (outMeta.owner is EventStep oev)
+        {
+            if (oev.nextGuid != dstGuid) { oev.nextGuid = dstGuid; changed = true; }
+        }
+        else if (outMeta.owner is QuestionStep oq &&
+                 outMeta.choiceIndex >= 0 &&
+                 oq.choices != null &&
+                 outMeta.choiceIndex < oq.choices.Count &&
+                 oq.choices[outMeta.choiceIndex] != null)
+        {
+            var ch = oq.choices[outMeta.choiceIndex];
+            if (ch.nextGuid != dstGuid) { ch.nextGuid = dstGuid; changed = true; }
+        }
+        else if (outMeta.owner is SelectionStep osl)
+        {
+            // -2 => Correct, -3 => Wrong
+            if (outMeta.choiceIndex == -2)
+            {
+                if (osl.correctNextGuid != dstGuid) { osl.correctNextGuid = dstGuid; changed = true; }
+            }
+            else if (outMeta.choiceIndex == -3)
+            {
+                if (osl.wrongNextGuid != dstGuid) { osl.wrongNextGuid = dstGuid; changed = true; }
+            }
+        }
+
+        return changed;
+    }
+
+    bool ApplyRouteRemovals(IEnumerable<GraphElement> removed)
+    {
+        bool changed = false;
+
+        foreach (var el in removed)
+        {
+            if (el is not Edge e) continue;
+
+            var outMeta = PortMeta.From(e.output);
+            if (outMeta == null) continue;
+
+            // Output ports are Capacity.Single in this graph, so removal means "clear that route".
+            if (outMeta.owner is TimelineStep otl)
+            {
+                if (!string.IsNullOrEmpty(otl.nextGuid)) { otl.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is CueCardsStep occ)
+            {
+                if (!string.IsNullOrEmpty(occ.nextGuid)) { occ.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is InsertStep oins)
+            {
+                if (!string.IsNullOrEmpty(oins.nextGuid)) { oins.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is EventStep oev)
+            {
+                if (!string.IsNullOrEmpty(oev.nextGuid)) { oev.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is QuestionStep oq &&
+                     outMeta.choiceIndex >= 0 &&
+                     oq.choices != null &&
+                     outMeta.choiceIndex < oq.choices.Count &&
+                     oq.choices[outMeta.choiceIndex] != null)
+            {
+                var ch = oq.choices[outMeta.choiceIndex];
+                if (!string.IsNullOrEmpty(ch.nextGuid)) { ch.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is SelectionStep osl)
+            {
+                if (outMeta.choiceIndex == -2)
+                {
+                    if (!string.IsNullOrEmpty(osl.correctNextGuid)) { osl.correctNextGuid = ""; changed = true; }
+                }
+                else if (outMeta.choiceIndex == -3)
+                {
+                    if (!string.IsNullOrEmpty(osl.wrongNextGuid)) { osl.wrongNextGuid = ""; changed = true; }
+                }
+            }
+        }
+
+        return changed;
     }
 
     void AutoLayout()
@@ -380,76 +552,9 @@ public class ScenarioGraphWindow : EditorWindow
 
 
 
-    void RebuildLinksFromGraph()
-    {
-        if (!scenario || _isLoading) return;
-
-        // clear all links
-        foreach (var st in scenario.steps)
-        {
-            if (st is TimelineStep tl)
-            {
-                tl.nextGuid = "";
-            }
-            else if (st is CueCardsStep cc)
-            {
-                cc.nextGuid = "";
-            }
-            else if (st is QuestionStep q && q.choices != null)
-            {
-                foreach (var ch in q.choices)
-                    if (ch != null) ch.nextGuid = "";
-            }
-
-            // Selection routes (Correct/Wrong)
-            if (st is SelectionStep sl)
-            {
-                sl.correctNextGuid = "";
-                sl.wrongNextGuid = "";
-            }
-
-            if (st is InsertStep ins)
-            {
-                ins.nextGuid = "";
-            }
-            
-            else if (st is EventStep ev)
-                ev.nextGuid = "";
-        }
-
-        // re-assign from visible edges
-        foreach (var e in view.graphElements.ToList().OfType<Edge>())
-        {
-            var outMeta = PortMeta.From(e.output);
-            var inNode = e.input?.node as StepNode;
-            if (outMeta == null || inNode == null) continue;
-
-            if (outMeta.owner is TimelineStep otl)
-                otl.nextGuid = inNode.step.guid;
-            else if (outMeta.owner is CueCardsStep occ)
-                occ.nextGuid = inNode.step.guid;
-            else if (outMeta.owner is QuestionStep oq && outMeta.choiceIndex >= 0 &&
-                     oq.choices != null && outMeta.choiceIndex < oq.choices.Count)
-                oq.choices[outMeta.choiceIndex].nextGuid = inNode.step.guid;
-            else if (outMeta.owner is SelectionStep osl)
-            {
-                // -2 => Correct, -3 => Wrong (όπως ήδη έχεις)
-                if (outMeta.choiceIndex == -2) osl.correctNextGuid = inNode.step.guid;
-                else if (outMeta.choiceIndex == -3) osl.wrongNextGuid = inNode.step.guid;
-            }
-            // NEW: InsertStep
-            else if (outMeta.owner is InsertStep oins)
-            {
-                oins.nextGuid = inNode.step.guid;
-            }
-
-            else if (outMeta.owner is EventStep oev)
-                oev.nextGuid = inNode.step.guid;
-
-        }
-
-        Dirty(scenario, "Route Change");
-    }
+    // Back-compat hook: some node UI actions request a full rebuild (e.g. recreating ports).
+    // We now defer and do a safe full sync.
+    void RebuildLinksFromGraph() => ScheduleFullRouteSync();
 
     void DeleteStep(Step step)
     {
@@ -684,6 +789,7 @@ public class ScenarioGraphWindow : EditorWindow
     {
         public Action<ContextualMenuPopulateEvent> OnContextAdd;
         public Action<Vector2> OnMouseWorld;
+        public Action OnEdgeDropped;
 
         public ScenarioGraphView()
         {
@@ -903,8 +1009,6 @@ public class ScenarioGraphWindow : EditorWindow
         readonly Action rebuild;
         readonly Action<Step, int> skipRequest;
         readonly Action<Step> deleteRequest;
-
-        static readonly ECListener edgeListener = new ECListener();
 
         bool _isActive;
 
@@ -1244,7 +1348,7 @@ public class ScenarioGraphWindow : EditorWindow
             PortMeta.Set(p, step, choiceIndex);
 
             // Create FlowEdge when user drags connections
-            var connector = new EdgeConnector<FlowEdge>(edgeListener);
+            var connector = new EdgeConnector<FlowEdge>(new ECListener());
             p.AddManipulator(connector);
 
             return p;
@@ -1300,6 +1404,11 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 if (edge?.input == null || edge.output == null) return;
                 graphView.AddElement(edge);
+
+                // IMPORTANT: some GraphView flows do not populate graphViewChanged.edgesToCreate.
+                // Ensure we persist routes by scheduling a full sync after an edge drop.
+                if (graphView is ScenarioGraphView gv)
+                    gv.OnEdgeDropped?.Invoke();
             }
         }
         // ---- Edge with moving "flow" marker ----
