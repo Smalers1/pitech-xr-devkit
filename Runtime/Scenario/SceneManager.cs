@@ -137,6 +137,11 @@ namespace Pitech.XR.Scenario
                     yield return RunEvent(ev);
                     branchGuid = ev.nextGuid;
                 }
+                else if (step is GroupStep g)
+                {
+                    yield return RunGroup(g);
+                    branchGuid = g.nextGuid;
+                }
 
                 // compute next index. empty guid means "next in list"
                 if (string.IsNullOrEmpty(branchGuid))
@@ -758,7 +763,14 @@ namespace Pitech.XR.Scenario
         {
             if (scenario?.steps == null) return;
 
-            foreach (var s in scenario.steps)
+            DeactivateAllVisualsRecursive(scenario.steps);
+        }
+
+        void DeactivateAllVisualsRecursive(List<Step> list)
+        {
+            if (list == null) return;
+
+            foreach (var s in list)
             {
                 if (s is CueCardsStep cc && cc.cards != null)
                 {
@@ -775,8 +787,9 @@ namespace Pitech.XR.Scenario
                     if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
                     if (sel.hint) SafeSet(sel.hint, false);
                 }
-                else if (s is InsertStep ins)
+                else if (s is GroupStep g && g.steps != null)
                 {
+                    DeactivateAllVisualsRecursive(g.steps);
                 }
             }
         }
@@ -794,7 +807,8 @@ namespace Pitech.XR.Scenario
             if (current is TimelineStep ||
                 current is CueCardsStep ||
                 current is InsertStep ||
-                current is EventStep)
+                current is EventStep ||
+                current is GroupStep)
             {
                 _editorSkip = true;
                 _editorSkipBranchIndex = branchIndex;
@@ -831,6 +845,166 @@ namespace Pitech.XR.Scenario
                 _editorSkip = true;
                 _editorSkipBranchIndex = branchIndex;
                 return;
+            }
+        }
+
+        // ---------------- GROUP ----------------
+        IEnumerator RunGroup(GroupStep g)
+        {
+            if (g == null || g.steps == null || g.steps.Count == 0)
+            {
+                // nothing to do
+                yield break;
+            }
+
+            // Conservative guardrail: multiple "global click / pointer gated" steps at once will fight each other.
+            // We allow at most ONE of these at a time for reliability.
+            int pointerGated = 0;
+            foreach (var st in g.steps)
+            {
+                if (st is CueCardsStep || st is QuestionStep)
+                    pointerGated++;
+            }
+            if (pointerGated > 1)
+            {
+                Debug.LogWarning("[Scenario] GroupStep contains multiple click-driven steps (CueCards/Question). " +
+                                 "This is not supported yet; steps will run sequentially to avoid input conflicts.", this);
+                yield return RunGroupSequential(g);
+                yield break;
+            }
+
+            // Start all steps in parallel.
+            var running = new List<Coroutine>();
+            var done = new Dictionary<string, bool>();
+
+            void MarkDone(string guid) { if (!string.IsNullOrEmpty(guid)) done[guid] = true; }
+
+            foreach (var st in g.steps)
+            {
+                if (st == null) continue;
+                if (string.IsNullOrEmpty(st.guid)) st.guid = System.Guid.NewGuid().ToString();
+                done[st.guid] = false;
+                running.Add(StartCoroutine(RunGroupChild(st, () => MarkDone(st.guid))));
+            }
+
+            bool ShouldComplete()
+            {
+                if (_editorSkip) return true;
+
+                switch (g.completeWhen)
+                {
+                    case GroupStep.CompleteWhen.AfterSeconds:
+                        // handled by timer loop below
+                        return false;
+                    case GroupStep.CompleteWhen.WhenSpecificStepCompletes:
+                        return !string.IsNullOrEmpty(g.specificStepGuid) &&
+                               done.TryGetValue(g.specificStepGuid, out var isDone) &&
+                               isDone;
+                    case GroupStep.CompleteWhen.AllStepsDone:
+                    default:
+                        foreach (var kv in done)
+                            if (!kv.Value) return false;
+                        return true;
+                }
+            }
+
+            // Wait for completion condition.
+            if (g.completeWhen == GroupStep.CompleteWhen.AfterSeconds)
+            {
+                float t = 0f;
+                float dur = Mathf.Max(0f, g.afterSeconds);
+                while (t < dur && !_editorSkip)
+                {
+                    t += Time.deltaTime;
+                    yield return null;
+                }
+            }
+            else
+            {
+                while (!ShouldComplete())
+                    yield return null;
+            }
+
+            // If we completed early (timer/specific step), stop others if requested.
+            bool completeEarly =
+                g.completeWhen == GroupStep.CompleteWhen.AfterSeconds ||
+                g.completeWhen == GroupStep.CompleteWhen.WhenSpecificStepCompletes;
+
+            if (completeEarly && g.stopOthersOnComplete)
+            {
+                for (int i = 0; i < running.Count; i++)
+                    if (running[i] != null) StopCoroutine(running[i]);
+
+                // Best-effort cleanup to avoid lingering UI/timelines.
+                CleanupGroup(g);
+            }
+
+            // Reset skip flag after group ends (like any other step).
+            _editorSkip = false;
+            _editorSkipBranchIndex = 0;
+        }
+
+        IEnumerator RunGroupSequential(GroupStep g)
+        {
+            foreach (var st in g.steps)
+            {
+                if (st == null) continue;
+                yield return RunStepInstance(st);
+                if (_editorSkip) break;
+            }
+        }
+
+        IEnumerator RunGroupChild(Step st, System.Action onDone)
+        {
+            yield return RunStepInstance(st);
+            onDone?.Invoke();
+        }
+
+        IEnumerator RunStepInstance(Step st)
+        {
+            if (st is TimelineStep tl) yield return RunTimeline(tl);
+            else if (st is CueCardsStep cc) yield return RunCueCards(cc);
+            else if (st is QuestionStep q) yield return RunQuestion(q);
+            else if (st is SelectionStep sel) yield return RunSelection(sel);
+            else if (st is InsertStep ins) yield return RunInsert(ins);
+            else if (st is EventStep ev) yield return RunEvent(ev);
+            else if (st is GroupStep g) yield return RunGroup(g); // nested groups are allowed
+        }
+
+        void CleanupGroup(GroupStep g)
+        {
+            if (g?.steps == null) return;
+
+            foreach (var st in g.steps)
+            {
+                if (st == null) continue;
+
+                // Stop timelines to avoid bleed into next steps when group completes early.
+                if (st is TimelineStep tl && tl.director)
+                {
+                    try { tl.director.Stop(); } catch { }
+                }
+                else if (st is CueCardsStep cc && cc.cards != null)
+                {
+                    foreach (var card in cc.cards) SafeSet(card, false);
+                    if (cc.extraObject) SafeSet(cc.extraObject, false);
+                    if (cc.tapHint) SafeSet(cc.tapHint, false);
+                }
+                else if (st is QuestionStep q)
+                {
+                    if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false);
+                }
+                else if (st is SelectionStep sel)
+                {
+                    if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
+                    if (sel.hint) SafeSet(sel.hint, false);
+                    if (selectionLists != null && selectionLists.selectables != null)
+                        selectionLists.selectables.pickingEnabled = false;
+                }
+                else if (st is GroupStep inner)
+                {
+                    CleanupGroup(inner);
+                }
             }
         }
 

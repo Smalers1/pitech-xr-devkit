@@ -20,9 +20,33 @@ public class ScenarioGraphWindow : EditorWindow
 {
     [SerializeField]
     Scenario scenario;
+    [SerializeField]
+    string authoringScenarioGlobalId;
+    [SerializeField]
+    string authoringScenarioScenePath;
+    [SerializeField]
+    string authoringScenarioGameObjectName;
     ScenarioGraphView view;
     readonly Dictionary<string, StepNode> nodes = new();
+    readonly Dictionary<string, StickyNote> notes = new();
+    readonly HashSet<StepNode> movedNodesSinceMouseDown = new HashSet<StepNode>();
+    // NOTE: We intentionally do NOT represent nested steps as GraphView nodes.
+    // Nested steps are rendered as UI tiles inside the Group node to avoid z-order/picking issues in GraphView.
     Vector2 mouseWorld;
+    bool _suppressNestedMoveWrites;
+
+    // ---- Group tile layout (nested steps) ----
+    // Two columns, compact tiles inside the Group node (UI tiles, not GraphView nodes).
+    const float GroupTileW = 310f;
+    const float GroupTileH = 96f;
+    const int GroupTileColumns = 2;
+    const float GroupTileGapX = 10f;
+    const float GroupTileGapY = 10f;
+    const float GroupTilesPadX = 14f;
+    const float GroupTilesPadY = 12f;
+    const float GroupHeaderH = 54f;     // title + ports row
+    const float GroupSettingsApproxH = 150f; // approx IMGUI foldout content height
+    const float GroupSettingsCollapsedMinH = 70f; // keep header + some breathing room so it never becomes unclickable
 
     string _activeGuid;
     string _prevGuid;
@@ -31,8 +55,25 @@ public class ScenarioGraphWindow : EditorWindow
     int _edgeDefaultWidth = 2;
 
     bool _isLoading;
+    // GraphView can emit movedElements *after* we set _isLoading=false (layout pass).
+    // During that short window we must not write graphPos back, otherwise Refresh can overwrite positions (often to 0,0).
+    int _suppressGraphPosWritesFrames;
     bool _wasPlaying;
     bool _pendingFullRouteSync;
+    bool _hasUserFramed; // if user clicked Frame All, we allow re-framing; otherwise preserve view on refresh
+
+    // Persist GraphView pan/zoom across refresh/reload. Some Unity versions reset it on ClearGraph().
+    [SerializeField] Vector3 _savedViewPos = Vector3.zero;
+    [SerializeField] Vector3 _savedViewScale = Vector3.one;
+    bool _hasSavedView;
+
+    struct PendingNoteEdit
+    {
+        public string text;
+        public double dueTime;
+    }
+
+    readonly Dictionary<string, PendingNoteEdit> _pendingNoteEdits = new Dictionary<string, PendingNoteEdit>();
 
     [MenuItem("Pi tech/Scenario Graph")]
     public static void OpenWindow() => GetWindow<ScenarioGraphWindow>("Scenario Graph");
@@ -60,7 +101,12 @@ public class ScenarioGraphWindow : EditorWindow
 
         bar.Add(new UIEButton(() => { if (scenario) Load(scenario); }) { text = "Refresh" });
 
-        var frame = new UIEButton(() => view?.FrameAll()) { text = "Frame All" };
+        var frame = new UIEButton(() =>
+        {
+            _hasUserFramed = true;
+            view?.FrameAll();
+        })
+        { text = "Frame All" };
         frame.style.marginLeft = 6;
         bar.Add(frame);
 
@@ -73,21 +119,25 @@ public class ScenarioGraphWindow : EditorWindow
 
         rootVisualElement.Add(bar);
 
+        // If we lost the object reference across playmode/domain reload, try to resolve authoring scenario.
+        if (!scenario) TryResolveAuthoringScenario();
+
         view = new ScenarioGraphView();
         view.OnContextAdd += ShowCreateMenu;
         view.OnMouseWorld += p => mouseWorld = p;
         view.OnEdgeDropped += ScheduleFullRouteSync;
+        view.OnMouseUp += HandleMouseUp;
+        view.OnMouseDown += () => movedNodesSinceMouseDown.Clear();
+        view.OnViewTransformChanged += SaveViewTransform;
         rootVisualElement.Add(view);
 
         // NEW: start listening to playmode updates
         EditorApplication.update += OnEditorUpdate;
+        EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
 
         _wasPlaying = Application.isPlaying;
 
-        if (scenario != null)
-        {
-            Load(scenario);
-        }
+        if (scenario != null) Load(scenario);
     }
 
     void OnDisable()
@@ -97,16 +147,32 @@ public class ScenarioGraphWindow : EditorWindow
 
         // NEW: stop listening
         EditorApplication.update -= OnEditorUpdate;
+        EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
     }
 
 
     // ---------- load graph from component ----------
     void Load(Scenario sc)
     {
+        // Capture current view transform before ClearGraph (Unity may reset it).
+        SaveViewTransform();
+
         scenario = sc;
+        // Persist selection across playmode/domain reload.
+        try
+        {
+            if (scenario)
+            {
+                authoringScenarioGlobalId = GlobalObjectId.GetGlobalObjectIdSlow(scenario).ToString();
+                authoringScenarioScenePath = scenario.gameObject.scene.path;
+                authoringScenarioGameObjectName = scenario.gameObject.name;
+            }
+        }
+        catch { /* best-effort */ }
         titleContent = new GUIContent(sc ? $"Scenario Graph • {sc.gameObject.name}" : "Scenario Graph");
 
         _isLoading = true; // begin guarded load
+        _suppressGraphPosWritesFrames = 2; // cover current + next layout tick
         
         _activeGuid = null;
         _prevGuid = null;
@@ -114,6 +180,7 @@ public class ScenarioGraphWindow : EditorWindow
 
         view.ClearGraph();
         nodes.Clear();
+        notes.Clear();
         if (!scenario || scenario.steps == null)
         {
             _isLoading = false;
@@ -129,6 +196,13 @@ public class ScenarioGraphWindow : EditorWindow
                 s.guid = Guid.NewGuid().ToString();
                 addedGuids = true;
             }
+
+            // ensure groups always have a list so container sizing works
+            if (s is GroupStep g && g.steps == null)
+            {
+                g.steps = new List<Step>();
+                addedGuids = true;
+            }
         }
 
         if (addedGuids)
@@ -138,17 +212,16 @@ public class ScenarioGraphWindow : EditorWindow
                 EditorSceneManager.MarkSceneDirty(c.gameObject.scene);
         }
 
-        // nodes
+        // nodes (top-level only)
         for (int i = 0; i < scenario.steps.Count; i++)
         {
             var s = scenario.steps[i];
             if (s == null) continue;
 
-            var stepRef = s;
-
             var node = new StepNode(
+                this,
                 scenario,
-                stepRef,
+                s,
                 i,
                 view,
                 () => { if (!_isLoading) ScheduleFullRouteSync(); },
@@ -156,11 +229,29 @@ public class ScenarioGraphWindow : EditorWindow
                 DeleteStep
             );
 
-
-            var pos = s.graphPos == default ? new Vector2(80 + 340 * i, 220) : s.graphPos;
-            node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
+            // IMPORTANT: do not treat (0,0) as "unset" (it's a valid graph position).
+            // Only auto-place when the stored position is invalid (NaN/Infinity).
+            var fallbackPos = new Vector2(80 + 340 * i, 220);
+            var pos = IsValidGraphPos(s.graphPos) ? s.graphPos : fallbackPos;
+            float width = 360f;
+            if (s is GroupStep gs)
+            {
+                int c = gs.steps != null ? gs.steps.Count : 0;
+                width = GetGroupPreferredWidth(c);
+            }
+            var h = node.GetHeight();
+            if (s is GroupStep) h = Mathf.Max(h, 320f); // always show as container, even when empty
+            node.SetPositionSilent(new Rect(pos, new Vector2(width, h)));
             view.AddElement(node);
-            nodes[stepRef.guid] = node;
+            nodes[s.guid] = node;
+        }
+
+        // Grow group containers to fit their nested nodes so children are visually "inside".
+        foreach (var st in scenario.steps)
+        {
+            if (st is not GroupStep grp) continue;
+            if (!nodes.TryGetValue(grp.guid, out var grpNode) || grpNode == null) continue;
+            FitGroupToChildren(grp, grpNode);
         }
 
 
@@ -178,9 +269,9 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 for (int c = 0; c < q.choices.Count; c++)
                 {
-                    var g = q.choices[c]?.nextGuid;
-                    if (!string.IsNullOrEmpty(g) && src.outChoices != null && c < src.outChoices.Count)
-                        Connect(src.outChoices[c], g);
+                    var next = q.choices[c]?.nextGuid;
+                    if (!string.IsNullOrEmpty(next) && src.outChoices != null && c < src.outChoices.Count)
+                        Connect(src.outChoices[c], next);
                 }
             }
             if (s is InsertStep ins && !string.IsNullOrEmpty(ins.nextGuid) && nodes.TryGetValue(ins.guid, out var insNode))
@@ -188,6 +279,9 @@ public class ScenarioGraphWindow : EditorWindow
             
             if (s is EventStep ev && !string.IsNullOrEmpty(ev.nextGuid) && nodes.TryGetValue(ev.guid, out var evNode))
                 Connect(evNode.outNext, ev.nextGuid);
+
+            if (s is GroupStep grp && !string.IsNullOrEmpty(grp.nextGuid) && nodes.TryGetValue(grp.guid, out var grpNode))
+                Connect(grpNode.outNext, grp.nextGuid);
         }
         // Selection edges (Correct/Wrong)
         foreach (var s in scenario.steps)
@@ -199,26 +293,45 @@ public class ScenarioGraphWindow : EditorWindow
             }
         }
 
+        // --- Z-order pass (must be AFTER edges are created) ---
+        // edges behind nodes (so they don't steal pointer events)
+        foreach (var e in view.graphElements.ToList().OfType<Edge>())
+            e.SendToBack();
+
 
         _isLoading = false; // end guarded load
 
-        // Defer FrameAll one tick so layout is valid
-        EditorApplication.delayCall += () =>
+        // Notes (editor-only)
+#if UNITY_EDITOR
+        if (scenario != null && scenario.GraphNotes != null)
         {
-            if (this != null && view != null)
-                view.FrameAll();
-        };
+            foreach (var n in scenario.GraphNotes)
+                AddOrUpdateNoteElement(n);
+        }
+#endif
+
+        // Restore view transform (pan/zoom) after graph rebuild.
+        RestoreViewTransform();
 
         view.graphViewChanged = change =>
         {
+            // During Load() we programmatically add/move elements; GraphView can report movedElements.
+            // Never write back graphPos/Undo during loading, otherwise Refresh can overwrite saved positions (often to 0,0).
+            if (_isLoading || _suppressGraphPosWritesFrames > 0) return change;
+
             // positions
             if (change.movedElements != null)
+            {
                 foreach (var el in change.movedElements)
-                    if (el is StepNode sn)
-                    {
-                        sn.step.graphPos = sn.GetPosition().position;
-                        Dirty(scenario, "Move Node");
-                    }
+                {
+                    if (el is not StepNode sn) continue;
+
+                    sn.step.graphPos = sn.GetPosition().position;
+                    Dirty(scenario, "Move Node");
+
+                    movedNodesSinceMouseDown.Add(sn);
+                }
+            }
 
             // edges created/removed
             if (!_isLoading && scenario != null)
@@ -236,6 +349,190 @@ public class ScenarioGraphWindow : EditorWindow
             }
 
             return change;
+        };
+    }
+
+    void HandleMouseUp()
+    {
+        if (_isLoading || scenario == null) { movedNodesSinceMouseDown.Clear(); return; }
+        // Fallback: GraphView doesn't always report movedElements, so use current selection if needed.
+        if (movedNodesSinceMouseDown.Count == 0)
+        {
+            if (view != null)
+            {
+                foreach (var sel in view.selection)
+                    if (sel is StepNode sn) movedNodesSinceMouseDown.Add(sn);
+            }
+        }
+
+        if (movedNodesSinceMouseDown.Count == 0) return;
+
+        // If the user dragged one or more nodes over a GroupStep container node, move those steps into the group.
+        var groupTargets = nodes.Values.Where(n => n != null && !n.IsNested && n.step is GroupStep).ToList();
+        if (groupTargets.Count == 0) { movedNodesSinceMouseDown.Clear(); return; }
+
+        bool changed = false;
+        var removeFromView = new List<GraphElement>();
+
+        foreach (var moved in movedNodesSinceMouseDown.ToList())
+        {
+            if (moved == null || moved.step == null) continue;
+            if (moved.step is GroupStep) continue; // don't drag groups into groups (yet)
+
+            var movedRect = moved.GetPosition();
+            var center = movedRect.center;
+
+            // Top-level steps can be moved into a group.
+            int topIndex = scenario.steps.IndexOf(moved.step);
+            if (topIndex < 0) continue;
+
+            StepNode target = null;
+            foreach (var gnode in groupTargets)
+            {
+                if (gnode == null) continue;
+                var grect = gnode.GetPosition();
+                // forgiving: any overlap counts, not just center
+                if (grect.Overlaps(movedRect))
+                {
+                    target = gnode;
+                    break;
+                }
+            }
+
+            if (target?.step is not GroupStep grp) continue;
+
+            Dirty(scenario, "Move Step Into Group");
+            scenario.steps.RemoveAt(topIndex);
+            grp.steps ??= new List<Step>();
+
+            // IMPORTANT: if anything was routed into this step, re-route it into the group instead.
+            RedirectIncomingRoutes(moved.step.guid, grp.guid);
+
+            // If the group has no Next yet and this step was a linear step, adopt its next as the group's next.
+            if (string.IsNullOrEmpty(grp.nextGuid))
+            {
+                var adopted = TryGetLinearNextGuid(moved.step);
+                if (!string.IsNullOrEmpty(adopted))
+                    grp.nextGuid = adopted;
+            }
+
+            // UX: always append in order. Tiles represent ordering clearly.
+            grp.steps.Add(moved.step);
+            changed = true;
+
+            // IMPORTANT: visually remove the old top-level node immediately to avoid "stale" nodes
+            // hanging around until the delayed Load() happens.
+            removeFromView.Add(moved);
+        }
+
+        movedNodesSinceMouseDown.Clear();
+
+        if (changed)
+        {
+            // Remove moved nodes (and their attached edges) immediately for clean UX.
+            if (view != null && removeFromView.Count > 0)
+            {
+                // Remove edges connected to nodes we're removing
+                var toRemove = new HashSet<GraphElement>(removeFromView);
+                foreach (var e in view.graphElements.ToList().OfType<Edge>())
+                {
+                    if (e?.input?.node is StepNode inNode && toRemove.Contains(inNode)) { view.RemoveElement(e); continue; }
+                    if (e?.output?.node is StepNode outNode && toRemove.Contains(outNode)) { view.RemoveElement(e); continue; }
+                }
+
+                foreach (var ge in removeFromView)
+                    if (ge != null) view.RemoveElement(ge);
+            }
+
+            // Rebuild graph from serialized truth AFTER GraphView finishes its drag cycle.
+            // (Immediate rebuild can leave SelectionDragger in a bad state and cause weird scrolling.)
+            view?.ClearSelection();
+            EditorApplication.delayCall += () =>
+            {
+                if (this != null && scenario != null)
+                    Load(scenario);
+            };
+        }
+    }
+
+    static string TryGetLinearNextGuid(Step s)
+    {
+        if (s is TimelineStep tl) return tl.nextGuid;
+        if (s is CueCardsStep cc) return cc.nextGuid;
+        if (s is InsertStep ins) return ins.nextGuid;
+        if (s is EventStep ev) return ev.nextGuid;
+        return null;
+    }
+
+    void RedirectIncomingRoutes(string fromGuid, string toGuid)
+    {
+        if (string.IsNullOrEmpty(fromGuid) || string.IsNullOrEmpty(toGuid) || scenario == null) return;
+        if (scenario.steps == null) return;
+
+        foreach (var st in scenario.steps)
+        {
+            if (st == null) continue;
+
+            if (st is TimelineStep tl && tl.nextGuid == fromGuid) tl.nextGuid = toGuid;
+            else if (st is CueCardsStep cc && cc.nextGuid == fromGuid) cc.nextGuid = toGuid;
+            else if (st is InsertStep ins && ins.nextGuid == fromGuid) ins.nextGuid = toGuid;
+            else if (st is EventStep ev && ev.nextGuid == fromGuid) ev.nextGuid = toGuid;
+            else if (st is GroupStep g && g.nextGuid == fromGuid) g.nextGuid = toGuid;
+            else if (st is QuestionStep q && q.choices != null)
+            {
+                foreach (var ch in q.choices)
+                    if (ch != null && ch.nextGuid == fromGuid)
+                        ch.nextGuid = toGuid;
+            }
+            else if (st is SelectionStep sel)
+            {
+                if (sel.correctNextGuid == fromGuid) sel.correctNextGuid = toGuid;
+                if (sel.wrongNextGuid == fromGuid) sel.wrongNextGuid = toGuid;
+            }
+        }
+    }
+
+    void FitGroupToChildren(GroupStep grp, StepNode grpNode)
+    {
+        if (grp == null || grpNode == null) return;
+
+        int count = grp.steps != null ? grp.steps.Count : 0;
+        int rows = Mathf.CeilToInt(count / (float)GroupTileColumns);
+
+        float tilesH = count == 0
+            ? 64f
+            : (rows * GroupTileH) + Mathf.Max(0, rows - 1) * GroupTileGapY + GroupTilesPadY;
+
+        float reqW = GetGroupPreferredWidth(count);
+        float settingsH = grpNode.GroupSettingsExpanded ? GroupSettingsApproxH : GroupSettingsCollapsedMinH;
+        float reqH = Mathf.Max(260f, GroupHeaderH + tilesH + settingsH);
+
+        // IMPORTANT: always anchor to serialized graphPos.
+        // GraphView can temporarily report a rect at (0,0) during Refresh/layout which would "snap" the group.
+        var newRect = new Rect(grp.graphPos, new Vector2(reqW, reqH));
+        grpNode.SetPositionSilent(newRect);
+    }
+
+    static float GetGroupPreferredWidth(int tileCount)
+    {
+        // 0-1 tiles => 1 col, 2+ tiles => 2 cols
+        int cols = tileCount <= 1 ? 1 : GroupTileColumns;
+        float contentW = (cols * GroupTileW) + ((cols - 1) * GroupTileGapX);
+        // padding on both sides + a small buffer for borders/ports
+        float w = contentW + GroupTilesPadX * 2 + 24f;
+        return Mathf.Max(420f, w);
+    }
+
+    void ScheduleResizeGroup(string groupGuid)
+    {
+        if (string.IsNullOrEmpty(groupGuid)) return;
+        EditorApplication.delayCall += () =>
+        {
+            if (this == null || scenario == null) return;
+            var grp = scenario.steps.OfType<GroupStep>().FirstOrDefault(g => g != null && g.guid == groupGuid);
+            if (grp == null) return;
+            if (!nodes.TryGetValue(groupGuid, out var node) || node == null) return;
+            FitGroupToChildren(grp, node);
         };
     }
 
@@ -267,6 +564,7 @@ public class ScenarioGraphWindow : EditorWindow
             else if (st is CueCardsStep cc) cc.nextGuid = "";
             else if (st is InsertStep ins) ins.nextGuid = "";
             else if (st is EventStep ev) ev.nextGuid = "";
+            else if (st is GroupStep g) g.nextGuid = "";
             else if (st is QuestionStep q && q.choices != null)
             {
                 foreach (var ch in q.choices)
@@ -322,6 +620,10 @@ public class ScenarioGraphWindow : EditorWindow
         {
             if (oev.nextGuid != dstGuid) { oev.nextGuid = dstGuid; changed = true; }
         }
+        else if (outMeta.owner is GroupStep og)
+        {
+            if (og.nextGuid != dstGuid) { og.nextGuid = dstGuid; changed = true; }
+        }
         else if (outMeta.owner is QuestionStep oq &&
                  outMeta.choiceIndex >= 0 &&
                  oq.choices != null &&
@@ -374,6 +676,10 @@ public class ScenarioGraphWindow : EditorWindow
             else if (outMeta.owner is EventStep oev)
             {
                 if (!string.IsNullOrEmpty(oev.nextGuid)) { oev.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is GroupStep og)
+            {
+                if (!string.IsNullOrEmpty(og.nextGuid)) { og.nextGuid = ""; changed = true; }
             }
             else if (outMeta.owner is QuestionStep oq &&
                      outMeta.choiceIndex >= 0 &&
@@ -440,6 +746,8 @@ public class ScenarioGraphWindow : EditorWindow
                 AddEdge(from, ins.nextGuid);
             else if (st is EventStep ev && !string.IsNullOrEmpty(ev.nextGuid))
                 AddEdge(from, ev.nextGuid);
+            else if (st is GroupStep g && !string.IsNullOrEmpty(g.nextGuid))
+                AddEdge(from, g.nextGuid);
 
             if (st is QuestionStep q && q.choices != null)
             {
@@ -503,34 +811,77 @@ public class ScenarioGraphWindow : EditorWindow
             .OrderBy(g => g.Key)
             .ToDictionary(g => g.Key, g => g.Select(k => k.Key).ToList());
 
-        // Layout constants
-        float xStart = 80f;
-        float yStart = 120f;
-        float xStep = 280f;
-        float yStep = 260f;
+        // Layout constants (dynamic spacing based on node sizes)
+        const float xStart = 80f;
+        const float yStart = 120f;
+        const float xGap = 90f;
+        const float yGap = 70f;
 
-        _isLoading = true;
-
-        foreach (var lv in levels.OrderBy(k => k.Key))
+        // Precompute desired size per node (Group nodes are wider)
+        var sizeByGuid = new Dictionary<string, Vector2>();
+        foreach (var kv in nodes)
         {
-            int lvIndex = lv.Key;
-            var guidsAtLevel = lv.Value
+            var guid = kv.Key;
+            var node = kv.Value;
+            if (node == null || node.step == null) continue;
+
+            float w = 360f;
+            float h = node.GetHeight();
+
+            if (node.step is GroupStep gs)
+            {
+                int c = gs.steps != null ? gs.steps.Count : 0;
+                w = GetGroupPreferredWidth(c);
+                // ensure the rect accounts for the UI tiles/settings state
+                FitGroupToChildren(gs, node);
+                h = Mathf.Max(h, node.GetPosition().height);
+            }
+
+            sizeByGuid[guid] = new Vector2(w, h);
+        }
+
+        // Compute x offsets per level based on widest node in each column
+        var levelKeys = levels.Keys.OrderBy(k => k).ToList();
+        var xByLevel = new Dictionary<int, float>();
+        float curX = xStart;
+        foreach (var lvKey in levelKeys)
+        {
+            xByLevel[lvKey] = curX;
+            float colW = 360f;
+            foreach (var guid in levels[lvKey])
+                if (sizeByGuid.TryGetValue(guid, out var sz))
+                    colW = Mathf.Max(colW, sz.x);
+            curX += colW + xGap;
+        }
+
+        // Apply positions (stack within each level using actual heights)
+        _isLoading = true;
+        Dirty(scenario, "Rearrange Graph");
+
+        foreach (var lv in levelKeys)
+        {
+            var guidsAtLevel = levels[lv]
                 .OrderBy(guid => scenario.steps.FindIndex(s => s != null && s.guid == guid))
                 .ToList();
 
-            for (int i = 0; i < guidsAtLevel.Count; i++)
-            {
-                var guid = guidsAtLevel[i];
-                if (!nodes.TryGetValue(guid, out var node)) continue;
+            float y = yStart;
+            float x = xByLevel[lv];
 
-                float x = xStart + lvIndex * xStep;
-                float y = yStart + i * yStep;
-                var pos = new Vector2(x, y);
-                node.SetPosition(new Rect(pos, new Vector2(360, node.GetHeight())));
+            foreach (var guid in guidsAtLevel)
+            {
+                if (!nodes.TryGetValue(guid, out var node) || node == null) continue;
+                if (!sizeByGuid.TryGetValue(guid, out var sz)) sz = new Vector2(360f, node.GetHeight());
+
+                node.SetPositionSilent(new Rect(new Vector2(x, y), sz));
+                node.step.graphPos = new Vector2(x, y);
+
+                y += sz.y + yGap;
             }
         }
 
         _isLoading = false;
+        EditorUtility.SetDirty(scenario);
+        EditorSceneManager.MarkSceneDirty(scenario.gameObject.scene);
 
         view?.FrameAll();
     }
@@ -615,6 +966,8 @@ public class ScenarioGraphWindow : EditorWindow
     {
         if (src == null) return;
         if (!nodes.TryGetValue(dstGuid, out var dstNode)) return;
+        if (dstNode == null) return;
+        if (dstNode.inPort == null) return; // nested steps do not accept routing
 
         var edge = new FlowEdge
         {
@@ -622,6 +975,7 @@ public class ScenarioGraphWindow : EditorWindow
             input = dstNode.inPort
         };
 
+        if (edge.output == null || edge.input == null) return;
         edge.output.Connect(edge);
         edge.input.Connect(edge);
 
@@ -632,12 +986,17 @@ public class ScenarioGraphWindow : EditorWindow
 
     void OnEditorUpdate()
     {
+        if (_suppressGraphPosWritesFrames > 0) _suppressGraphPosWritesFrames--;
+        CommitPendingNoteEdits();
+        SyncNoteContentsFallback();
+        // If we lost the object reference across reloads, try to resolve authoring scenario.
+        if (!scenario) TryResolveAuthoringScenario();
+
         // detect transitions
         if (Application.isPlaying && !_wasPlaying)
         {
             // just entered Play
             _wasPlaying = true;
-            view?.FrameAll();              // force FrameAll once on Play
         }
         else if (!Application.isPlaying && _wasPlaying)
         {
@@ -671,13 +1030,8 @@ public class ScenarioGraphWindow : EditorWindow
             return;
         }
 
-        // Make sure the window is looking at the same Scenario as the running manager
-        if (scenario != mgr.scenario)
-        {
-            scenario = mgr.scenario;
-            Load(scenario);         // rebuild nodes for the runtime scenario
-        }
-
+        // IMPORTANT: do NOT swap the window to runtime scenario during Play.
+        // We highlight by GUID, using the authoring graph as the visual source of truth.
         var sc = mgr.scenario;
 
         int idx = mgr.StepIndex;
@@ -703,6 +1057,157 @@ public class ScenarioGraphWindow : EditorWindow
             _activeGuid = curGuid;
             UpdateNodeHighlights(_activeGuid, _prevGuid);
         }
+    }
+
+    static bool IsValidGraphPos(Vector2 p)
+    {
+        return !(float.IsNaN(p.x) || float.IsNaN(p.y) || float.IsInfinity(p.x) || float.IsInfinity(p.y));
+    }
+
+    void CommitPendingNoteEdits()
+    {
+        if (scenario == null || scenario.GraphNotes == null || _pendingNoteEdits.Count == 0) return;
+
+        double now = EditorApplication.timeSinceStartup;
+        List<string> ready = null;
+        foreach (var kv in _pendingNoteEdits)
+        {
+            if (kv.Value.dueTime <= now)
+            {
+                ready ??= new List<string>();
+                ready.Add(kv.Key);
+            }
+        }
+
+        if (ready == null) return;
+
+        foreach (var guid in ready)
+        {
+            if (!_pendingNoteEdits.TryGetValue(guid, out var pending)) continue;
+            _pendingNoteEdits.Remove(guid);
+
+            var data = scenario.GraphNotes.FirstOrDefault(x => x != null && x.guid == guid);
+            if (data == null) continue;
+
+            if (data.text != pending.text)
+            {
+                data.text = pending.text;
+                Dirty(scenario, "Edit Note");
+            }
+        }
+    }
+
+    // Extra safety: some StickyNote edits don't fire FocusOut/ValueChanged reliably in GraphView.
+    // Poll the note contents and persist if changed (throttled by the debounce map above).
+    void SyncNoteContentsFallback()
+    {
+        if (_isLoading || scenario == null || scenario.GraphNotes == null) return;
+        if (notes == null || notes.Count == 0) return;
+
+        double now = EditorApplication.timeSinceStartup;
+        foreach (var kv in notes)
+        {
+            var guid = kv.Key;
+            var note = kv.Value;
+            if (note == null || string.IsNullOrEmpty(guid)) continue;
+
+            var data = scenario.GraphNotes.FirstOrDefault(x => x != null && x.guid == guid);
+            if (data == null) continue;
+
+            // If the UI shows different text and nothing is queued, queue it.
+            string uiText = note.contents ?? "";
+            if (data.text != uiText && !_pendingNoteEdits.ContainsKey(guid))
+            {
+                _pendingNoteEdits[guid] = new PendingNoteEdit
+                {
+                    text = uiText,
+                    dueTime = now + 0.25
+                };
+            }
+        }
+    }
+
+    void SaveViewTransform()
+    {
+        if (view == null) return;
+        try
+        {
+            _savedViewPos = view.contentViewContainer.transform.position;
+            _savedViewScale = view.contentViewContainer.transform.scale;
+            _hasSavedView = true;
+        }
+        catch { }
+    }
+
+    void RestoreViewTransform()
+    {
+        if (!_hasSavedView || view == null) return;
+        try
+        {
+            // GraphView provides UpdateViewTransform for correct pan/zoom restoration.
+            view.UpdateViewTransform(_savedViewPos, _savedViewScale);
+        }
+        catch
+        {
+            // Fallback if UpdateViewTransform is unavailable for some reason
+            try
+            {
+                view.contentViewContainer.transform.position = _savedViewPos;
+                view.contentViewContainer.transform.scale = _savedViewScale;
+            }
+            catch { }
+        }
+    }
+
+    void OnPlayModeStateChanged(PlayModeStateChange state)
+    {
+        if (state == PlayModeStateChange.EnteredEditMode || state == PlayModeStateChange.ExitingPlayMode)
+        {
+            // After Play -> Stop, Unity may restore the scene and invalidate references.
+            // Re-resolve authoring scenario and reload the graph.
+            TryResolveAuthoringScenario();
+            if (scenario != null)
+                Load(scenario);
+        }
+    }
+
+    void TryResolveAuthoringScenario()
+    {
+        if (scenario) return;
+
+        // 1) Try GlobalObjectId (best case)
+        if (!string.IsNullOrEmpty(authoringScenarioGlobalId))
+        {
+            try
+            {
+                if (GlobalObjectId.TryParse(authoringScenarioGlobalId, out var gid))
+                {
+                    var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+                    if (obj is Scenario sc)
+                    {
+                        scenario = sc;
+                        return;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // 2) Fallback: search loaded scenes for matching name + scene path
+        try
+        {
+            var all = UnityEngine.Object.FindObjectsOfType<Scenario>(true);
+            foreach (var sc in all)
+            {
+                if (!sc) continue;
+                if (EditorUtility.IsPersistent(sc)) continue; // skip prefabs/assets
+                if (!string.IsNullOrEmpty(authoringScenarioScenePath) && sc.gameObject.scene.path != authoringScenarioScenePath) continue;
+                if (!string.IsNullOrEmpty(authoringScenarioGameObjectName) && sc.gameObject.name != authoringScenarioGameObjectName) continue;
+                scenario = sc;
+                return;
+            }
+        }
+        catch { }
     }
 
 
@@ -771,7 +1276,127 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
         evt.menu.AppendAction("Add/Insert", _ => CreateStep(typeof(InsertStep)));
         evt.menu.AppendAction("Add/Event", _ => CreateStep(typeof(EventStep)));
+        evt.menu.AppendAction("Add/Group", _ => CreateStep(typeof(GroupStep)));
+        evt.menu.AppendSeparator();
+        evt.menu.AppendAction("Add/Note", _ => CreateNote());
     }
+
+    void CreateNote()
+    {
+#if UNITY_EDITOR
+        if (!scenario) return;
+
+        Dirty(scenario, "Add Note");
+
+        var n = new Scenario.GraphNote
+        {
+            guid = Guid.NewGuid().ToString(),
+            rect = new Rect(mouseWorld, new Vector2(260, 170)),
+            text = "Note…"
+        };
+        scenario.GraphNotes.Add(n);
+        AddOrUpdateNoteElement(n);
+#endif
+    }
+
+#if UNITY_EDITOR
+    void AddOrUpdateNoteElement(Scenario.GraphNote n)
+    {
+        if (n == null || string.IsNullOrEmpty(n.guid) || view == null) return;
+
+        if (!notes.TryGetValue(n.guid, out var note) || note == null)
+        {
+            note = new StickyNote
+            {
+                title = "NOTE",
+                contents = n.text
+            };
+            note.SetPosition(n.rect);
+            note.userData = n.guid;
+            view.AddElement(note);
+            notes[n.guid] = note;
+
+            // Styling: smaller contents font + tiny NOTE label top-right.
+            try
+            {
+                var titleLabel = note.Q<Label>("title");
+                if (titleLabel != null)
+                {
+                    titleLabel.style.fontSize = 9;
+                    titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+                    // subtle label, not shouting
+                    titleLabel.style.color = new Color(0f, 0f, 0f, 0.35f);
+                    titleLabel.style.unityTextAlign = TextAnchor.UpperRight;
+                }
+
+            var tf = note.Q<TextField>();
+                if (tf != null)
+                {
+                    tf.style.fontSize = 11;
+                    tf.style.color = new Color(0f, 0f, 0f, 0.85f);
+
+                // Save note text reliably (debounced), not only on focus-out.
+                tf.RegisterValueChangedCallback(e =>
+                {
+                    if (_isLoading || scenario == null) return;
+                    if (note.userData is not string ng || string.IsNullOrEmpty(ng)) return;
+                    _pendingNoteEdits[ng] = new PendingNoteEdit
+                    {
+                        text = e.newValue ?? "",
+                        dueTime = EditorApplication.timeSinceStartup + 0.25
+                    };
+                });
+                }
+            }
+            catch { /* best-effort UI styling; Unity versions vary */ }
+
+            note.RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                // Keep rect in sync
+                if (_isLoading) return;
+                var guid = note.userData as string;
+                var data = scenario.GraphNotes.FirstOrDefault(x => x.guid == guid);
+                if (data == null) return;
+                data.rect = note.GetPosition();
+                Dirty(scenario, "Move Note");
+            });
+
+            // Text edit callback (StickyNote doesn't expose a direct event, so poll on focus-out)
+            note.RegisterCallback<FocusOutEvent>(_ =>
+            {
+                if (_isLoading) return;
+                var guid = note.userData as string;
+                var data = scenario.GraphNotes.FirstOrDefault(x => x.guid == guid);
+                if (data == null) return;
+                if (data.text != note.contents)
+                {
+                    data.text = note.contents;
+                    Dirty(scenario, "Edit Note");
+                }
+            });
+        }
+        else
+        {
+            note.contents = n.text;
+            note.SetPosition(n.rect);
+        }
+    }
+
+    void DeleteNoteByGuid(string guid)
+    {
+        if (!scenario || scenario.GraphNotes == null || string.IsNullOrEmpty(guid)) return;
+
+        int idx = scenario.GraphNotes.FindIndex(x => x != null && x.guid == guid);
+        if (idx < 0) return;
+
+        Dirty(scenario, "Delete Note");
+        scenario.GraphNotes.RemoveAt(idx);
+
+        if (notes.TryGetValue(guid, out var note) && note != null)
+            view.RemoveElement(note);
+        notes.Remove(guid);
+    }
+#endif
 
     void CreateStep(Type t)
     {
@@ -790,6 +1415,9 @@ public class ScenarioGraphWindow : EditorWindow
         public Action<ContextualMenuPopulateEvent> OnContextAdd;
         public Action<Vector2> OnMouseWorld;
         public Action OnEdgeDropped;
+        public Action OnMouseUp;
+        public Action OnMouseDown;
+        public Action OnViewTransformChanged;
 
         public ScenarioGraphView()
         {
@@ -805,6 +1433,14 @@ public class ScenarioGraphWindow : EditorWindow
                 var p = contentViewContainer.WorldToLocal(e.mousePosition);
                 OnMouseWorld?.Invoke(p);
             });
+
+            // Important: use TrickleDown so we still get the event even if GraphView handles it.
+            RegisterCallback<MouseDownEvent>(_ => OnMouseDown?.Invoke(), TrickleDown.TrickleDown);
+            RegisterCallback<MouseUpEvent>(_ => OnMouseUp?.Invoke(), TrickleDown.TrickleDown);
+
+            // Fire when user pans/zooms so we can persist view transform.
+            RegisterCallback<WheelEvent>(_ => OnViewTransformChanged?.Invoke(), TrickleDown.TrickleDown);
+            RegisterCallback<MouseMoveEvent>(_ => OnViewTransformChanged?.Invoke(), TrickleDown.TrickleDown);
         }
 
         public void ClearGraph()
@@ -838,6 +1474,19 @@ public class ScenarioGraphWindow : EditorWindow
                 node.BuildContextualMenu(evt);
                 return;
             }
+
+            // Right-click on a note → allow delete
+#if UNITY_EDITOR
+            if (evt.target is StickyNote sn && sn.userData is string guid)
+            {
+                evt.menu.AppendAction("Delete Note", _ =>
+                {
+                    var win = EditorWindow.focusedWindow as ScenarioGraphWindow;
+                    win?.DeleteNoteByGuid(guid);
+                });
+                return;
+            }
+#endif
 
             // Right-click on empty space → creation menu
             if (!(evt.target is GraphElement))
@@ -994,6 +1643,7 @@ public class ScenarioGraphWindow : EditorWindow
     // ======== Node (with “Edit…” button & working edge connectors) ========
     class StepNode : Node
     {
+        readonly ScenarioGraphWindow owner;
         public readonly Scenario scenario;
         public readonly Step step;
         public readonly int index;
@@ -1011,10 +1661,19 @@ public class ScenarioGraphWindow : EditorWindow
         readonly Action<Step> deleteRequest;
 
         bool _isActive;
+        public bool IsNested { get; }
+        public string ParentGroupGuid { get; }
+        Foldout _foldout;
+        public bool GroupSettingsExpanded => _foldout == null ? true : _foldout.value;
+        float _expandedHeightCache;
+        bool _resizeQueued;
 
-        public StepNode(Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest)
+        public StepNode(ScenarioGraphWindow ownerWindow, Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest, bool isNested = false, string parentGroupGuid = null)
         {
+            owner = ownerWindow;
             scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks; skipRequest = onSkipRequest; deleteRequest = onDeleteRequest;
+            IsNested = isNested;
+            ParentGroupGuid = parentGroupGuid;
 
             title = $"{idx:00}. {s.Kind}";
             var tbox = this.Q("title");
@@ -1036,14 +1695,22 @@ public class ScenarioGraphWindow : EditorWindow
                 if (titleLabel != null)
                     titleLabel.style.color = Color.black;   // μαύρο text για το κίτρινο
             }
+            if (s is GroupStep)
+            {
+                tbox.style.backgroundColor = new Color(0.55f, 0.55f, 0.60f);
+            }
 
-            // In
-            inPort = MakePort(Direction.Input, Port.Capacity.Multi, "In", -1);
-            inputContainer.Add(inPort);
+            // In (nested steps do not participate in routing inside the main graph)
+            if (!IsNested)
+            {
+                inPort = MakePort(Direction.Input, Port.Capacity.Multi, "In", -1);
+                inputContainer.Add(inPort);
+            }
 
             // top-right small “Edit…” button
             var headerButtons = new VisualElement { style = { flexDirection = FlexDirection.Row } };
-            var editBtn = new UIEButton(() =>
+
+            void OpenEditor()
             {
                 if (step is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (step is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
@@ -1051,8 +1718,10 @@ public class ScenarioGraphWindow : EditorWindow
                 else if (step is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
                 else if (step is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
                 else if (step is EventStep ev) StepEditWindow.OpenEvent(scenario, ev);
-            })
-            { text = "Edit…" };
+                else if (step is GroupStep g) StepEditWindow.OpenGroup(scenario, g);
+            }
+
+            var editBtn = new UIEButton(OpenEditor) { text = "Edit…" };
 
             editBtn.style.unityTextAlign = TextAnchor.MiddleCenter;
             editBtn.style.marginLeft = 6;
@@ -1060,7 +1729,80 @@ public class ScenarioGraphWindow : EditorWindow
 
             // quick inline fields foldout (kept for speed)
             var fold = new Foldout { text = "Details", value = false };
+            _foldout = fold;
             mainContainer.Add(fold);
+
+            // When Details is toggled, resize the node so inline editing doesn't get clipped.
+            fold.RegisterValueChangedCallback(_ =>
+            {
+                owner?.ScheduleResizeGroup(step is GroupStep gg ? gg.guid : null);
+
+                // Non-group nodes: resize immediately based on deterministic height calc.
+                if (step is not GroupStep) ResizeToFitDetails();
+            });
+
+            // When inline IMGUI content expands/collapses while the foldout is open, keep sizing in sync.
+            RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                if (step is GroupStep) return;
+                if (_foldout == null || !_foldout.value) return;
+                if (_resizeQueued) return;
+                _resizeQueued = true;
+                EditorApplication.delayCall += () =>
+                {
+                    _resizeQueued = false;
+                    if (this == null) return;
+                    ResizeToFitDetails();
+                };
+            });
+
+            // For Groups, Unity's default collapse toggle can become unclickable depending on layout.
+            // Provide our own always-visible toggle in the title bar.
+            if (s is GroupStep)
+            {
+                var builtinCollapse = this.Q("collapse-button");
+                if (builtinCollapse != null)
+                    builtinCollapse.style.display = DisplayStyle.None;
+
+                var expBtn = new UIEButton() { text = "▾" };
+                expBtn.clicked += () =>
+                {
+                    // Toggle foldout content, never hide the header (so you can always reopen).
+                    fold.value = !fold.value;
+                    expBtn.text = fold.value ? "▾" : "▸";
+                    if (step is GroupStep gg)
+                        owner?.ScheduleResizeGroup(gg.guid);
+                };
+                expBtn.style.width = 22;
+                expBtn.style.height = 18;
+                expBtn.style.marginLeft = 6;
+                expBtn.tooltip = "Collapse/Expand Group";
+                titleContainer.Insert(0, expBtn);
+
+                // Keep node expanded; only toggle fold visibility.
+                fold.value = true;
+                expBtn.text = "▾";
+            }
+
+            // Double-click to edit (especially important for nested tiles).
+            RegisterCallback<MouseDownEvent>(e =>
+            {
+                if (e.button == 0 && e.clickCount == 2)
+                {
+                    OpenEditor();
+                    e.StopPropagation();
+                }
+            });
+
+            if (IsNested)
+            {
+                // Nested nodes stay compact to avoid overlap; edit via the "Edit…" button (modal StepEditWindow).
+                fold.visible = false;
+                extensionContainer.style.display = DisplayStyle.None;
+                RefreshExpandedState();
+                RefreshPorts();
+                return;
+            }
 
             if (s is TimelineStep tl)
             {
@@ -1231,6 +1973,146 @@ public class ScenarioGraphWindow : EditorWindow
                 outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
                 outputContainer.Add(outNext);
             }
+            else if (s is GroupStep g)
+            {
+                // Make it feel like a container: settings on top + a visible drop zone area below.
+                fold.text = "Group Settings";
+                fold.value = true;
+                fold.RegisterValueChangedCallback(_ =>
+                {
+                    owner?.ScheduleResizeGroup(g.guid);
+                });
+
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    EditorGUI.BeginChangeCheck();
+                    g.completeWhen = (GroupStep.CompleteWhen)EditorGUILayout.EnumPopup("Complete When", g.completeWhen);
+                    if (g.completeWhen == GroupStep.CompleteWhen.AfterSeconds)
+                        g.afterSeconds = EditorGUILayout.FloatField("After Seconds", g.afterSeconds);
+                    else if (g.completeWhen == GroupStep.CompleteWhen.WhenSpecificStepCompletes)
+                    {
+                        // Pick from nested steps (numbered) instead of typing GUID
+                        if (g.steps != null && g.steps.Count > 0)
+                        {
+                            var options = new List<string> { "None" };
+                            var guids = new List<string> { "" };
+                            for (int i = 0; i < g.steps.Count; i++)
+                            {
+                                var st = g.steps[i];
+                                if (st == null || string.IsNullOrEmpty(st.guid)) continue;
+                                options.Add($"{i + 1}. {st.Kind}");
+                                guids.Add(st.guid);
+                            }
+
+                            int cur = 0;
+                            if (!string.IsNullOrEmpty(g.specificStepGuid))
+                            {
+                                int idx = guids.IndexOf(g.specificStepGuid);
+                                if (idx >= 0) cur = idx;
+                            }
+
+                            int next = EditorGUILayout.Popup("Specific Step", cur, options.ToArray());
+                            g.specificStepGuid = guids[Mathf.Clamp(next, 0, guids.Count - 1)];
+                        }
+                        else
+                        {
+                            EditorGUILayout.HelpBox("Add nested steps to the Group to select a specific completion step.", MessageType.Info);
+                            g.specificStepGuid = EditorGUILayout.TextField("Specific Step Guid", g.specificStepGuid);
+                        }
+                    }
+                    g.stopOthersOnComplete = EditorGUILayout.Toggle("Stop Others On Complete", g.stopOthersOnComplete);
+
+                    int count = g.steps != null ? g.steps.Count : 0;
+                    EditorGUILayout.LabelField("Nested Steps", $"{count} step(s)");
+                    if (count > 0)
+                    {
+                        for (int i = 0; i < Mathf.Min(count, 8); i++)
+                        {
+                            var st = g.steps[i];
+                            EditorGUILayout.LabelField($"• {(st != null ? st.Kind : "<null>")}");
+                        }
+                        if (count > 8)
+                            EditorGUILayout.LabelField($"… +{count - 8} more");
+                    }
+                    EditorGUILayout.Space(6);
+                    EditorGUILayout.HelpBox("Drop steps inside the Group box area (below these settings).\nDrag a nested step out of the box to ungroup it.\nNested routing is ignored; only the Group’s Next route is used.", MessageType.None);
+
+                    if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Group");
+                }));
+
+                // Visual drop zone (container body; includes nested tiles)
+                var dropZone = new VisualElement();
+                dropZone.name = "group-drop-zone";
+                // Do not steal clicks/drags from nested nodes.
+                dropZone.pickingMode = PickingMode.Ignore;
+                dropZone.style.marginTop = 6;
+                dropZone.style.paddingLeft = 10;
+                dropZone.style.paddingRight = 10;
+                dropZone.style.paddingTop = 8;
+                dropZone.style.paddingBottom = 8;
+                dropZone.style.minHeight = 0;
+                dropZone.style.backgroundColor = new Color(1f, 1f, 1f, 0.04f);
+                dropZone.style.borderTopWidth = 1;
+                dropZone.style.borderBottomWidth = 1;
+                dropZone.style.borderLeftWidth = 1;
+                dropZone.style.borderRightWidth = 1;
+                dropZone.style.borderTopColor = new Color(1f, 1f, 1f, 0.12f);
+                dropZone.style.borderBottomColor = new Color(1f, 1f, 1f, 0.12f);
+                dropZone.style.borderLeftColor = new Color(1f, 1f, 1f, 0.12f);
+                dropZone.style.borderRightColor = new Color(1f, 1f, 1f, 0.12f);
+
+                var dzTitle = new Label("DROP AREA");
+                dzTitle.pickingMode = PickingMode.Ignore;
+                dzTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+                dzTitle.style.fontSize = 10;
+                dzTitle.style.color = new Color(1f, 1f, 1f, 0.55f);
+                dzTitle.style.marginBottom = 4;
+                dropZone.Add(dzTitle);
+
+                var dzHint = new Label("Drag existing steps here to add them to the group.\nDrag a step out to remove it.");
+                dzHint.pickingMode = PickingMode.Ignore;
+                dzHint.style.fontSize = 11;
+                dzHint.style.color = new Color(1f, 1f, 1f, 0.75f);
+                dropZone.Add(dzHint);
+
+                // If we already have nested steps, hide the instructional text so tiles don't overlap text.
+                if (g.steps != null && g.steps.Count > 0)
+                {
+                    dzTitle.style.display = DisplayStyle.None;
+                    dzHint.style.display = DisplayStyle.None;
+                }
+
+                // --- Nested tiles (REAL container UX; not GraphView nodes) ---
+                var tiles = new VisualElement();
+                tiles.style.flexDirection = FlexDirection.Row;
+                tiles.style.flexWrap = Wrap.Wrap;
+                tiles.style.alignContent = Align.FlexStart;
+                // Critical: stretch to the full container width so Wrap can use all available space.
+                // Without this, UIElements may size the container to its content and you get "2 columns + huge empty gap".
+                tiles.style.flexGrow = 1;
+                tiles.style.alignSelf = Align.Stretch;
+                tiles.style.width = Length.Percent(100);
+                tiles.style.marginTop = 6;
+                dropZone.Add(tiles);
+
+                if (g.steps != null)
+                {
+                    for (int i = 0; i < g.steps.Count; i++)
+                    {
+                        var sub = g.steps[i];
+                        if (sub == null) continue;
+
+                        var tile = BuildNestedTile(g, sub, i);
+                        tiles.Add(tile);
+                    }
+                }
+
+                // Put the drop zone into the extension area so it appears as part of the node body
+                extensionContainer.Add(dropZone);
+
+                outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                outputContainer.Add(outNext);
+            }
 
 
             RefreshExpandedState();
@@ -1302,6 +2184,11 @@ public class ScenarioGraphWindow : EditorWindow
                 {
                     text = "Skip ▶"
                 };
+                skipRow.Add(btn);
+            }
+            else if (step is GroupStep)
+            {
+                var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip ▶" };
                 skipRow.Add(btn);
             }
             else if (step is SelectionStep)
@@ -1382,18 +2269,230 @@ public class ScenarioGraphWindow : EditorWindow
             rebuild?.Invoke(); // will be ignored during Load thanks to guard
         }
 
+        VisualElement BuildNestedTile(GroupStep group, Step sub, int ordinalIndex)
+        {
+            var tile = new VisualElement();
+            tile.style.width = GroupTileW;
+            tile.style.height = GroupTileH;
+            tile.style.marginRight = 10;
+            tile.style.marginBottom = 10;
+            tile.style.paddingLeft = 10;
+            tile.style.paddingRight = 10;
+            tile.style.paddingTop = 8;
+            tile.style.paddingBottom = 8;
+            tile.style.backgroundColor = new Color(0.12f, 0.12f, 0.12f, 1f);
+            tile.style.borderTopLeftRadius = 6;
+            tile.style.borderTopRightRadius = 6;
+            tile.style.borderBottomLeftRadius = 6;
+            tile.style.borderBottomRightRadius = 6;
+            tile.style.borderTopWidth = 1;
+            tile.style.borderBottomWidth = 1;
+            tile.style.borderLeftWidth = 1;
+            tile.style.borderRightWidth = 1;
+            tile.style.borderTopColor = new Color(1f, 1f, 1f, 0.12f);
+            tile.style.borderBottomColor = new Color(1f, 1f, 1f, 0.12f);
+            tile.style.borderLeftColor = new Color(1f, 1f, 1f, 0.12f);
+            tile.style.borderRightColor = new Color(1f, 1f, 1f, 0.12f);
+
+            // color accent (matches step color in graph)
+            Color accent = GetStepAccent(sub);
+            tile.style.borderLeftWidth = 4;
+            tile.style.borderLeftColor = accent;
+
+            // header row
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+            tile.Add(row);
+
+            var name = new Label($"{ordinalIndex + 1}. {sub.Kind}");
+            name.style.unityFontStyleAndWeight = FontStyle.Bold;
+            name.style.color = Color.white;
+            name.style.fontSize = 12;
+            name.style.flexGrow = 1;
+            row.Add(name);
+
+            var edit = new UIEButton(() =>
+            {
+                // Edit nested step in focused modal
+                if (sub is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
+                else if (sub is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
+                else if (sub is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
+                else if (sub is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
+                else if (sub is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
+                else if (sub is EventStep ev) StepEditWindow.OpenEvent(scenario, ev);
+                else if (sub is GroupStep g) StepEditWindow.OpenGroup(scenario, g);
+            })
+            { text = "Edit…" };
+            edit.style.marginLeft = 6;
+            row.Add(edit);
+
+            var remove = new UIEButton(() =>
+            {
+                if (group?.steps == null) return;
+                int idx = group.steps.IndexOf(sub);
+                if (idx < 0) return;
+
+                Dirty(scenario, "Ungroup Step");
+                group.steps.RemoveAt(idx);
+
+                int groupTopIndex = scenario.steps.IndexOf(group);
+                int insertAt = Mathf.Clamp(groupTopIndex + 1, 0, scenario.steps.Count);
+
+                // place next to the group
+                var gp = group.graphPos;
+                sub.graphPos = new Vector2(gp.x + 760f, gp.y + 40f + 180f * idx);
+
+                scenario.steps.Insert(insertAt, sub);
+
+                // rebuild window cleanly next tick
+                EditorApplication.delayCall += () =>
+                {
+                    if (owner != null && owner.scenario != null)
+                        owner.Load(owner.scenario);
+                };
+            })
+            { text = "↗" };
+            remove.tooltip = "Remove from group";
+            remove.style.marginLeft = 6;
+            row.Add(remove);
+
+            // small subtext
+            var hint = new Label("Nested step (runs in group)");
+            hint.style.marginTop = 6;
+            hint.style.fontSize = 10;
+            hint.style.color = new Color(1f, 1f, 1f, 0.55f);
+            tile.Add(hint);
+
+            return tile;
+        }
+
+        static Color GetStepAccent(Step s)
+        {
+            if (s is TimelineStep) return new Color(0.20f, 0.42f, 0.85f);
+            if (s is CueCardsStep) return new Color(0.32f, 0.62f, 0.32f);
+            if (s is QuestionStep) return new Color(0.76f, 0.45f, 0.22f);
+            if (s is SelectionStep) return new Color(0.58f, 0.38f, 0.78f);
+            if (s is InsertStep) return new Color(0.90f, 0.75f, 0.25f);
+            if (s is EventStep) return new Color(0.25f, 0.70f, 0.70f);
+            if (s is GroupStep) return new Color(0.55f, 0.55f, 0.60f);
+            return new Color(0.6f, 0.6f, 0.6f);
+        }
+
         public override void SetPosition(Rect newPos)
         {
+            // Persist + relative handling is centralized in graphViewChanged to avoid double-Undo and ordering bugs.
             base.SetPosition(newPos);
-            step.graphPos = newPos.position;
-            Dirty(scenario, "Move Node");
+        }
+
+        public void SetPositionSilent(Rect newPos)
+        {
+            base.SetPosition(newPos);
+            // Hard-enforce size so user-resizes / layout quirks can't leave a permanent right-side gap.
+            style.width = newPos.width;
+            style.height = newPos.height;
         }
 
         public float GetHeight()
         {
+            if (IsNested) return 110f; // compact tile in container
+            bool expandedDetails = _foldout != null && _foldout.value;
+            float collapsed = GetCollapsedHeight();
+            if (!expandedDetails) return collapsed;
+            return Mathf.Max(collapsed, _expandedHeightCache > 0 ? _expandedHeightCache : collapsed);
+
+            if (step is GroupStep g)
+            {
+                int count = g.steps?.Count ?? 0;
+                int rows = Mathf.CeilToInt(count / (float)GroupTileColumns);
+                float tilesH = count == 0 ? 72f : rows * GroupTileH + Mathf.Max(0, rows - 1) * 10f + 18f;
+                return Mathf.Max(260f, 54f + tilesH + 160f);
+            }
+            return collapsed;
+        }
+
+        float GetCollapsedHeight()
+        {
             if (step is QuestionStep q) return 220 + 22 * Mathf.Max(1, q.choices?.Count ?? 0);
             if (step is SelectionStep) return 220;
+            if (step is TimelineStep) return 170;
+            if (step is CueCardsStep) return 170;
+            if (step is InsertStep) return 170;
+            if (step is EventStep) return 170;
             return 170;
+        }
+
+        void ResizeToFitDetails()
+        {
+            if (_foldout == null || !_foldout.value) return;
+
+            float width = GetPosition().width;
+            if (width <= 0) width = 360f;
+
+            _expandedHeightCache = ComputeExpandedHeight(width);
+            var r = GetPosition();
+            SetPositionSilent(new Rect(r.position, new Vector2(r.width, Mathf.Max(GetCollapsedHeight(), _expandedHeightCache))));
+        }
+
+        float ComputeExpandedHeight(float nodeWidth)
+        {
+            // Deterministic IMGUI-style height: count the controls we draw in each Details section.
+            // This is much more stable than trying to measure IMGUIContainer via resolvedStyle.
+            float line = EditorGUIUtility.singleLineHeight;
+            float v = EditorGUIUtility.standardVerticalSpacing;
+            float h = 0f;
+
+            // Ports/header area is handled by the node chrome; we size only for the Details content area.
+            // Provide a base padding so controls don't clip.
+            h += 110f; // chrome + foldout header baseline
+
+            if (step is TimelineStep)
+            {
+                // Director + 2 toggles
+                h += (3 * (line + v)) + 24f;
+            }
+            else if (step is CueCardsStep)
+            {
+                // Clock + ~9 fields + helpbox
+                h += (10 * (line + v)) + 60f;
+            }
+            else if (step is QuestionStep)
+            {
+                // ~5 fields + helpbox
+                h += (5 * (line + v)) + 60f;
+            }
+            else if (step is SelectionStep sel)
+            {
+                // This matches the inline IMGUI we draw for SelectionStep
+                int lines = 5; // lists, listKey, listIndex, reset, completion
+                if (sel != null && sel.completion == SelectionStep.CompleteMode.OnSubmitButton) lines += 1;
+                lines += 1; // "Requirement" label
+                lines += 4; // requiredSelections, exactCount, allowedWrong, timeout
+                lines += 1; // "UI (optional)" label
+                lines += 5; // panelRoot, panelAnimator, show, hide, hint
+                h += (lines * (line + v)) + 80f; // spaces + margins
+            }
+            else if (step is InsertStep)
+            {
+                // item, trigger, attach + 4 fields + 2 fields
+                h += (9 * (line + v)) + 80f;
+            }
+            else if (step is EventStep ev)
+            {
+                // Use SerializedProperty height for the UnityEvent list if possible (varies by expansion)
+                float eventH = 0f;
+                try
+                {
+                    var so = new SerializedObject(scenario);
+                    var p = StepEditWindow.FindStepPropertyRecursive(so, ev.guid);
+                    var onEnter = p?.FindPropertyRelative("onEnter");
+                    if (onEnter != null) eventH = EditorGUI.GetPropertyHeight(onEnter, true);
+                }
+                catch { }
+                h += (2 * (line + v)) + Mathf.Max(60f, eventH) + 40f;
+            }
+
+            return Mathf.Ceil(h);
         }
 
 
@@ -1421,6 +2520,7 @@ public class ScenarioGraphWindow : EditorWindow
 sealed class StepEditWindow : EditorWindow
 {
     Scenario scenario;
+    string scenarioGlobalId;
     string stepGuid;
     SerializedObject so;
     SerializedProperty stepProp;
@@ -1446,17 +2546,28 @@ sealed class StepEditWindow : EditorWindow
     public static void OpenEvent(Scenario sc, EventStep ev)
     => Open(sc, ev.guid, "Event", w => w.DrawEvent());
 
+    public static void OpenGroup(Scenario sc, GroupStep g)
+    => Open(sc, g.guid, "Group", w => w.DrawGroup());
+
 
     static void Open(Scenario sc, string guid, string title, Action<StepEditWindow> draw, Action afterApply = null)
     {
         var w = CreateInstance<StepEditWindow>();
         w.scenario = sc;
+        try
+        {
+            if (sc)
+                w.scenarioGlobalId = GlobalObjectId.GetGlobalObjectIdSlow(sc).ToString();
+        }
+        catch { /* best-effort; GlobalObjectId can fail in some editor contexts */ }
         w.stepGuid = guid;
         w.minSize = new Vector2(460, 360);
         w.titleContent = new GUIContent($"{title} • Step");
         w.onAfterApply = afterApply;
         w.ShowUtility();
-        w.position = new Rect(GUIUtility.GUIToScreenPoint(Event.current.mousePosition) + new Vector2(8, 8), w.minSize);
+        // Event.current can be null when opened from UIElements callbacks; fall back to a sensible position.
+        var mp = Event.current != null ? Event.current.mousePosition : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+        w.position = new Rect(GUIUtility.GUIToScreenPoint(mp) + new Vector2(8, 8), w.minSize);
         w.Init(draw);
     }
 
@@ -1465,26 +2576,66 @@ sealed class StepEditWindow : EditorWindow
     void Init(Action<StepEditWindow> d)
     {
         drawer = d;
+        TryResolveScenario();
+        if (!scenario) return;
         so = new SerializedObject(scenario);
-        stepProp = FindStepProperty(so, stepGuid);
+        stepProp = FindStepPropertyRecursive(so, stepGuid);
     }
 
-    static SerializedProperty FindStepProperty(SerializedObject so, string guid)
+    internal static SerializedProperty FindStepPropertyRecursive(SerializedObject so, string guid)
     {
+        if (so == null || string.IsNullOrEmpty(guid)) return null;
         var steps = so.FindProperty("steps");
-        if (steps == null) return null;
-        for (int i = 0; i < steps.arraySize; i++)
+        return FindInStepsList(steps, guid);
+    }
+
+    static SerializedProperty FindInStepsList(SerializedProperty stepsList, string guid)
+    {
+        if (stepsList == null || !stepsList.isArray) return null;
+
+        for (int i = 0; i < stepsList.arraySize; i++)
         {
-            var el = steps.GetArrayElementAtIndex(i);
+            var el = stepsList.GetArrayElementAtIndex(i);
+            if (el == null) continue;
+
             var g = el.FindPropertyRelative("guid");
-            if (g != null && g.stringValue == guid) return el;
+            if (g != null && g.stringValue == guid)
+                return el;
+
+            // If this element is a GroupStep, it has a nested SerializeReference list called "steps".
+            var nested = el.FindPropertyRelative("steps");
+            if (nested != null && nested.isArray)
+            {
+                var found = FindInStepsList(nested, guid);
+                if (found != null) return found;
+            }
         }
+
         return null;
     }
 
     void OnGUI()
     {
-        if (!scenario || so == null || stepProp == null)
+        if (!scenario)
+        {
+            TryResolveScenario();
+        }
+
+        if (!scenario)
+        {
+            EditorGUILayout.HelpBox("Scenario not found.", MessageType.Warning);
+            if (GUILayout.Button("Close")) Close();
+            return;
+        }
+
+        if (so == null)
+            so = new SerializedObject(scenario);
+
+        // Step may be nested inside a GroupStep; always re-resolve each frame to avoid stale references after reflow/ungroup.
+        if (stepProp == null)
+            stepProp = FindStepPropertyRecursive(so, stepGuid);
+
+        if (so == null || stepProp == null)
         {
             EditorGUILayout.HelpBox("Step not found (maybe removed).", MessageType.Warning);
             if (GUILayout.Button("Close")) Close();
@@ -1493,10 +2644,22 @@ sealed class StepEditWindow : EditorWindow
 
         so.Update();
 
+        EditorGUI.BeginChangeCheck();
         scroll = EditorGUILayout.BeginScrollView(scroll);
         EditorGUILayout.Space(2);
         drawer?.Invoke(this);
         EditorGUILayout.EndScrollView();
+
+        // Apply immediately on change so the window doesn't feel "read-only".
+        // (If we only apply on the Apply button, so.Update() will reload from the target every frame and discard edits.)
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(scenario, "Edit Step");
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(scenario);
+            EditorSceneManager.MarkSceneDirty(scenario.gameObject.scene);
+            onAfterApply?.Invoke();
+        }
 
         EditorGUILayout.Space();
         using (new EditorGUILayout.HorizontalScope())
@@ -1512,6 +2675,23 @@ sealed class StepEditWindow : EditorWindow
             }
             if (GUILayout.Button("Close", GUILayout.Width(90))) Close();
         }
+    }
+
+    void TryResolveScenario()
+    {
+        if (scenario) return;
+        if (string.IsNullOrEmpty(scenarioGlobalId)) return;
+
+        try
+        {
+            if (GlobalObjectId.TryParse(scenarioGlobalId, out var gid))
+            {
+                var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+                if (obj is Scenario sc)
+                    scenario = sc;
+            }
+        }
+        catch { }
     }
 
     // ----------- specific drawers -----------
@@ -1653,6 +2833,33 @@ sealed class StepEditWindow : EditorWindow
             stepProp.FindPropertyRelative("waitSeconds"),
             new GUIContent("Wait Seconds Before Next")
         );
+
+        DrawNextGuid();
+    }
+
+    void DrawGroup()
+    {
+        EditorGUILayout.LabelField("Group", EditorStyles.boldLabel);
+
+        EditorGUILayout.HelpBox(
+            "Group runs all nested steps together.\n" +
+            "Nested routing (nextGuid / branch guids) is ignored; only the Group's Next is used.\n" +
+            "Tip: Avoid multiple click-driven steps (Cue Cards / Question) in the same group.",
+            MessageType.Info);
+
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("completeWhen"));
+        var modeProp = stepProp.FindPropertyRelative("completeWhen");
+        var mode = modeProp != null ? modeProp.enumValueIndex : 0;
+        if (mode == (int)GroupStep.CompleteWhen.AfterSeconds)
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("afterSeconds"));
+        else if (mode == (int)GroupStep.CompleteWhen.WhenSpecificStepCompletes)
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("specificStepGuid"));
+
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("stopOthersOnComplete"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Nested Steps", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("steps"), includeChildren: true);
 
         DrawNextGuid();
     }

@@ -180,6 +180,7 @@ namespace Pitech.XR.Scenario.Editor
                 menu.AddItem(new GUIContent("Add Selection"), false, () => AddStep(typeof(Runtime.SelectionStep)));
                 menu.AddItem(new GUIContent("Add Insert"), false, () => AddStep(typeof(Runtime.InsertStep)));
                 menu.AddItem(new GUIContent("Add Event"), false, () => AddStep(typeof(Runtime.EventStep)));
+                menu.AddItem(new GUIContent("Add Group"), false, () => AddStep(typeof(Runtime.GroupStep)));
                 menu.ShowAsContext();
             };
 
@@ -227,6 +228,7 @@ namespace Pitech.XR.Scenario.Editor
                     full.Contains(nameof(Runtime.SelectionStep)) ? "Selection" :
                     full.Contains(nameof(Runtime.InsertStep)) ? "Insert" :
                     full.Contains(nameof(Runtime.EventStep)) ? "Event" :
+                    full.Contains(nameof(Runtime.GroupStep)) ? "Group" :
                     "Step";
 
 
@@ -445,6 +447,21 @@ namespace Pitech.XR.Scenario.Editor
                             }
                         }
                     }
+                    else if (s is Runtime.GroupStep g)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Label("Next", GUILayout.Width(60));
+                            int choice = Popup(g.nextGuid);
+                            string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                            if (newGuid != g.nextGuid)
+                            {
+                                Undo.RecordObject(sc, "Route Change");
+                                g.nextGuid = newGuid;
+                                EditorUtility.SetDirty(sc);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -542,6 +559,77 @@ namespace Pitech.XR.Scenario.Editor
                     if (ev.onEnter == null || ev.onEnter.GetPersistentEventCount() == 0)
                         Styles.Info($"Step {i}: Event has no listeners. It will only wait {ev.waitSeconds} seconds then continue.");
                 }
+                else if (s is Runtime.GroupStep g)
+                {
+                    if (g.steps == null || g.steps.Count == 0)
+                    {
+                        Styles.Warn($"Step {i}: Group has no nested steps.");
+                        warnings++;
+                    }
+                    else
+                    {
+                        int pointerGated = 0;
+                        for (int k = 0; k < g.steps.Count; k++)
+                        {
+                            var sub = g.steps[k];
+                            if (sub == null)
+                            {
+                                Styles.Info($"Step {i}: Group contains a null nested step at index {k} (remove it).");
+                                continue;
+                            }
+
+                            if (sub is Runtime.CueCardsStep || sub is Runtime.QuestionStep)
+                                pointerGated++;
+
+                            // Routing inside group is ignored at runtime; warn if authors set it.
+                            if (sub is Runtime.TimelineStep subTl && !string.IsNullOrEmpty(subTl.nextGuid))
+                                Styles.Info($"Step {i}: Group nested Timeline {k} has NextGuid set (ignored).");
+                            else if (sub is Runtime.CueCardsStep subCc && !string.IsNullOrEmpty(subCc.nextGuid))
+                                Styles.Info($"Step {i}: Group nested CueCards {k} has NextGuid set (ignored).");
+                            else if (sub is Runtime.InsertStep subIns && !string.IsNullOrEmpty(subIns.nextGuid))
+                                Styles.Info($"Step {i}: Group nested Insert {k} has NextGuid set (ignored).");
+                            else if (sub is Runtime.EventStep ev2 && !string.IsNullOrEmpty(ev2.nextGuid))
+                                Styles.Info($"Step {i}: Group nested Event {k} has NextGuid set (ignored).");
+                            else if (sub is Runtime.SelectionStep sel2 &&
+                                     (!string.IsNullOrEmpty(sel2.correctNextGuid) || !string.IsNullOrEmpty(sel2.wrongNextGuid)))
+                                Styles.Info($"Step {i}: Group nested Selection {k} has branch guids set (ignored).");
+                            else if (sub is Runtime.QuestionStep q2)
+                            {
+                                if (q2.choices != null)
+                                {
+                                    for (int c = 0; c < q2.choices.Count; c++)
+                                    {
+                                        if (q2.choices[c] != null && !string.IsNullOrEmpty(q2.choices[c].nextGuid))
+                                        {
+                                            Styles.Info($"Step {i}: Group nested Question {k} Choice {c} has NextGuid set (ignored).");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (pointerGated > 1)
+                            Styles.Warn($"Step {i}: Group contains multiple click-driven steps (CueCards/Question). This is not supported yet; they will run sequentially.");
+
+                        if (g.completeWhen == Runtime.GroupStep.CompleteWhen.AfterSeconds && g.afterSeconds <= 0f)
+                            Styles.Info($"Step {i}: Group completion is AfterSeconds but AfterSeconds is 0 (group will complete immediately).");
+
+                        if (g.completeWhen == Runtime.GroupStep.CompleteWhen.WhenSpecificStepCompletes)
+                        {
+                            if (string.IsNullOrEmpty(g.specificStepGuid))
+                                Styles.Warn($"Step {i}: Group completion is WhenSpecificStepCompletes but SpecificStepGuid is empty.");
+                            else
+                            {
+                                bool found = false;
+                                foreach (var sub in g.steps)
+                                    if (sub != null && sub.guid == g.specificStepGuid) { found = true; break; }
+                                if (!found)
+                                    Styles.Warn($"Step {i}: Group SpecificStepGuid does not match any nested step guid.");
+                            }
+                        }
+                    }
+                }
             }
 
             if (warnings == 0)
@@ -560,6 +648,7 @@ namespace Pitech.XR.Scenario.Editor
             static readonly Color cBadgeSelection = new Color(0.58f, 0.38f, 0.78f);
             static readonly Color cBadgeInsert = new Color(0.90f, 0.75f, 0.25f);
             static readonly Color cBadgeEvent = new Color(0.30f, 0.70f, 0.75f);
+            static readonly Color cBadgeGroup = new Color(0.55f, 0.55f, 0.60f);
 
             static bool _inited;
 
@@ -651,6 +740,7 @@ namespace Pitech.XR.Scenario.Editor
                 else if (kind == "Selection") col = cBadgeSelection;
                 else if (kind == "Insert") col = cBadgeInsert;
                 else if (kind == "Event") col = cBadgeEvent;
+                else if (kind == "Group") col = cBadgeGroup;
 
                 var bg = new Rect(r.x, r.y, r.width, r.height);
                 EditorGUI.DrawRect(bg, col);

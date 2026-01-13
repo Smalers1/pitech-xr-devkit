@@ -219,6 +219,44 @@ namespace Pitech.XR.Scenario
         public override string Kind => "Event";
     }
 
+    // -------- GroupStep --------
+    /// <summary>
+    /// Runs multiple nested steps concurrently (optional advanced authoring).
+    /// Group has a single input and output (nextGuid).
+    /// </summary>
+    [Serializable]
+    public sealed class GroupStep : Step
+    {
+        public enum CompleteWhen
+        {
+            AllStepsDone,
+            AfterSeconds,
+            WhenSpecificStepCompletes,
+        }
+
+        [Header("Group Steps")]
+        [Tooltip("Nested steps that run together. Their routing fields are ignored; the Group controls routing via nextGuid.")]
+        [SerializeReference] public List<Step> steps = new();
+
+        [Header("Completion")]
+        public CompleteWhen completeWhen = CompleteWhen.AllStepsDone;
+
+        [Tooltip("Used only when CompleteWhen == AfterSeconds.")]
+        [Min(0f)] public float afterSeconds = 0f;
+
+        [Tooltip("Used only when CompleteWhen == WhenSpecificStepCompletes. Must match a nested step guid.")]
+        public string specificStepGuid = "";
+
+        [Tooltip("If true, when the group completes early (timer/specific-step), other running steps will be stopped/cleaned up.")]
+        public bool stopOthersOnComplete = true;
+
+        [Header("Routing")]
+        [Tooltip("Next step (GUID). Empty = next item in list")]
+        public string nextGuid = "";
+
+        public override string Kind => "Group";
+    }
+
 
     // ---------- Holder on the scene ----------
     [DisallowMultipleComponent]
@@ -231,6 +269,20 @@ namespace Pitech.XR.Scenario
 
         [SerializeReference] public List<Step> steps = new();
 
+#if UNITY_EDITOR
+        // Editor-only graph notes (saved with the scene on the Scenario component).
+        [Serializable]
+        public sealed class GraphNote
+        {
+            public string guid;
+            public Rect rect = new Rect(80, 80, 240, 160);
+            [TextArea] public string text = "Note…";
+        }
+
+        [SerializeField] List<GraphNote> graphNotes = new();
+        public List<GraphNote> GraphNotes => graphNotes;
+#endif
+
         void OnValidate()
         {
             if (steps == null) return;
@@ -238,12 +290,33 @@ namespace Pitech.XR.Scenario
             for (int i = steps.Count - 1; i >= 0; i--)
                 if (steps[i] == null) steps.RemoveAt(i);
 
-            foreach (var s in steps)
-                if (s != null && string.IsNullOrEmpty(s.guid))
-                    s.guid = Guid.NewGuid().ToString();
+            EnsureGuidsRecursive(steps);
 
             if (!string.IsNullOrEmpty(title) && gameObject.name == "Scenario")
                 gameObject.name = title;
+        }
+
+        static void EnsureGuidsRecursive(List<Step> list)
+        {
+            if (list == null) return;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                var s = list[i];
+                if (s == null) continue;
+
+                if (string.IsNullOrEmpty(s.guid))
+                    s.guid = Guid.NewGuid().ToString();
+
+                if (s is GroupStep g && g.steps != null)
+                {
+                    // Clean nulls in nested list as well
+                    for (int k = g.steps.Count - 1; k >= 0; k--)
+                        if (g.steps[k] == null) g.steps.RemoveAt(k);
+
+                    EnsureGuidsRecursive(g.steps);
+                }
+            }
         }
     }
 }
