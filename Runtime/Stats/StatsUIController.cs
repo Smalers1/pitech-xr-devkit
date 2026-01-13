@@ -11,7 +11,8 @@ namespace Pitech.XR.Stats
         [System.Serializable]
         public class Binding
         {
-            public StatKey key;
+            [Tooltip("Stat key to bind. Must match an entry in StatsConfig.")]
+            public string key;
             public TMP_Text text;   // optional
             public Slider slider;  // optional
             public string format = "N0";
@@ -22,8 +23,8 @@ namespace Pitech.XR.Stats
 
         public List<Binding> bindings = new();
 
-        readonly Dictionary<StatKey, Binding> map = new();
-        readonly Dictionary<StatKey, Coroutine> anims = new();
+        readonly Dictionary<string, Binding> map = new();
+        readonly Dictionary<string, Coroutine> anims = new();
 
         StatsRuntime runtime;
 
@@ -34,7 +35,12 @@ namespace Pitech.XR.Stats
 
             map.Clear();
             foreach (var b in bindings)
-                if (b != null) map[b.key] = b;
+            {
+                if (b == null) continue;
+                var k = StatsConfig.NormalizeKey(b.key);
+                if (string.IsNullOrEmpty(k)) continue;
+                map[k] = b;
+            }
 
             if (runtime != null)
             {
@@ -86,7 +92,7 @@ namespace Pitech.XR.Stats
         }
 #endif
 
-        void AnimateTo(StatKey k, float from, float to)
+        void AnimateTo(string k, float from, float to)
         {
             if (!map.TryGetValue(k, out var b)) return;
             if (anims.TryGetValue(k, out var c)) StopCoroutine(c);

@@ -45,7 +45,7 @@ public class ScenarioGraphWindow : EditorWindow
     const float GroupTilesPadX = 14f;
     const float GroupTilesPadY = 12f;
     const float GroupHeaderH = 54f;     // title + ports row
-    const float GroupSettingsApproxH = 150f; // approx IMGUI foldout content height
+    const float GroupSettingsApproxH = 150f; // base IMGUI group settings height (extra lines added dynamically)
     const float GroupSettingsCollapsedMinH = 70f; // keep header + some breathing room so it never becomes unclickable
 
     // Base node sizing (non-group)
@@ -508,7 +508,10 @@ public class ScenarioGraphWindow : EditorWindow
             : (rows * GroupTileH) + Mathf.Max(0, rows - 1) * GroupTileGapY + GroupTilesPadY;
 
         float reqW = GetGroupPreferredWidth(count);
-        float settingsH = grpNode.GroupSettingsExpanded ? GroupSettingsApproxH : GroupSettingsCollapsedMinH;
+        // Make sure the "Nested Steps" preview lines are never clipped.
+        // Base + per-line (up to 8 shown) + small buffer.
+        float expandedSettingsH = GroupSettingsApproxH + Mathf.Min(8, count) * 18f + 24f;
+        float settingsH = grpNode.GroupSettingsExpanded ? expandedSettingsH : GroupSettingsCollapsedMinH;
         float reqH = Mathf.Max(260f, GroupHeaderH + tilesH + settingsH);
 
         // IMPORTANT: always anchor to serialized graphPos.
@@ -1336,7 +1339,7 @@ public class ScenarioGraphWindow : EditorWindow
             var tf = note.Q<TextField>();
                 if (tf != null)
                 {
-                    tf.style.fontSize = 11;
+                    tf.style.fontSize = 10;
                     tf.style.color = new Color(0f, 0f, 0f, 0.85f);
 
                 // Save note text reliably (debounced), not only on focus-out.
@@ -2067,8 +2070,8 @@ public class ScenarioGraphWindow : EditorWindow
                         if (count > 8)
                             EditorGUILayout.LabelField($"… +{count - 8} more");
                     }
-                    EditorGUILayout.Space(6);
-                    EditorGUILayout.HelpBox("Drop steps inside the Group box area (below these settings).\nDrag a nested step out of the box to ungroup it.\nNested routing is ignored; only the Group’s Next route is used.", MessageType.None);
+                    EditorGUILayout.Space(4);
+                    EditorGUILayout.LabelField("Tip: Drop steps into the big box above these settings.", EditorStyles.miniLabel);
 
                     if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Group");
                 }));
@@ -2104,7 +2107,7 @@ public class ScenarioGraphWindow : EditorWindow
 
                 var dzHint = new Label("Drag existing steps here to add them to the group.\nDrag a step out to remove it.");
                 dzHint.pickingMode = PickingMode.Ignore;
-                dzHint.style.fontSize = 11;
+                dzHint.style.fontSize = 10;
                 dzHint.style.color = new Color(1f, 1f, 1f, 0.75f);
                 dropZone.Add(dzHint);
 

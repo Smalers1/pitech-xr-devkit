@@ -98,10 +98,10 @@ namespace Pitech.XR.Stats.Editor
             else
             {
                 // Create a quick lookup for per-key max (and optionally default)
-                Dictionary<StatKey, float> maxByKey = null;
+                Dictionary<string, float> maxByKey = null;
                 if (cfg != null)
                 {
-                    maxByKey = new Dictionary<StatKey, float>();
+                    maxByKey = new Dictionary<string, float>();
                     foreach (var kv in cfg.All())
                         maxByKey[kv.Key] = kv.Value.max;
                 }
@@ -116,16 +116,17 @@ namespace Pitech.XR.Stats.Editor
                     var sliderProp = el.FindPropertyRelative("slider");
                     var fmtProp = el.FindPropertyRelative("format");
 
-                    var key = (StatKey)keyProp.enumValueIndex;
+                    var key = keyProp.stringValue;
+                    if (string.IsNullOrEmpty(key)) key = "<unset>";
 
                     using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                     {
                         // Header
                         using (new EditorGUILayout.HorizontalScope())
                         {
-                            EditorGUILayout.LabelField(ObjectNames.NicifyVariableName(key.ToString()), EditorStyles.boldLabel);
+                            EditorGUILayout.LabelField(ObjectNames.NicifyVariableName(key), EditorStyles.boldLabel);
                             GUILayout.FlexibleSpace();
-                            if (cfg != null && maxByKey != null && maxByKey.TryGetValue(key, out float maxVal))
+                            if (cfg != null && maxByKey != null && maxByKey.TryGetValue(StatsConfig.NormalizeKey(keyProp.stringValue), out float maxVal))
                             {
                                 using (new EditorGUI.DisabledScope(true))
                                 {
@@ -134,16 +135,15 @@ namespace Pitech.XR.Stats.Editor
                             }
                         }
 
-                        // Fields (Key locked to match config)
-                        using (new EditorGUI.DisabledScope(true))
-                            EditorGUILayout.PropertyField(keyProp, new GUIContent("Key"));
+                        // Key (dropdown from config if available, but still editable for custom stats)
+                        DrawKeyField(cfg, keyProp);
 
                         EditorGUILayout.PropertyField(textProp, new GUIContent("Text (TMP)"));
                         EditorGUILayout.PropertyField(sliderProp, new GUIContent("Slider"));
-                        EditorGUILayout.PropertyField(fmtProp, new GUIContent("Format"), true);
+                        DrawNumberFormatField(fmtProp);
 
                         // Tiny hint
-                        EditorGUILayout.LabelField("Tip: Leave fields you don’t use empty. For example, a stat can drive only text or only a slider.", EditorStyles.miniLabel);
+                        EditorGUILayout.LabelField("Tip: Leave fields you don't use empty. For example, a stat can drive only text or only a slider.", EditorStyles.miniLabel);
                     }
                 }
             }
@@ -157,10 +157,10 @@ namespace Pitech.XR.Stats.Editor
         {
             EditorGUILayout.HelpBox(
                 "Bind your visual UI to stat keys.\n\n" +
-                "• Assign a StatsConfig and the list of bindings will be created for you.\n" +
-                "• Wire a Text (TMP) and/or a Slider for each stat you want shown.\n" +
-                "• Slider range uses the Max value from the StatsConfig automatically.\n" +
-                "• Values are pushed at startup and animate on change.",
+                "- Assign a StatsConfig and the list of bindings will be created for you.\n" +
+                "- Wire a Text (TMP) and/or a Slider for each stat you want shown.\n" +
+                "- Slider range uses the Max value from the StatsConfig automatically.\n" +
+                "- Values are pushed at startup and animate on change.",
                 MessageType.Info);
         }
 
@@ -169,11 +169,11 @@ namespace Pitech.XR.Stats.Editor
             if (cfg == null || _bindingsProp == null) return;
 
             // Remember existing object refs by key to avoid losing wiring when re-syncing
-            var keep = new Dictionary<StatKey, (Object text, Slider slider, string fmt)>();
+            var keep = new Dictionary<string, (Object text, Slider slider, string fmt)>();
             for (int i = 0; i < _bindingsProp.arraySize; i++)
             {
                 var el = _bindingsProp.GetArrayElementAtIndex(i);
-                var key = (StatKey)el.FindPropertyRelative("key").enumValueIndex;
+                var key = StatsConfig.NormalizeKey(el.FindPropertyRelative("key").stringValue);
                 var text = el.FindPropertyRelative("text").objectReferenceValue;
                 var slid = el.FindPropertyRelative("slider").objectReferenceValue as Slider;
                 var fmt = el.FindPropertyRelative("format").stringValue;
@@ -190,7 +190,7 @@ namespace Pitech.XR.Stats.Editor
                 _bindingsProp.InsertArrayElementAtIndex(idx);
                 var el = _bindingsProp.GetArrayElementAtIndex(idx);
 
-                el.FindPropertyRelative("key").enumValueIndex = (int)key;
+                el.FindPropertyRelative("key").stringValue = key;
 
                 // restore previous wiring if we had it
                 if (keep.TryGetValue(key, out var saved))
@@ -213,6 +213,132 @@ namespace Pitech.XR.Stats.Editor
 
             // Nice toast in console to confirm
             Debug.Log($"[StatsUIController] Synced {idx} binding(s) from StatsConfig \"{cfg.name}\".", target);
+        }
+
+        static void DrawKeyField(StatsConfig cfg, SerializedProperty keyProp)
+        {
+            if (cfg == null)
+            {
+                EditorGUILayout.PropertyField(
+                    keyProp,
+                    new GUIContent("Title", "Stat title / identifier to bind. Recommended to keep consistent across scenarios and UI."));
+                return;
+            }
+
+            // Build options from config (plus an extra "<Custom...>" option)
+            var keys = new List<string>();
+            var labels = new List<string>();
+
+            keys.Add(""); labels.Add("<Customâ€¦>");
+            foreach (var kv in cfg.All())
+            {
+                var e = kv.Value;
+                var k = StatsConfig.NormalizeKey(kv.Key);
+                if (string.IsNullOrEmpty(k)) continue;
+                keys.Add(k);
+                labels.Add(k);
+            }
+
+            var curKey = StatsConfig.NormalizeKey(keyProp.stringValue);
+            int curIdx = keys.IndexOf(curKey);
+            if (curIdx < 0) curIdx = 0;
+
+            int next = EditorGUILayout.Popup(
+                new GUIContent("Title", "Pick a stat Title from the assigned StatsConfig, or choose <Customâ€¦> to type one manually."),
+                curIdx,
+                labels.ToArray());
+
+            if (next <= 0)
+            {
+                // custom
+                EditorGUILayout.PropertyField(
+                    keyProp,
+                    new GUIContent("Custom Title", "Type a stat Title. It should also exist in the StatsConfig for slider ranges/defaults."));
+            }
+            else
+            {
+                keyProp.stringValue = keys[next];
+            }
+        }
+
+        static void DrawNumberFormatField(SerializedProperty fmtProp)
+        {
+            // Use a stable sample value so users can understand what each format does.
+            const double sample = 1234.56;
+
+            // Common formats + example. Keep the first entry as "Default (N0)".
+            // "Customâ€¦" exposes the raw string field.
+            var formats = new List<string>
+            {
+                "",     // Default (N0 at runtime)
+                "N0",
+                "N2",
+                "F0",
+                "F1",
+                "F2",
+                "C0",
+                "C2",
+                "P0",
+                "P2",
+                "<custom>"
+            };
+
+            var labels = new List<string>();
+            for (int i = 0; i < formats.Count; i++)
+            {
+                var f = formats[i];
+                if (f == "")
+                {
+                    labels.Add($"Default (N0)  â†’  {sample.ToString("N0")}");
+                }
+                else if (f == "<custom>")
+                {
+                    labels.Add("Customâ€¦");
+                }
+                else
+                {
+                    string ex;
+                    try { ex = sample.ToString(f); }
+                    catch { ex = "(invalid)"; }
+                    labels.Add($"{f}  â†’  {ex}");
+                }
+            }
+
+            var cur = fmtProp.stringValue ?? "";
+            int curIdx = formats.IndexOf(cur);
+            bool isCustom = false;
+            if (curIdx < 0)
+            {
+                // Not in presets => treat as custom
+                curIdx = formats.IndexOf("<custom>");
+                isCustom = true;
+            }
+
+            int next = EditorGUILayout.Popup(
+                new GUIContent(
+                    "Number Format",
+                    "Format used for the Text output (C# numeric format string).\nPick a preset to see examples, or choose Customâ€¦"),
+                curIdx,
+                labels.ToArray());
+
+            var chosen = formats[Mathf.Clamp(next, 0, formats.Count - 1)];
+            if (chosen == "<custom>")
+            {
+                isCustom = true;
+            }
+            else
+            {
+                // Preset choice (including Default "")
+                fmtProp.stringValue = chosen;
+                isCustom = false;
+            }
+
+            if (isCustom)
+            {
+                EditorGUILayout.PropertyField(
+                    fmtProp,
+                    new GUIContent("Custom Format", "Type any valid C# numeric format string (example: 0.0, #,0.##, N3, etc.)."));
+            }
         }
     }
 }
