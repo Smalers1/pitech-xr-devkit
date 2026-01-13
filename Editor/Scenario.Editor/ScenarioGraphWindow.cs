@@ -37,7 +37,7 @@ public class ScenarioGraphWindow : EditorWindow
 
     // ---- Group tile layout (nested steps) ----
     // Two columns, compact tiles inside the Group node (UI tiles, not GraphView nodes).
-    const float GroupTileW = 310f;
+    const float GroupTileW = 210f;
     const float GroupTileH = 96f;
     const int GroupTileColumns = 2;
     const float GroupTileGapX = 10f;
@@ -47,6 +47,10 @@ public class ScenarioGraphWindow : EditorWindow
     const float GroupHeaderH = 54f;     // title + ports row
     const float GroupSettingsApproxH = 150f; // approx IMGUI foldout content height
     const float GroupSettingsCollapsedMinH = 70f; // keep header + some breathing room so it never becomes unclickable
+
+    // Base node sizing (non-group)
+    const float StepNodeWidth = 200f;
+    const float StepNodeWidthExpanded = 260f;
 
     string _activeGuid;
     string _prevGuid;
@@ -233,7 +237,7 @@ public class ScenarioGraphWindow : EditorWindow
             // Only auto-place when the stored position is invalid (NaN/Infinity).
             var fallbackPos = new Vector2(80 + 340 * i, 220);
             var pos = IsValidGraphPos(s.graphPos) ? s.graphPos : fallbackPos;
-            float width = 360f;
+            float width = StepNodeWidth;
             if (s is GroupStep gs)
             {
                 int c = gs.steps != null ? gs.steps.Count : 0;
@@ -814,7 +818,7 @@ public class ScenarioGraphWindow : EditorWindow
         // Layout constants (dynamic spacing based on node sizes)
         const float xStart = 80f;
         const float yStart = 120f;
-        const float xGap = 90f;
+        const float xGap = 70f;
         const float yGap = 70f;
 
         // Precompute desired size per node (Group nodes are wider)
@@ -825,7 +829,7 @@ public class ScenarioGraphWindow : EditorWindow
             var node = kv.Value;
             if (node == null || node.step == null) continue;
 
-            float w = 360f;
+            float w = StepNodeWidth;
             float h = node.GetHeight();
 
             if (node.step is GroupStep gs)
@@ -870,7 +874,7 @@ public class ScenarioGraphWindow : EditorWindow
             foreach (var guid in guidsAtLevel)
             {
                 if (!nodes.TryGetValue(guid, out var node) || node == null) continue;
-                if (!sizeByGuid.TryGetValue(guid, out var sz)) sz = new Vector2(360f, node.GetHeight());
+                if (!sizeByGuid.TryGetValue(guid, out var sz)) sz = new Vector2(StepNodeWidth, node.GetHeight());
 
                 node.SetPositionSilent(new Rect(new Vector2(x, y), sz));
                 node.step.graphPos = new Vector2(x, y);
@@ -1675,6 +1679,14 @@ public class ScenarioGraphWindow : EditorWindow
             IsNested = isNested;
             ParentGroupGuid = parentGroupGuid;
 
+            // Force compact width for non-group steps (GraphView can impose a larger min-width by default).
+            if (s is not GroupStep)
+            {
+                style.minWidth = StepNodeWidth;
+                style.maxWidth = StepNodeWidth;
+                style.width = StepNodeWidth;
+            }
+
             title = $"{idx:00}. {s.Kind}";
             var tbox = this.Q("title");
             var titleLabel = tbox?.Q<Label>();
@@ -1728,7 +1740,7 @@ public class ScenarioGraphWindow : EditorWindow
             titleContainer.Add(editBtn);
 
             // quick inline fields foldout (kept for speed)
-            var fold = new Foldout { text = "Details", value = false };
+            var fold = new Foldout { text = "Settings", value = false };
             _foldout = fold;
             mainContainer.Add(fold);
 
@@ -1738,7 +1750,28 @@ public class ScenarioGraphWindow : EditorWindow
                 owner?.ScheduleResizeGroup(step is GroupStep gg ? gg.guid : null);
 
                 // Non-group nodes: resize immediately based on deterministic height calc.
-                if (step is not GroupStep) ResizeToFitDetails();
+                if (step is not GroupStep)
+                {
+                    if (fold.value)
+                    {
+                        // Expand width a bit for editing comfort.
+                        style.minWidth = StepNodeWidthExpanded;
+                        style.maxWidth = StepNodeWidthExpanded;
+                        style.width = StepNodeWidthExpanded;
+                        ResizeToFitDetails();
+                    }
+                    else
+                    {
+                        // Collapse back to the compact height (don't keep expanded height).
+                        _expandedHeightCache = 0f;
+                        var r = GetPosition();
+                        // Restore compact width + height.
+                        style.minWidth = StepNodeWidth;
+                        style.maxWidth = StepNodeWidth;
+                        style.width = StepNodeWidth;
+                        SetPositionSilent(new Rect(r.position, new Vector2(StepNodeWidth, GetCollapsedHeight())));
+                    }
+                }
             });
 
             // When inline IMGUI content expands/collapses while the foldout is open, keep sizing in sync.
@@ -2413,13 +2446,25 @@ public class ScenarioGraphWindow : EditorWindow
 
         float GetCollapsedHeight()
         {
-            if (step is QuestionStep q) return 220 + 22 * Mathf.Max(1, q.choices?.Count ?? 0);
-            if (step is SelectionStep) return 220;
-            if (step is TimelineStep) return 170;
-            if (step is CueCardsStep) return 170;
-            if (step is InsertStep) return 170;
-            if (step is EventStep) return 170;
-            return 170;
+            // Compact collapsed sizes (match "small nodes" UX). Expanded sizes are handled by the Details sizing logic.
+            const float small = 120f;     // header + ports + a little breathing room
+            const float medium = 140f;    // steps with extra ports (selection) need a bit more
+
+            if (step is TimelineStep) return small;
+            if (step is CueCardsStep) return small;
+            if (step is InsertStep) return small;
+            if (step is EventStep) return small;
+
+            if (step is SelectionStep) return medium;
+
+            if (step is QuestionStep q)
+            {
+                int count = q.choices?.Count ?? 0;
+                // Keep enough vertical space to show choice ports without becoming huge.
+                return Mathf.Max(medium, 130f + 18f * Mathf.Clamp(count, 0, 8));
+            }
+
+            return small;
         }
 
         void ResizeToFitDetails()
@@ -2427,7 +2472,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (_foldout == null || !_foldout.value) return;
 
             float width = GetPosition().width;
-            if (width <= 0) width = 360f;
+            if (width <= 0) width = StepNodeWidthExpanded;
 
             _expandedHeightCache = ComputeExpandedHeight(width);
             var r = GetPosition();

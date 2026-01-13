@@ -15,7 +15,7 @@ namespace Pitech.XR.Core.Editor
 
         public static VisualElement Row()
             => new() { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
-        
+
         public static VisualElement WrapRow()
             => new() { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center, flexWrap = Wrap.Wrap } };
 
