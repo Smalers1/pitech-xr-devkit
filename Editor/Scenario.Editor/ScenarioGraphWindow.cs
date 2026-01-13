@@ -1672,7 +1672,6 @@ public class ScenarioGraphWindow : EditorWindow
         public string ParentGroupGuid { get; }
         Foldout _foldout;
         public bool GroupSettingsExpanded => _foldout == null ? true : _foldout.value;
-        float _expandedHeightCache;
         bool _resizeQueued;
 
         public StepNode(ScenarioGraphWindow ownerWindow, Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest, bool isNested = false, string parentGroupGuid = null)
@@ -1761,17 +1760,19 @@ public class ScenarioGraphWindow : EditorWindow
                         style.minWidth = StepNodeWidthExpanded;
                         style.maxWidth = StepNodeWidthExpanded;
                         style.width = StepNodeWidthExpanded;
-                        ResizeToFitDetails();
+                        // IMPORTANT: Let the node auto-size to its actual IMGUI content.
+                        // This avoids brittle height calculations (especially for nested lists like Question.Choices).
+                        style.minHeight = GetCollapsedHeight();
+                        style.height = new StyleLength(StyleKeyword.Auto);
                     }
                     else
                     {
-                        // Collapse back to the compact height (don't keep expanded height).
-                        _expandedHeightCache = 0f;
                         var r = GetPosition();
                         // Restore compact width + height.
                         style.minWidth = StepNodeWidth;
                         style.maxWidth = StepNodeWidth;
                         style.width = StepNodeWidth;
+                        style.minHeight = GetCollapsedHeight();
                         SetPositionSilent(new Rect(r.position, new Vector2(StepNodeWidth, GetCollapsedHeight())));
                     }
                 }
@@ -1878,50 +1879,112 @@ public class ScenarioGraphWindow : EditorWindow
             }
             else if (s is QuestionStep q)
             {
+                // Use SerializedProperty so we can show nested lists (Choices + their Effects) inline.
+                var so = new SerializedObject(scenario);
+                var self = this;
                 fold.contentContainer.Add(new IMGUIContainer(() =>
                 {
+                    so.Update();
+                    var stepProp = StepEditWindow.FindStepPropertyRecursive(so, q.guid);
+                    if (stepProp == null) return;
+
+                    var choicesProp = stepProp.FindPropertyRelative("choices");
+                    int beforeChoices = choicesProp != null && choicesProp.isArray ? choicesProp.arraySize : -1;
+
                     EditorGUI.BeginChangeCheck();
-                    q.panelRoot = (RectTransform)EditorGUILayout.ObjectField("Panel Root", q.panelRoot, typeof(RectTransform), true);
-                    q.panelAnimator = (Animator)EditorGUILayout.ObjectField("Animator", q.panelAnimator, typeof(Animator), true);
-                    q.showTrigger = EditorGUILayout.TextField("Show Trigger", q.showTrigger);
-                    q.hideTrigger = EditorGUILayout.TextField("Hide Trigger", q.hideTrigger);
-                    q.fallbackHideSeconds = EditorGUILayout.FloatField("Fallback Hide (s)", q.fallbackHideSeconds);
-                    EditorGUILayout.HelpBox("Use “Edit…” to manage Choices & Effects in detail.", MessageType.None);
-                    if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Question");
+
+                    // Panel
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelRoot"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelAnimator"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("showTrigger"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hideTrigger"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("fallbackHideSeconds"));
+
+                    EditorGUILayout.Space(6);
+                    if (choicesProp != null)
+                    {
+                        // Shows: Button + Effects list + NextGuid per choice (all inline)
+                        EditorGUILayout.PropertyField(choicesProp, new GUIContent("Choices"), includeChildren: true);
+                    }
+                    EditorGUILayout.Space(12); // extra bottom breathing room in the node (GraphView can clip tight bottoms)
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Dirty(scenario, "Edit Question");
+                        so.ApplyModifiedProperties();
+
+                        // If the user added/removed choices, rebuild output ports.
+                        int afterChoices = choicesProp != null && choicesProp.isArray ? choicesProp.arraySize : -1;
+                        if (beforeChoices != afterChoices)
+                            RecreateChoicePorts();
+
+                        // Expansion/collapse inside the list can change the required height; resize on next tick.
+                        self?.QueueResizeToFitDetails();
+                    }
                 }));
 
                 RecreateChoicePorts();
             }
             else if (s is SelectionStep sel)
             {
-                // Inline quick fields
+                // Use SerializedProperty so we can show nested lists (stat effects + events) inline.
+                var so = new SerializedObject(scenario);
+                var self = this;
                 fold.contentContainer.Add(new IMGUIContainer(() =>
                 {
+                    so.Update();
+                    var stepProp = StepEditWindow.FindStepPropertyRecursive(so, sel.guid);
+                    if (stepProp == null) return;
+
                     EditorGUI.BeginChangeCheck();
-                    sel.lists = (SelectionLists)EditorGUILayout.ObjectField("Lists", sel.lists, typeof(SelectionLists), true);
-                    sel.listKey = EditorGUILayout.TextField("List Name", sel.listKey);
-                    sel.listIndex = EditorGUILayout.IntField("(or) List Index", sel.listIndex);
-                    sel.resetOnEnter = EditorGUILayout.Toggle("Reset On Enter", sel.resetOnEnter);
-                    sel.completion = (SelectionStep.CompleteMode)EditorGUILayout.EnumPopup("Completion", sel.completion);
-                    if (sel.completion == SelectionStep.CompleteMode.OnSubmitButton)
-                        sel.submitButton = (UGUIButton)EditorGUILayout.ObjectField("Submit Button", sel.submitButton, typeof(UGUIButton), true);
 
-                    EditorGUILayout.Space(4);
+                    // Source
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("lists"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listKey"), new GUIContent("List Name"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listIndex"), new GUIContent("(or) List Index"));
+
+                    // Flow
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("resetOnEnter"));
+                    var completionProp = stepProp.FindPropertyRelative("completion");
+                    EditorGUILayout.PropertyField(completionProp);
+                    if (completionProp != null && completionProp.enumValueIndex == (int)SelectionStep.CompleteMode.OnSubmitButton)
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("submitButton"));
+
+                    EditorGUILayout.Space(6);
                     EditorGUILayout.LabelField("Requirement", EditorStyles.boldLabel);
-                    sel.requiredSelections = EditorGUILayout.IntField("Required Selections", sel.requiredSelections);
-                    sel.requireExactCount = EditorGUILayout.Toggle("Require Exact Count", sel.requireExactCount);
-                    sel.allowedWrong = EditorGUILayout.IntField("Allowed Wrong", sel.allowedWrong);
-                    sel.timeoutSeconds = EditorGUILayout.FloatField("Timeout (s)", sel.timeoutSeconds);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("requiredSelections"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("requireExactCount"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("allowedWrong"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("timeoutSeconds"));
 
-                    EditorGUILayout.Space(4);
+                    EditorGUILayout.Space(6);
                     EditorGUILayout.LabelField("UI (optional)", EditorStyles.boldLabel);
-                    sel.panelRoot = (RectTransform)EditorGUILayout.ObjectField("Panel Root", sel.panelRoot, typeof(RectTransform), true);
-                    sel.panelAnimator = (Animator)EditorGUILayout.ObjectField("Animator", sel.panelAnimator, typeof(Animator), true);
-                    sel.showTrigger = EditorGUILayout.TextField("Show Trigger", sel.showTrigger);
-                    sel.hideTrigger = EditorGUILayout.TextField("Hide Trigger", sel.hideTrigger);
-                    sel.hint = (GameObject)EditorGUILayout.ObjectField("Hint", sel.hint, typeof(GameObject), true);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelRoot"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelAnimator"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("showTrigger"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hideTrigger"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hint"));
 
-                    if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Selection");
+                    EditorGUILayout.Space(6);
+                    EditorGUILayout.LabelField("Stat Effects", EditorStyles.boldLabel);
+                    // These are hidden in the default inspector but still supported at runtime.
+                    var correctEff = stepProp.FindPropertyRelative("onCorrectEffects");
+                    var wrongEff = stepProp.FindPropertyRelative("onWrongEffects");
+                    if (correctEff != null) EditorGUILayout.PropertyField(correctEff, new GUIContent("On Correct Effects"), includeChildren: true);
+                    if (wrongEff != null) EditorGUILayout.PropertyField(wrongEff, new GUIContent("On Wrong Effects"), includeChildren: true);
+
+                    EditorGUILayout.Space(6);
+                    // UnityEvent drawer already renders an "Events" header, so don't duplicate it.
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("onCorrect"), includeChildren: true);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("onWrong"), includeChildren: true);
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Dirty(scenario, "Edit Selection");
+                        so.ApplyModifiedProperties();
+                        // Expansion/collapse inside effects/events can change the required height.
+                        self?.QueueResizeToFitDetails();
+                    }
                 }));
 
 
@@ -2418,11 +2481,33 @@ public class ScenarioGraphWindow : EditorWindow
         public override void SetPosition(Rect newPos)
         {
             // Persist + relative handling is centralized in graphViewChanged to avoid double-Undo and ordering bugs.
+            // When expanded, don't freeze height/width from GraphView drags; keep auto-height based on content.
+            // GraphView passes a rect including the current size; applying it would make height fixed and clip later.
+            if (!IsNested && step is not GroupStep && _foldout != null && _foldout.value)
+            {
+                style.left = newPos.xMin;
+                style.top = newPos.yMin;
+                // Width is fixed in our UX; height remains Auto.
+                return;
+            }
+
             base.SetPosition(newPos);
         }
 
         public void SetPositionSilent(Rect newPos)
         {
+            // Same rule as SetPosition: when expanded, keep auto-height (and fixed width) but move position silently.
+            if (!IsNested && step is not GroupStep && _foldout != null && _foldout.value)
+            {
+                style.left = newPos.xMin;
+                style.top = newPos.yMin;
+                style.width = newPos.width;
+                style.minWidth = newPos.width;
+                style.maxWidth = newPos.width;
+                style.height = new StyleLength(StyleKeyword.Auto);
+                return;
+            }
+
             base.SetPosition(newPos);
             // Hard-enforce size so user-resizes / layout quirks can't leave a permanent right-side gap.
             style.width = newPos.width;
@@ -2435,7 +2520,10 @@ public class ScenarioGraphWindow : EditorWindow
             bool expandedDetails = _foldout != null && _foldout.value;
             float collapsed = GetCollapsedHeight();
             if (!expandedDetails) return collapsed;
-            return Mathf.Max(collapsed, _expandedHeightCache > 0 ? _expandedHeightCache : collapsed);
+            // Auto-height nodes: prefer actual laid-out height when available.
+            if (layout.height > 1f)
+                return Mathf.Max(collapsed, layout.height);
+            return collapsed;
 
             if (step is GroupStep g)
             {
@@ -2473,75 +2561,27 @@ public class ScenarioGraphWindow : EditorWindow
         void ResizeToFitDetails()
         {
             if (_foldout == null || !_foldout.value) return;
-
-            float width = GetPosition().width;
-            if (width <= 0) width = StepNodeWidthExpanded;
-
-            _expandedHeightCache = ComputeExpandedHeight(width);
-            var r = GetPosition();
-            SetPositionSilent(new Rect(r.position, new Vector2(r.width, Mathf.Max(GetCollapsedHeight(), _expandedHeightCache))));
+            // With auto-height, we just ensure height is Auto and let UIElements measure actual content.
+            if (step is GroupStep) return;
+            style.minHeight = GetCollapsedHeight();
+            style.height = new StyleLength(StyleKeyword.Auto);
         }
 
-        float ComputeExpandedHeight(float nodeWidth)
+        void QueueResizeToFitDetails()
         {
-            // Deterministic IMGUI-style height: count the controls we draw in each Details section.
-            // This is much more stable than trying to measure IMGUIContainer via resolvedStyle.
-            float line = EditorGUIUtility.singleLineHeight;
-            float v = EditorGUIUtility.standardVerticalSpacing;
-            float h = 0f;
-
-            // Ports/header area is handled by the node chrome; we size only for the Details content area.
-            // Provide a base padding so controls don't clip.
-            h += 110f; // chrome + foldout header baseline
-
-            if (step is TimelineStep)
+            if (_foldout == null || !_foldout.value) return;
+            if (_resizeQueued) return;
+            _resizeQueued = true;
+            EditorApplication.delayCall += () =>
             {
-                // Director + 2 toggles
-                h += (3 * (line + v)) + 24f;
-            }
-            else if (step is CueCardsStep)
-            {
-                // Clock + ~9 fields + helpbox
-                h += (10 * (line + v)) + 60f;
-            }
-            else if (step is QuestionStep)
-            {
-                // ~5 fields + helpbox
-                h += (5 * (line + v)) + 60f;
-            }
-            else if (step is SelectionStep sel)
-            {
-                // This matches the inline IMGUI we draw for SelectionStep
-                int lines = 5; // lists, listKey, listIndex, reset, completion
-                if (sel != null && sel.completion == SelectionStep.CompleteMode.OnSubmitButton) lines += 1;
-                lines += 1; // "Requirement" label
-                lines += 4; // requiredSelections, exactCount, allowedWrong, timeout
-                lines += 1; // "UI (optional)" label
-                lines += 5; // panelRoot, panelAnimator, show, hide, hint
-                h += (lines * (line + v)) + 80f; // spaces + margins
-            }
-            else if (step is InsertStep)
-            {
-                // item, trigger, attach + 4 fields + 2 fields
-                h += (9 * (line + v)) + 80f;
-            }
-            else if (step is EventStep ev)
-            {
-                // Use SerializedProperty height for the UnityEvent list if possible (varies by expansion)
-                float eventH = 0f;
-                try
-                {
-                    var so = new SerializedObject(scenario);
-                    var p = StepEditWindow.FindStepPropertyRecursive(so, ev.guid);
-                    var onEnter = p?.FindPropertyRelative("onEnter");
-                    if (onEnter != null) eventH = EditorGUI.GetPropertyHeight(onEnter, true);
-                }
-                catch { }
-                h += (2 * (line + v)) + Mathf.Max(60f, eventH) + 40f;
-            }
-
-            return Mathf.Ceil(h);
+                _resizeQueued = false;
+                if (this == null) return;
+                ResizeToFitDetails();
+            };
         }
+
+        // NOTE: We intentionally avoid manual expanded-height calculations.
+        // Expanded nodes auto-size to the true IMGUI content height to prevent clipping and stale sizing.
 
 
         sealed class ECListener : IEdgeConnectorListener

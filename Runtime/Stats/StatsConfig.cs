@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace Pitech.XR.Stats
 {
-    [CreateAssetMenu(menuName = "Edu/Stats Config")]
+    [CreateAssetMenu(menuName = "Pi tech/Stats Config")]
     public class StatsConfig : ScriptableObject
     {
         [Serializable]
