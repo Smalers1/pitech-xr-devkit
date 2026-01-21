@@ -63,9 +63,9 @@ namespace Pitech.XR.Core.Editor
                     inst.transform.SetParent(quizCanvas.transform, false);
                     quizPanel = inst.GetComponent("QuizUIController") as Component;
 
-                    // Wire the shared CanvasGroup (on the quiz canvas) into the panel controller.
+                    // IMPORTANT: each panel must have its own CanvasGroup so showing Quiz doesn't show Results too.
                     if (quizPanel != null)
-                        AssignCanvasGroupIfPresent(quizPanel, quizCanvas);
+                        EnsureAndAssignPanelCanvasGroup(quizPanel, inst);
 
                     // Ensure the answer button prefab reference is set (prefab may keep it null to avoid cross-asset references).
                     if (quizPanel != null && answerButtonPrefab != null)
@@ -83,6 +83,19 @@ namespace Pitech.XR.Core.Editor
                     EditorSceneManager.MarkSceneDirty(inst.scene);
                 }
             }
+            else if (quizPanel != null)
+            {
+                // Already in scene: keep hierarchy tidy and fix CanvasGroup wiring.
+                var go = quizPanel.gameObject;
+                if (go.transform.parent != quizCanvas.transform)
+                {
+                    Undo.SetTransformParent(go.transform, quizCanvas.transform, "Move Quiz Panel Under Quiz Canvas");
+                    go.transform.localPosition = Vector3.zero;
+                    go.transform.localRotation = Quaternion.identity;
+                    go.transform.localScale = Vector3.one;
+                }
+                EnsureAndAssignPanelCanvasGroup(quizPanel, go);
+            }
 
             Component quizResultsPanel = setup.FindFirstInScene("Pitech.XR.Quiz.QuizResultsUIController") as Component;
             if (!quizResultsPanel && quizResultsPrefab)
@@ -94,12 +107,24 @@ namespace Pitech.XR.Core.Editor
                     inst.transform.SetParent(quizCanvas.transform, false);
                     quizResultsPanel = inst.GetComponent("QuizResultsUIController") as Component;
 
-                    // Wire the shared CanvasGroup (on the quiz canvas) into the results controller.
+                    // IMPORTANT: each panel must have its own CanvasGroup so showing Quiz doesn't show Results too.
                     if (quizResultsPanel != null)
-                        AssignCanvasGroupIfPresent(quizResultsPanel, quizCanvas);
+                        EnsureAndAssignPanelCanvasGroup(quizResultsPanel, inst);
 
                     EditorSceneManager.MarkSceneDirty(inst.scene);
                 }
+            }
+            else if (quizResultsPanel != null)
+            {
+                var go = quizResultsPanel.gameObject;
+                if (go.transform.parent != quizCanvas.transform)
+                {
+                    Undo.SetTransformParent(go.transform, quizCanvas.transform, "Move Quiz Results Under Quiz Canvas");
+                    go.transform.localPosition = Vector3.zero;
+                    go.transform.localRotation = Quaternion.identity;
+                    go.transform.localScale = Vector3.one;
+                }
+                EnsureAndAssignPanelCanvasGroup(quizResultsPanel, go);
             }
 
             if (!quizPanelPrefab || !quizResultsPrefab)
@@ -134,7 +159,14 @@ namespace Pitech.XR.Core.Editor
                 if (t && t.name == "Quiz Canvas")
                 {
                     var existing = t.GetComponent<Canvas>();
-                    if (existing) return t.gameObject;
+                    if (existing)
+                    {
+                        // Quiz Canvas should NOT have a CanvasGroup. Each panel owns its own CanvasGroup.
+                        var cg = t.GetComponent<CanvasGroup>();
+                        if (cg != null)
+                            Undo.DestroyObjectImmediate(cg);
+                        return t.gameObject;
+                    }
                 }
             }
 
@@ -149,21 +181,22 @@ namespace Pitech.XR.Core.Editor
             Undo.AddComponent<CanvasScaler>(go);
             Undo.AddComponent<GraphicRaycaster>(go);
 
-            // Shared CanvasGroup used by both panels (so we never disable the whole canvas GameObject).
-            var cg = Undo.AddComponent<CanvasGroup>(go);
-            cg.alpha = 1f;
-            cg.interactable = false;
-            cg.blocksRaycasts = false;
-
             EditorSceneManager.MarkSceneDirty(scene);
             return go;
         }
 
-        static void AssignCanvasGroupIfPresent(Component controller, GameObject quizCanvas)
+        static void EnsureAndAssignPanelCanvasGroup(Component controller, GameObject panelRoot)
         {
-            if (controller == null || quizCanvas == null) return;
-            var cg = quizCanvas.GetComponent<CanvasGroup>();
-            if (!cg) return;
+            if (controller == null || panelRoot == null) return;
+
+            var cg = panelRoot.GetComponent<CanvasGroup>();
+            if (!cg)
+            {
+                cg = Undo.AddComponent<CanvasGroup>(panelRoot);
+                cg.alpha = 0f;
+                cg.interactable = false;
+                cg.blocksRaycasts = false;
+            }
 
             var so = new SerializedObject(controller);
             var p = so.FindProperty("canvasGroup");
