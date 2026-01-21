@@ -1,11 +1,8 @@
 {
-    "name": "Pitech.XR.Scenario.Editor",
-    "rootNamespace": "Pitech.XR.Scenario.Editor",
+    "name": "Pitech.XR.Quiz.Editor",
+    "rootNamespace": "Pitech.XR.Quiz.Editor",
     "references": [
-        "Pitech.XR.Scenario",
-        "Pitech.XR.Core.Editor",
-        "Pitech.XR.Interactables",
-        "Pitech.XR.Quiz"
+        "GUID:6e3d9a8b1f0d4c0a9f1d4c4f0c5d4f0a"
     ],
     "includePlatforms": [
         "Editor"

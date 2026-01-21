@@ -21,6 +21,7 @@ namespace Pitech.XR.Core.Editor
             grid.Add(ScenarioDoc());
             grid.Add(StatsDoc());
             grid.Add(InteractablesDoc());
+            grid.Add(QuizDoc());
 
             section.Add(grid);
             root.Add(section);
@@ -59,7 +60,7 @@ namespace Pitech.XR.Core.Editor
                 HowTo(
                     "Add one Scene Manager per scene (recommended).",
                     "Assign a `Scenario` to the `scenario` field.",
-                    "Optional: assign Stats and/or Interactables fields only if you use those step types.",
+                    "Optional: assign Stats, Interactables, and/or Quiz fields only if you use those step types.",
                     "Use `Auto Start` to run immediately on Play; otherwise call `Restart()`."
                 )
             );
@@ -95,7 +96,7 @@ namespace Pitech.XR.Core.Editor
                     "Create a `StatsConfig` asset and define ranges/defaults.",
                     "Add a `StatsUIController` if you want UI sliders/text.",
                     "Assign `statsConfig` and/or `statsUI` on SceneManager (optional).",
-                    "In Question/Selection steps, add StatEffects to change values.",
+                    "In Question/Selection/Quiz steps, add StatEffects or use Quiz stats keys.",
                     "If you leave Stats unassigned, Scenario still runs normally."
                 )
             );
@@ -115,6 +116,25 @@ namespace Pitech.XR.Core.Editor
                     "Create lists (nursing procedures) and pick correct colliders per list.",
                     "Selection steps reference SelectionLists and a list key/index.",
                     "Optional: assign `infoButton` + per-list `infoPanel` for the 'i' panel workflow."
+                )
+            );
+        }
+
+        static VisualElement QuizDoc()
+        {
+            return DevkitWidgets.Card(
+                "Quiz (optional)",
+                "Scriptable quiz data + optional UI controller for question steps.",
+                DevkitWidgets.Actions(
+                    DevkitTheme.Secondary("Create QuizAsset", () => new QuizService().CreateAsset())
+                ),
+                HowTo(
+                    "Create a `QuizAsset` and add questions + answers.",
+                    "Add a `QuizUIController` if you want out-of-box UI.",
+                    "Assign `quiz` and/or `quizUI` on the SceneManager (optional).",
+                    "In Scenario, add a `Quiz` step and pick a Question from the dropdown.",
+                    "Use 'When Complete' to choose single Next or Correct/Wrong branching.",
+                    "If Quiz UI is missing at runtime, the step logs a warning and continues."
                 )
             );
         }

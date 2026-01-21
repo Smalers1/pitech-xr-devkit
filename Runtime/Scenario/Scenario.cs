@@ -153,9 +153,9 @@ namespace Pitech.XR.Scenario
         public UnityEvent onCorrect = new UnityEvent();
         public UnityEvent onWrong = new UnityEvent();
 
-        // Keep the old Stats lists but hide them (won’t show in inspector)
-        [HideInInspector] public List<StatEffect> onCorrectEffects = new();
-        [HideInInspector] public List<StatEffect> onWrongEffects = new();
+        [Header("Stat Effects")]
+        public List<StatEffect> onCorrectEffects = new();
+        public List<StatEffect> onWrongEffects = new();
 
         public override string Kind => "Selection";
     }
@@ -229,9 +229,11 @@ namespace Pitech.XR.Scenario
     {
         public enum CompleteWhen
         {
-            AllStepsDone,
-            AfterSeconds,
-            WhenSpecificStepCompletes,
+            AllChildrenComplete,
+            AnyChildCompletes,
+            SpecificChildCompletes,
+            RequiredChildrenComplete,
+            NOfMChildrenComplete,
         }
 
         [Header("Group Steps")]
@@ -239,22 +241,76 @@ namespace Pitech.XR.Scenario
         [SerializeReference] public List<Step> steps = new();
 
         [Header("Completion")]
-        public CompleteWhen completeWhen = CompleteWhen.AllStepsDone;
+        public CompleteWhen completeWhen = CompleteWhen.AllChildrenComplete;
 
-        [Tooltip("Used only when CompleteWhen == AfterSeconds.")]
-        [Min(0f)] public float afterSeconds = 0f;
+        [Tooltip("Used only when CompleteWhen == NOfMChildrenComplete.")]
+        [Min(1)] public int requiredCount = 1;
 
-        [Tooltip("Used only when CompleteWhen == WhenSpecificStepCompletes. Must match a nested step guid.")]
+        [Tooltip("Used only when CompleteWhen == SpecificChildCompletes. Must match a nested step guid.")]
         public string specificStepGuid = "";
 
         [Tooltip("If true, when the group completes early (timer/specific-step), other running steps will be stopped/cleaned up.")]
         public bool stopOthersOnComplete = true;
+
+        [Serializable]
+        public class ChildRequirement
+        {
+            public string guid;
+            public bool required = true;
+        }
+
+        [Tooltip("Optional required flags per child (used by Required/N-of-M completion modes).")]
+        public List<ChildRequirement> childRequirements = new();
 
         [Header("Routing")]
         [Tooltip("Next step (GUID). Empty = next item in list")]
         public string nextGuid = "";
 
         public override string Kind => "Group";
+
+        public void EnsureChildRequirements()
+        {
+            if (steps == null) return;
+            if (childRequirements == null) childRequirements = new List<ChildRequirement>();
+
+            var existing = new HashSet<string>();
+            for (int i = 0; i < steps.Count; i++)
+            {
+                var st = steps[i];
+                if (st == null) continue;
+                if (string.IsNullOrEmpty(st.guid)) st.guid = Guid.NewGuid().ToString();
+                existing.Add(st.guid);
+
+                bool found = false;
+                for (int k = 0; k < childRequirements.Count; k++)
+                {
+                    if (childRequirements[k] != null && childRequirements[k].guid == st.guid)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    childRequirements.Add(new ChildRequirement { guid = st.guid, required = true });
+            }
+
+            for (int i = childRequirements.Count - 1; i >= 0; i--)
+            {
+                var c = childRequirements[i];
+                if (c == null || string.IsNullOrEmpty(c.guid) || !existing.Contains(c.guid))
+                    childRequirements.RemoveAt(i);
+            }
+        }
+
+        public bool IsChildRequired(string guid)
+        {
+            if (string.IsNullOrEmpty(guid)) return true;
+            if (childRequirements == null || childRequirements.Count == 0) return true;
+            for (int i = 0; i < childRequirements.Count; i++)
+                if (childRequirements[i] != null && childRequirements[i].guid == guid)
+                    return childRequirements[i].required;
+            return true;
+        }
     }
 
 
@@ -315,6 +371,7 @@ namespace Pitech.XR.Scenario
                         if (g.steps[k] == null) g.steps.RemoveAt(k);
 
                     EnsureGuidsRecursive(g.steps);
+                    g.EnsureChildRequirements();
                 }
             }
         }

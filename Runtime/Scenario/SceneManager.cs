@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
@@ -6,6 +7,7 @@ using UnityEngine.Playables;
 using UnityEngine.UI;
 using Pitech.XR.Stats;
 using Pitech.XR.Interactables;
+using Pitech.XR.Quiz;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 #endif
@@ -27,6 +29,11 @@ namespace Pitech.XR.Scenario
         [Header("Stats (optional)")]
         public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
 
+        [Header("Quiz (optional)")]
+        public QuizAsset quiz;
+        public QuizUIController quizUI;
+        public QuizSession quizSession;
+
         [Header("Interactables (optional)")]
         public SelectablesManager selectables;     // the catalog of clickable colliders
         public SelectionLists selectionLists;      // the quiz/controller using that catalog
@@ -35,9 +42,18 @@ namespace Pitech.XR.Scenario
         public int StepIndex { get; private set; } = -1;
 
         Coroutine _run;
-        readonly List<(Button btn, UnityAction fn)> _wired = new();
-        string _nextGuidFromChoice;
-        string _nextGuidFromSelection;
+        sealed class StepRunContext
+        {
+            public bool cancelRequested;
+            public System.Action cancel;
+
+            public void Cancel()
+            {
+                if (cancelRequested) return;
+                cancelRequested = true;
+                cancel?.Invoke();
+            }
+        }
 
         bool _editorSkip;
         int _editorSkipBranchIndex;
@@ -117,15 +133,11 @@ namespace Pitech.XR.Scenario
                 }
                 else if (step is QuestionStep q)
                 {
-                    _nextGuidFromChoice = null;
-                    yield return RunQuestion(q);
-                    branchGuid = _nextGuidFromChoice; // null or ""
+                    yield return RunQuestion(q, guid => branchGuid = guid);
                 }
                 else if (step is SelectionStep sel)
                 {
-                    _nextGuidFromSelection = null;
-                    yield return RunSelection(sel);
-                    branchGuid = _nextGuidFromSelection; // null or ""
+                    yield return RunSelection(sel, guid => branchGuid = guid);
                 }
                 else if (step is InsertStep ins)
                 {
@@ -141,6 +153,10 @@ namespace Pitech.XR.Scenario
                 {
                     yield return RunGroup(g);
                     branchGuid = g.nextGuid;
+                }
+                else if (step is QuizStep qz)
+                {
+                    yield return RunQuiz(qz, guid => branchGuid = guid);
                 }
 
                 // compute next index. empty guid means "next in list"
@@ -297,15 +313,28 @@ namespace Pitech.XR.Scenario
         }
 
         // ---------------- QUESTION ----------------
-        IEnumerator RunQuestion(QuestionStep q)
+        IEnumerator RunQuestion(QuestionStep q, System.Action<string> onChoice, StepRunContext ctx = null)
         {
             // show and enable only now
             if (q.panelRoot) q.panelRoot.gameObject.SetActive(true);
             if (q.panelAnimator && !string.IsNullOrEmpty(q.showTrigger))
                 q.panelAnimator.SetTrigger(q.showTrigger);
 
-            _wired.Clear();
-            _nextGuidFromChoice = null;
+            var wired = new List<(Button btn, UnityAction fn)>();
+            string nextGuid = null;
+
+            void Cleanup()
+            {
+                if (wired.Count > 0)
+                {
+                    foreach (var (btn, fn) in wired) if (btn) btn.onClick.RemoveListener(fn);
+                    wired.Clear();
+                }
+                if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
+            }
+
+            if (ctx != null)
+                ctx.cancel = Cleanup;
 
             if (q.choices != null)
             {
@@ -321,7 +350,7 @@ namespace Pitech.XR.Scenario
                         ApplyEffects(choice.effects);
 
                         // IMPORTANT: use FallbackGuid so "" means "linear next"
-                        _nextGuidFromChoice = FallbackGuid(choice.nextGuid);
+                        nextGuid = FallbackGuid(choice.nextGuid);
 
                         // hide
                         if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
@@ -331,34 +360,46 @@ namespace Pitech.XR.Scenario
                     };
 
                     choice.button.onClick.AddListener(fn);
-                    _wired.Add((choice.button, fn));
+                    wired.Add((choice.button, fn));
                 }
             }
 
             // wait until *something* sets it (normal click or editor skip)
-            while (_nextGuidFromChoice == null)
-                yield return null;
-
-            // remove listeners to avoid double fires later
-            if (_wired.Count > 0)
+            while (nextGuid == null)
             {
-                foreach (var (btn, fn) in _wired) if (btn) btn.onClick.RemoveListener(fn);
-                _wired.Clear();
+                if (ctx != null && ctx.cancelRequested)
+                    break;
+
+                if (_editorSkip && _editorSkipBranchIndex >= 0 && q.choices != null && _editorSkipBranchIndex < q.choices.Count)
+                {
+                    var choice = q.choices[_editorSkipBranchIndex];
+                    if (choice != null)
+                    {
+                        ApplyEffects(choice.effects);
+                        nextGuid = FallbackGuid(choice.nextGuid);
+                    }
+                    break;
+                }
+
+                yield return null;
             }
 
-            // make sure panel is not left active
-            if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
+            // remove listeners to avoid double fires later
+            Cleanup();
+
+            if (nextGuid != null)
+                onChoice?.Invoke(nextGuid);
 
             // debounce so the click that chose the option does not also click the next step
-            yield return WaitForPointerRelease();
+            if (nextGuid != null)
+                yield return WaitForPointerRelease();
         }
 
         // ---------------- SELECTION ----------------
-        IEnumerator RunSelection(SelectionStep s)
+        IEnumerator RunSelection(SelectionStep s, System.Action<string> onComplete, StepRunContext ctx = null)
         {
             // prefer the step's local reference; fall back to the manager-level field
             var lists = s.lists != null ? s.lists : selectionLists;
-            _nextGuidFromSelection = null;
 
             // show and enable only now
             if (s.panelRoot) s.panelRoot.gameObject.SetActive(true);
@@ -380,7 +421,7 @@ namespace Pitech.XR.Scenario
             {
                 Debug.LogWarning("[Scenario] SelectionStep: could not activate requested list. Will route WRONG.");
                 yield return HideSelectionUI(s);
-                _nextGuidFromSelection = FallbackGuid(s.wrongNextGuid);
+                onComplete?.Invoke(FallbackGuid(s.wrongNextGuid));
                 yield break;
             }
 
@@ -393,12 +434,31 @@ namespace Pitech.XR.Scenario
                 s.submitButton.onClick.AddListener(submitCb);
             }
 
+            void Cleanup()
+            {
+                if (submitCb != null && s.submitButton)
+                    s.submitButton.onClick.RemoveListener(submitCb);
+                if (lists != null && lists.selectables != null)
+                    lists.selectables.pickingEnabled = false;
+            }
+
+            if (ctx != null)
+                ctx.cancel = () =>
+                {
+                    Cleanup();
+                    if (s.hint) s.hint.SetActive(false);
+                    if (s.panelRoot) s.panelRoot.gameObject.SetActive(false);
+                };
+
             float t = 0f;
             bool done = false;
             bool isCorrect = false;
 
             while (!done)
             {
+                if (ctx != null && ctx.cancelRequested)
+                    break;
+
                 // timeout => WRONG
                 if (s.timeoutSeconds > 0f)
                 {
@@ -454,36 +514,119 @@ namespace Pitech.XR.Scenario
                 yield return null;
             }
 
+            Cleanup();
 
-            // Cleanup listeners
-            if (submitCb != null && s.submitButton)
-                s.submitButton.onClick.RemoveListener(submitCb);
-
-
-            // Hide UI & disable picking to avoid spill into next step
-            if (lists.selectables != null) lists.selectables.pickingEnabled = false;
-            yield return HideSelectionUI(s);
-
-            // Events
-            try
+            if (ctx == null || !ctx.cancelRequested)
             {
-                if (isCorrect) s.onCorrect?.Invoke();
-                else s.onWrong?.Invoke();
+                // Hide UI & disable picking to avoid spill into next step
+                yield return HideSelectionUI(s);
+
+                // Events
+                try
+                {
+                    if (isCorrect) s.onCorrect?.Invoke();
+                    else s.onWrong?.Invoke();
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogException(ex, this);
+                }
+
+                // (Optional) Stats lists – still supported if you didn’t remove them
+                if (isCorrect) ApplyEffects(s.onCorrectEffects);
+                else ApplyEffects(s.onWrongEffects);
+
+                // Route
+                onComplete?.Invoke(isCorrect ? FallbackGuid(s.correctNextGuid) : FallbackGuid(s.wrongNextGuid));
+
+                // debounce any final click (especially on submit button)
+                yield return WaitForPointerRelease();
             }
-            catch (System.Exception ex)
+        }
+
+        // ---------------- QUIZ ----------------
+        IEnumerator RunQuiz(QuizStep qz, System.Action<string> onComplete)
+        {
+            var asset = qz.quiz != null ? qz.quiz : quiz;
+            if (asset == null)
             {
-                Debug.LogException(ex, this);
+                Debug.LogWarning("[Scenario] QuizStep: no QuizAsset assigned.");
+                yield break;
             }
 
-            // (Optional) Stats lists – still supported if you didn’t remove them
-            if (isCorrect) ApplyEffects(s.onCorrectEffects);
-            else ApplyEffects(s.onWrongEffects);
+            QuizAsset.Question question = null;
+            if (!string.IsNullOrEmpty(qz.questionId))
+                question = asset.FindQuestion(qz.questionId);
+            if (question == null && qz.questionIndex >= 0 && qz.questionIndex < asset.questions.Count)
+                question = asset.questions[qz.questionIndex];
 
-            // Route
-            _nextGuidFromSelection = isCorrect ? FallbackGuid(s.correctNextGuid) : FallbackGuid(s.wrongNextGuid);
+            if (question == null)
+            {
+                Debug.LogWarning("[Scenario] QuizStep: question not found (check questionId/index).");
+                yield break;
+            }
 
-            // debounce any final click (especially on submit button)
+            var session = GetOrCreateQuizSession(asset);
+
+            if (quizUI == null)
+            {
+                Debug.LogWarning("[Scenario] QuizStep: Quiz UI missing (QuizUIController).");
+                yield break;
+            }
+
+            bool done = false;
+            bool isCorrect = false;
+            quizUI.ShowQuestion(question, selected =>
+            {
+                var result = session.AnswerQuestion(question, selected);
+                isCorrect = result != null && result.isCorrect;
+                ApplyQuizStats(session, asset);
+                done = true;
+            });
+
+            while (!done)
+                yield return null;
+
+            string next = qz.completion == QuizStep.CompleteMode.BranchOnCorrectness
+                ? (isCorrect ? FallbackGuid(qz.correctNextGuid) : FallbackGuid(qz.wrongNextGuid))
+                : FallbackGuid(qz.nextGuid);
+            onComplete?.Invoke(next);
+
             yield return WaitForPointerRelease();
+        }
+
+        void ApplyQuizStats(QuizSession session, QuizAsset asset)
+        {
+            if ((statsUI == null && statsConfig == null) || session == null) return;
+
+            if (runtime == null)
+                runtime = new StatsRuntime();
+
+            if (statsUI != null && !_statsBound)
+            {
+                statsUI.Init(runtime, syncNow: true);
+                _statsBound = true;
+            }
+
+            var summary = session.BuildSummary();
+            runtime["Quiz.Score"] = summary.totalScore;
+            runtime["Quiz.MaxScore"] = summary.maxScore;
+            runtime["Quiz.CorrectCount"] = summary.correctCount;
+            runtime["Quiz.WrongCount"] = summary.wrongCount;
+            runtime["Quiz.AnsweredCount"] = summary.answeredCount;
+            runtime["Quiz.TotalQuestions"] = asset != null && asset.questions != null ? asset.questions.Count : 0;
+        }
+
+        public QuizSession GetOrCreateQuizSession(QuizAsset asset)
+        {
+            if (asset == null) return quizSession;
+
+            if (quizSession == null)
+                quizSession = new QuizSession(asset);
+            else
+                quizSession.SetAsset(asset);
+
+            return quizSession;
         }
 
         IEnumerator HideSelectionUI(SelectionStep s)
@@ -580,7 +723,7 @@ namespace Pitech.XR.Scenario
             if (body != null)
             {
                 // Always stop any crazy motion
-                body.velocity = Vector3.zero;
+                body.linearVelocity = Vector3.zero;
                 body.angularVelocity = Vector3.zero;
                 // BUT: do NOT touch isKinematic here
                 // that depends on smoothAttach
@@ -822,20 +965,8 @@ namespace Pitech.XR.Scenario
                 if (q.choices == null) return;
                 if (branchIndex >= q.choices.Count) return;
 
-                var choice = q.choices[branchIndex];
-                if (choice == null) return;
-
-                // apply effects like button click
-                ApplyEffects(choice.effects);
-
-                _nextGuidFromChoice = FallbackGuid(choice.nextGuid);
-
-                // hide UI like in the normal path
-                if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
-                    q.panelAnimator.SetTrigger(q.hideTrigger);
-                else if (q.panelRoot)
-                    q.panelRoot.gameObject.SetActive(false);
-
+                _editorSkip = true;
+                _editorSkipBranchIndex = branchIndex;
                 return;
             }
 
@@ -849,94 +980,115 @@ namespace Pitech.XR.Scenario
         }
 
         // ---------------- GROUP ----------------
+        sealed class GroupCancelToken
+        {
+            public bool Cancelled { get; private set; }
+            public void Cancel() => Cancelled = true;
+        }
+
+        sealed class GroupChildHandle
+        {
+            public Step step;
+            public string guid;
+            public bool completed;
+            public Coroutine coroutine;
+            public Action cancel;
+        }
+
+        int _groupPickingRefs;
+
+        void SetGroupPicking(SelectablesManager mgr, bool enable)
+        {
+            if (mgr == null) return;
+            if (enable)
+            {
+                _groupPickingRefs++;
+                mgr.pickingEnabled = true;
+            }
+            else
+            {
+                _groupPickingRefs = Mathf.Max(0, _groupPickingRefs - 1);
+                if (_groupPickingRefs == 0)
+                    mgr.pickingEnabled = false;
+            }
+        }
+
         IEnumerator RunGroup(GroupStep g)
+            => RunGroupInternal(g, null);
+
+        IEnumerator RunGroupInternal(GroupStep g, GroupCancelToken token)
         {
             if (g == null || g.steps == null || g.steps.Count == 0)
-            {
-                // nothing to do
                 yield break;
-            }
 
-            // Conservative guardrail: multiple "global click / pointer gated" steps at once will fight each other.
-            // We allow at most ONE of these at a time for reliability.
-            int pointerGated = 0;
-            foreach (var st in g.steps)
-            {
-                if (st is CueCardsStep || st is QuestionStep)
-                    pointerGated++;
-            }
-            if (pointerGated > 1)
-            {
-                Debug.LogWarning("[Scenario] GroupStep contains multiple click-driven steps (CueCards/Question). " +
-                                 "This is not supported yet; steps will run sequentially to avoid input conflicts.", this);
-                yield return RunGroupSequential(g);
-                yield break;
-            }
+            g.EnsureChildRequirements();
 
-            // Start all steps in parallel.
-            var running = new List<Coroutine>();
-            var done = new Dictionary<string, bool>();
-
-            void MarkDone(string guid) { if (!string.IsNullOrEmpty(guid)) done[guid] = true; }
+            var localToken = token ?? new GroupCancelToken();
+            var handles = new List<GroupChildHandle>();
 
             foreach (var st in g.steps)
             {
                 if (st == null) continue;
                 if (string.IsNullOrEmpty(st.guid)) st.guid = System.Guid.NewGuid().ToString();
-                done[st.guid] = false;
-                running.Add(StartCoroutine(RunGroupChild(st, () => MarkDone(st.guid))));
+                handles.Add(StartGroupChild(st, localToken));
             }
 
             bool ShouldComplete()
             {
-                if (_editorSkip) return true;
+                if (_editorSkip || localToken.Cancelled) return true;
+
+                int total = handles.Count;
+                if (total == 0) return true;
+
+                int completed = 0;
+                int requiredTotal = 0;
+                int requiredCompleted = 0;
+                bool specificDone = false;
+
+                for (int i = 0; i < handles.Count; i++)
+                {
+                    var h = handles[i];
+                    if (h == null) continue;
+
+                    if (h.completed) completed++;
+
+                    bool required = g.IsChildRequired(h.guid);
+                    if (required) requiredTotal++;
+                    if (required && h.completed) requiredCompleted++;
+
+                    if (!string.IsNullOrEmpty(g.specificStepGuid) && h.guid == g.specificStepGuid && h.completed)
+                        specificDone = true;
+                }
 
                 switch (g.completeWhen)
                 {
-                    case GroupStep.CompleteWhen.AfterSeconds:
-                        // handled by timer loop below
-                        return false;
-                    case GroupStep.CompleteWhen.WhenSpecificStepCompletes:
-                        return !string.IsNullOrEmpty(g.specificStepGuid) &&
-                               done.TryGetValue(g.specificStepGuid, out var isDone) &&
-                               isDone;
-                    case GroupStep.CompleteWhen.AllStepsDone:
+                    case GroupStep.CompleteWhen.AnyChildCompletes:
+                        return completed > 0;
+                    case GroupStep.CompleteWhen.SpecificChildCompletes:
+                        return specificDone;
+                    case GroupStep.CompleteWhen.RequiredChildrenComplete:
+                        return requiredTotal == 0 || requiredCompleted >= requiredTotal;
+                    case GroupStep.CompleteWhen.NOfMChildrenComplete:
+                        return completed >= Mathf.Clamp(g.requiredCount, 1, total);
+                    case GroupStep.CompleteWhen.AllChildrenComplete:
                     default:
-                        foreach (var kv in done)
-                            if (!kv.Value) return false;
-                        return true;
+                        return completed >= total;
                 }
             }
 
-            // Wait for completion condition.
-            if (g.completeWhen == GroupStep.CompleteWhen.AfterSeconds)
+            while (!ShouldComplete())
+                yield return null;
+
+            // Stop unfinished children to prevent lingering UI/listeners.
+            if (g.stopOthersOnComplete || localToken.Cancelled)
             {
-                float t = 0f;
-                float dur = Mathf.Max(0f, g.afterSeconds);
-                while (t < dur && !_editorSkip)
+                localToken.Cancel();
+                for (int i = 0; i < handles.Count; i++)
                 {
-                    t += Time.deltaTime;
-                    yield return null;
+                    var h = handles[i];
+                    if (h == null || h.completed) continue;
+                    h.cancel?.Invoke();
                 }
-            }
-            else
-            {
-                while (!ShouldComplete())
-                    yield return null;
-            }
-
-            // If we completed early (timer/specific step), stop others if requested.
-            bool completeEarly =
-                g.completeWhen == GroupStep.CompleteWhen.AfterSeconds ||
-                g.completeWhen == GroupStep.CompleteWhen.WhenSpecificStepCompletes;
-
-            if (completeEarly && g.stopOthersOnComplete)
-            {
-                for (int i = 0; i < running.Count; i++)
-                    if (running[i] != null) StopCoroutine(running[i]);
-
-                // Best-effort cleanup to avoid lingering UI/timelines.
-                CleanupGroup(g);
             }
 
             // Reset skip flag after group ends (like any other step).
@@ -944,69 +1096,445 @@ namespace Pitech.XR.Scenario
             _editorSkipBranchIndex = 0;
         }
 
-        IEnumerator RunGroupSequential(GroupStep g)
+        GroupChildHandle StartGroupChild(Step st, GroupCancelToken token)
         {
-            foreach (var st in g.steps)
+            var h = new GroupChildHandle { step = st, guid = st.guid };
+
+            IEnumerator routine = null;
+            Action cleanup = null;
+
+            if (st is TimelineStep tl)
             {
-                if (st == null) continue;
-                yield return RunStepInstance(st);
-                if (_editorSkip) break;
+                routine = RunTimelineGroup(tl, token);
+                cleanup = () => { if (tl.director) tl.director.Stop(); };
             }
-        }
-
-        IEnumerator RunGroupChild(Step st, System.Action onDone)
-        {
-            yield return RunStepInstance(st);
-            onDone?.Invoke();
-        }
-
-        IEnumerator RunStepInstance(Step st)
-        {
-            if (st is TimelineStep tl) yield return RunTimeline(tl);
-            else if (st is CueCardsStep cc) yield return RunCueCards(cc);
-            else if (st is QuestionStep q) yield return RunQuestion(q);
-            else if (st is SelectionStep sel) yield return RunSelection(sel);
-            else if (st is InsertStep ins) yield return RunInsert(ins);
-            else if (st is EventStep ev) yield return RunEvent(ev);
-            else if (st is GroupStep g) yield return RunGroup(g); // nested groups are allowed
-        }
-
-        void CleanupGroup(GroupStep g)
-        {
-            if (g?.steps == null) return;
-
-            foreach (var st in g.steps)
+            else if (st is CueCardsStep cc)
             {
-                if (st == null) continue;
-
-                // Stop timelines to avoid bleed into next steps when group completes early.
-                if (st is TimelineStep tl && tl.director)
+                routine = RunCueCardsGroup(cc, token);
+                cleanup = () =>
                 {
-                    try { tl.director.Stop(); } catch { }
-                }
-                else if (st is CueCardsStep cc && cc.cards != null)
-                {
-                    foreach (var card in cc.cards) SafeSet(card, false);
+                    if (cc.cards != null) foreach (var card in cc.cards) SafeSet(card, false);
                     if (cc.extraObject) SafeSet(cc.extraObject, false);
                     if (cc.tapHint) SafeSet(cc.tapHint, false);
-                }
-                else if (st is QuestionStep q)
-                {
-                    if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false);
-                }
-                else if (st is SelectionStep sel)
+                };
+            }
+            else if (st is QuestionStep q)
+            {
+                routine = RunQuestionGroup(q, token);
+                cleanup = () => { if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false); };
+            }
+            else if (st is SelectionStep sel)
+            {
+                routine = RunSelectionGroup(sel, token);
+                cleanup = () =>
                 {
                     if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
                     if (sel.hint) SafeSet(sel.hint, false);
-                    if (selectionLists != null && selectionLists.selectables != null)
-                        selectionLists.selectables.pickingEnabled = false;
-                }
-                else if (st is GroupStep inner)
+                    var lists = sel.lists != null ? sel.lists : selectionLists;
+                    if (lists != null && lists.selectables != null) SetGroupPicking(lists.selectables, false);
+                };
+            }
+            else if (st is InsertStep ins)
+            {
+                routine = RunInsertGroup(ins, token);
+            }
+            else if (st is EventStep ev)
+            {
+                routine = RunEventGroup(ev, token);
+            }
+            else if (st is GroupStep g)
+            {
+                routine = RunGroupInternal(g, token);
+            }
+
+            h.cancel = () => cleanup?.Invoke();
+
+            if (routine != null)
+            {
+                h.coroutine = StartCoroutine(WrapGroupChild(routine, () => h.completed = true));
+            }
+            else
+            {
+                h.completed = true;
+            }
+
+            return h;
+        }
+
+        IEnumerator WrapGroupChild(IEnumerator routine, Action onDone)
+        {
+            yield return routine;
+            onDone?.Invoke();
+        }
+
+        IEnumerator RunTimelineGroup(TimelineStep tl, GroupCancelToken token)
+        {
+            var d = tl.director;
+            if (!d) yield break;
+
+            if (tl.rewindOnEnter)
+            {
+                d.time = 0;
+                d.Evaluate();
+            }
+
+            d.Play();
+            yield return null;
+
+            if (!tl.waitForEnd) yield break;
+
+            bool done = false;
+            void OnStopped(PlayableDirector _) => done = true;
+            d.stopped += OnStopped;
+
+            const double Eps = 1e-3;
+            while (!done && !token.Cancelled)
+            {
+                if (d.duration > 0 &&
+                    d.extrapolationMode != DirectorWrapMode.Loop &&
+                    d.time >= d.duration - Eps)
+                    done = true;
+
+                if (d.state != PlayState.Playing)
+                    done = true;
+
+                yield return null;
+            }
+
+            d.stopped -= OnStopped;
+        }
+
+        IEnumerator RunCueCardsGroup(CueCardsStep cc, GroupCancelToken token)
+        {
+            var cards = cc.cards;
+            if (cards == null || cards.Length == 0) yield break;
+
+            for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
+
+            var d = cc.director;
+            if (d && d.state != PlayState.Playing) d.Play();
+
+            yield return WaitForPointerRelease();
+
+            int cur = cc.autoShowFirst ? 0 : -1;
+            if (cur == 0) SafeSet(cards[cur], true);
+
+            while (!token.Cancelled)
+            {
+                if (cur < 0)
                 {
-                    CleanupGroup(inner);
+                    yield return WaitForCleanClick();
+                    if (token.Cancelled) break;
+                    cur = 0;
+                    SafeSet(cards[cur], true);
+                }
+
+                float timeout = 0f;
+                if (cc.cueTimes != null && cc.cueTimes.Length > 0)
+                    timeout = (cc.cueTimes.Length == 1) ? cc.cueTimes[0]
+                              : (cur < cc.cueTimes.Length ? cc.cueTimes[cur] : 0f);
+
+                float t = 0f;
+                while (!token.Cancelled)
+                {
+                    if (JustClicked()) break;
+                    if (timeout > 0f)
+                    {
+                        if (d && d.state != PlayState.Playing) break;
+                        t += Time.deltaTime;
+                        if (t >= timeout) break;
+                    }
+                    yield return null;
+                }
+                if (token.Cancelled) break;
+
+                yield return WaitForPointerRelease();
+
+                SafeSet(cards[cur], false);
+                if (cur >= cards.Length - 1) break;
+                cur++;
+                SafeSet(cards[cur], true);
+            }
+
+            for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
+        }
+
+        IEnumerator RunQuestionGroup(QuestionStep q, GroupCancelToken token)
+        {
+            if (q.panelRoot) q.panelRoot.gameObject.SetActive(true);
+            if (q.panelAnimator && !string.IsNullOrEmpty(q.showTrigger))
+                q.panelAnimator.SetTrigger(q.showTrigger);
+
+            var wired = new List<(Button btn, UnityAction fn)>();
+            bool answered = false;
+
+            if (q.choices != null)
+            {
+                for (int i = 0; i < q.choices.Count; i++)
+                {
+                    var choice = q.choices[i];
+                    if (choice == null || choice.button == null) continue;
+
+                    UnityAction fn = () =>
+                    {
+                        if (answered) return;
+                        ApplyEffects(choice.effects);
+                        answered = true;
+                        if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
+                            q.panelAnimator.SetTrigger(q.hideTrigger);
+                        else if (q.panelRoot)
+                            q.panelRoot.gameObject.SetActive(false);
+                    };
+
+                    choice.button.onClick.AddListener(fn);
+                    wired.Add((choice.button, fn));
+                }
+            }
+
+            while (!answered && !token.Cancelled)
+                yield return null;
+
+            foreach (var (btn, fn) in wired)
+                if (btn) btn.onClick.RemoveListener(fn);
+
+            if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
+
+            if (!token.Cancelled)
+                yield return WaitForPointerRelease();
+        }
+
+        IEnumerator RunSelectionGroup(SelectionStep s, GroupCancelToken token)
+        {
+            var lists = s.lists != null ? s.lists : selectionLists;
+            if (lists == null)
+            {
+                Debug.LogWarning("[Scenario] SelectionStep (Group): no SelectionLists assigned.", this);
+                yield break;
+            }
+
+            if (s.panelRoot) s.panelRoot.gameObject.SetActive(true);
+            if (s.panelAnimator && !string.IsNullOrEmpty(s.showTrigger))
+                s.panelAnimator.SetTrigger(s.showTrigger);
+            if (s.hint) s.hint.SetActive(true);
+
+            int active = -1;
+            if (!string.IsNullOrEmpty(s.listKey))
+                active = lists.ShowList(s.listKey, s.resetOnEnter);
+            else
+                active = lists.ShowList(s.listIndex, s.resetOnEnter);
+
+            if (lists.selectables != null)
+                SetGroupPicking(lists.selectables, true);
+
+            bool submitted = false;
+            UnityAction submitCb = null;
+            if (s.completion == SelectionStep.CompleteMode.OnSubmitButton && s.submitButton)
+            {
+                submitCb = () => submitted = true;
+                s.submitButton.onClick.AddListener(submitCb);
+            }
+
+            bool done = false;
+            bool isCorrect = false;
+            float t = 0f;
+
+            while (!done && !token.Cancelled)
+            {
+                if (active < 0)
+                {
+                    isCorrect = false;
+                    break;
+                }
+
+                if (s.timeoutSeconds > 0f)
+                {
+                    t += Time.deltaTime;
+                    if (t >= s.timeoutSeconds)
+                    {
+                        isCorrect = false;
+                        break;
+                    }
+                }
+
+                var e = lists.EvaluateActive();
+                bool countOK = s.requireExactCount
+                    ? (e.selectedTotal == s.requiredSelections)
+                    : (e.selectedTotal >= s.requiredSelections);
+
+                if (s.completion == SelectionStep.CompleteMode.AutoWhenRequirementMet)
+                {
+                    if (countOK)
+                    {
+                        bool wrongOK = e.selectedWrong <= s.allowedWrong;
+                        isCorrect = wrongOK;
+                        done = true;
+                    }
+                }
+                else
+                {
+                    if (submitted)
+                    {
+                        bool wrongOK = e.selectedWrong <= s.allowedWrong;
+                        isCorrect = countOK && wrongOK;
+                        done = true;
+                    }
+                }
+
+                yield return null;
+            }
+
+            if (submitCb != null && s.submitButton)
+                s.submitButton.onClick.RemoveListener(submitCb);
+
+            if (lists.selectables != null)
+                SetGroupPicking(lists.selectables, false);
+
+            if (s.hint) s.hint.SetActive(false);
+            if (s.panelAnimator && !string.IsNullOrEmpty(s.hideTrigger))
+                s.panelAnimator.SetTrigger(s.hideTrigger);
+            else if (s.panelRoot)
+                s.panelRoot.gameObject.SetActive(false);
+
+            if (token.Cancelled)
+                yield break;
+
+            try
+            {
+                if (isCorrect) s.onCorrect?.Invoke();
+                else s.onWrong?.Invoke();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex, this);
+            }
+
+            if (isCorrect) ApplyEffects(s.onCorrectEffects);
+            else ApplyEffects(s.onWrongEffects);
+
+            yield return WaitForPointerRelease();
+        }
+
+        IEnumerator RunInsertGroup(InsertStep ins, GroupCancelToken token)
+        {
+            if (ins == null || ins.item == null || ins.targetTrigger == null)
+            {
+                Debug.LogWarning("[Scenario] InsertStep requires Item and TargetTrigger.", this);
+                yield break;
+            }
+
+            SafeSet(ins.item.gameObject, true);
+            SafeSet(ins.targetTrigger.gameObject, true);
+
+            yield return WaitForPointerRelease();
+
+            var itemColliders = ins.item.GetComponentsInChildren<Collider>();
+            if (itemColliders == null || itemColliders.Length == 0)
+            {
+                Debug.LogWarning("[Scenario] InsertStep: Item has no Colliders. Completing immediately.", this);
+            }
+            else
+            {
+                bool hit = false;
+                while (!hit && !token.Cancelled)
+                {
+                    if (!ins.targetTrigger)
+                        yield break;
+
+                    foreach (var col in itemColliders)
+                    {
+                        if (!col) continue;
+                        if (AreCollidersOverlapping(col, ins.targetTrigger))
+                        {
+                            hit = true;
+                            break;
+                        }
+                    }
+
+                    if (!hit)
+                        yield return null;
+                }
+            }
+
+            if (token.Cancelled)
+                yield break;
+
+            var body = ins.item.GetComponentInChildren<Rigidbody>();
+            if (body != null)
+            {
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
+
+            if (ins.smoothAttach)
+            {
+                Transform targetPose =
+                    ins.attachTransform != null
+                        ? ins.attachTransform
+                        : ins.targetTrigger.transform;
+
+                if (targetPose != null)
+                {
+                    if (body != null)
+                        body.isKinematic = true;
+
+                    if (ins.parentToAttach)
+                        ins.item.SetParent(targetPose, true);
+
+                    while (!token.Cancelled)
+                    {
+                        ins.item.position = Vector3.MoveTowards(
+                            ins.item.position,
+                            targetPose.position,
+                            ins.moveSpeed * Time.deltaTime
+                        );
+
+                        ins.item.rotation = Quaternion.Slerp(
+                            ins.item.rotation,
+                            targetPose.rotation,
+                            ins.rotateSpeed * Time.deltaTime
+                        );
+
+                        float posDist = Vector3.Distance(ins.item.position, targetPose.position);
+                        float ang = Quaternion.Angle(ins.item.rotation, targetPose.rotation);
+
+                        if (posDist < 0.01f && ang < 1f)
+                            break;
+
+                        yield return null;
+                    }
+                }
+            }
+
+            if (!token.Cancelled)
+                yield return WaitForPointerRelease();
+        }
+
+        IEnumerator RunEventGroup(EventStep ev, GroupCancelToken token)
+        {
+            if (ev == null)
+                yield break;
+
+            try
+            {
+                ev.onEnter?.Invoke();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogException(ex, this);
+            }
+
+            float wait = ev.waitSeconds;
+            if (wait > 0f)
+            {
+                float t = 0f;
+                while (t < wait && !token.Cancelled)
+                {
+                    t += Time.deltaTime;
+                    yield return null;
                 }
             }
         }
+
 
 
         static bool AreCollidersOverlapping(Collider a, Collider b)

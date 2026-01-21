@@ -1,5 +1,6 @@
 ﻿#if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
@@ -20,6 +21,8 @@ namespace Pitech.XR.Scenario.Editor
         SerializedProperty _autoStartProp;     // bool
         SerializedProperty _selectablesProp;    // Pitech.XR.Interactables.SelectablesManager
         SerializedProperty _selectionListsProp; // Pitech.XR.Interactables.SelectionLists
+        SerializedProperty _quizProp;          // Pitech.XR.Quiz.QuizAsset
+        SerializedProperty _quizUIProp;        // Pitech.XR.Quiz.QuizUIController
         const string ManagersRootName = "--- SCENE MANAGERS ---";
 
         // ❌ DO NOT cache EditorStyles in static fields — causes NREs on domain reload
@@ -34,6 +37,8 @@ namespace Pitech.XR.Scenario.Editor
             _autoStartProp = serializedObject.FindProperty("autoStart");
             _selectablesProp = serializedObject.FindProperty("selectables");
             _selectionListsProp = serializedObject.FindProperty("selectionLists");
+            _quizProp = serializedObject.FindProperty("quiz");
+            _quizUIProp = serializedObject.FindProperty("quizUI");
 
         }
 
@@ -56,6 +61,9 @@ namespace Pitech.XR.Scenario.Editor
             
             EditorGUILayout.Space(6);
             DrawInteractablesFeature();
+            
+            EditorGUILayout.Space(6);
+            DrawQuizFeature();
 
             EditorGUILayout.Space(8);
             if (_autoStartProp != null)
@@ -173,6 +181,39 @@ namespace Pitech.XR.Scenario.Editor
             }
         }
 
+        void DrawQuizFeature()
+        {
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Quiz", TitleStyle);
+
+                bool hasQuiz = _quizProp != null && _quizProp.objectReferenceValue != null;
+                bool hasUI = _quizUIProp != null && _quizUIProp.objectReferenceValue != null;
+
+                MiniCaption("Quiz Asset");
+                ObjectFieldWithPingClear(serializedObject, _quizProp, undoName: "Assign Quiz Asset", simpleTypeName: "QuizAsset", ns: "Pitech.XR.Quiz");
+                if (!hasQuiz)
+                {
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign QuizAsset", GUILayout.Height(22)))
+                        CreateAndAssignQuizAsset();
+                }
+
+                MiniCaption("Quiz UI");
+                ObjectFieldWithPingClear(serializedObject, _quizUIProp, undoName: "Assign Quiz UI", simpleTypeName: "QuizUIController", ns: "Pitech.XR.Quiz");
+                if (!hasUI)
+                {
+                    EditorGUILayout.Space(2);
+                    if (GUILayout.Button("Create & assign Quiz UI", GUILayout.Height(22)))
+                        CreateAndAssignQuizUI();
+                }
+
+                EditorGUILayout.Space(2);
+                if (GUILayout.Button("Add Quiz to Scene", GUILayout.Height(22)))
+                    new Pitech.XR.Core.Editor.QuizService().AddQuizToScene();
+            }
+        }
+
         void CreateAndAssignSelectablesManager()
         {
             var parent = EnsureManagersRoot();
@@ -209,6 +250,30 @@ namespace Pitech.XR.Scenario.Editor
             if (lists && sm.selectables) lists.selectables = sm.selectables;
 
             AssignSceneObjectProperty(_selectionListsProp, comp, "Assign Selection Lists");
+            Selection.activeObject = go;
+        }
+
+        void CreateAndAssignQuizAsset()
+        {
+            new Pitech.XR.Core.Editor.QuizService().CreateAsset();
+            var obj = Selection.activeObject;
+            if (obj) AssignSceneObjectProperty(_quizProp, obj, "Assign Quiz Asset");
+        }
+
+        void CreateAndAssignQuizUI()
+        {
+            var parent = EnsureManagersRoot();
+            if (!parent) return;
+
+            var t = FindType("QuizUIController", "Pitech.XR.Quiz");
+            if (t == null) { EditorUtility.DisplayDialog("Quiz", "Type Pitech.XR.Quiz.QuizUIController not found.", "OK"); return; }
+
+            var go = new GameObject("Quiz UI");
+            Undo.RegisterCreatedObjectUndo(go, "Create Quiz UI");
+            var comp = go.AddComponent(t) as Component;
+            go.transform.SetParent(parent, false);
+
+            AssignSceneObjectProperty(_quizUIProp, comp, "Assign Quiz UI");
             Selection.activeObject = go;
         }
 
@@ -389,11 +454,17 @@ namespace Pitech.XR.Scenario.Editor
             return root.transform;
         }
 
+        static readonly Dictionary<string, Type> _typeCache = new Dictionary<string, Type>();
         static Type FindType(string simpleName, string @namespace = null)
         {
-            return AppDomain.CurrentDomain.GetAssemblies()
+            string key = $"{@namespace}.{simpleName}";
+            if (_typeCache.TryGetValue(key, out var cached)) return cached;
+
+            var t = AppDomain.CurrentDomain.GetAssemblies()
                 .SelectMany(a => a.GetTypes())
-                .FirstOrDefault(t => t.Name == simpleName && (@namespace == null || t.Namespace == @namespace));
+                .FirstOrDefault(x => x.Name == simpleName && (@namespace == null || x.Namespace == @namespace));
+            _typeCache[key] = t;
+            return t;
         }
 
         void CreateAndAssignScenario()

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
+using Pitech.XR.Quiz;
 
 namespace Pitech.XR.Scenario.Editor
 {
@@ -177,6 +178,7 @@ namespace Pitech.XR.Scenario.Editor
                 menu.AddItem(new GUIContent("Add Timeline"), false, () => AddStep(typeof(Runtime.TimelineStep)));
                 menu.AddItem(new GUIContent("Add Cue Cards"), false, () => AddStep(typeof(Runtime.CueCardsStep)));
                 menu.AddItem(new GUIContent("Add Question"), false, () => AddStep(typeof(Runtime.QuestionStep)));
+                menu.AddItem(new GUIContent("Add Quiz"), false, () => AddStep(typeof(Runtime.QuizStep)));
                 menu.AddItem(new GUIContent("Add Selection"), false, () => AddStep(typeof(Runtime.SelectionStep)));
                 menu.AddItem(new GUIContent("Add Insert"), false, () => AddStep(typeof(Runtime.InsertStep)));
                 menu.AddItem(new GUIContent("Add Event"), false, () => AddStep(typeof(Runtime.EventStep)));
@@ -225,6 +227,7 @@ namespace Pitech.XR.Scenario.Editor
                     full.Contains(nameof(Runtime.TimelineStep)) ? "Timeline" :
                     full.Contains(nameof(Runtime.CueCardsStep)) ? "Cue Cards" :
                     full.Contains(nameof(Runtime.QuestionStep)) ? "Question" :
+                    full.Contains(nameof(Runtime.QuizStep)) ? "Quiz" :
                     full.Contains(nameof(Runtime.SelectionStep)) ? "Selection" :
                     full.Contains(nameof(Runtime.InsertStep)) ? "Insert" :
                     full.Contains(nameof(Runtime.EventStep)) ? "Event" :
@@ -390,6 +393,51 @@ namespace Pitech.XR.Scenario.Editor
                             }
                         }
                     }
+                    else if (s is Runtime.QuizStep qz)
+                    {
+                        if (qz.completion == Runtime.QuizStep.CompleteMode.BranchOnCorrectness)
+                        {
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                GUILayout.Label("Correct", GUILayout.Width(60));
+                                int iCorr = Popup(qz.correctNextGuid);
+                                string newGuid = guids[Mathf.Clamp(iCorr, 0, guids.Count - 1)];
+                                if (newGuid != qz.correctNextGuid)
+                                {
+                                    Undo.RecordObject(sc, "Route Change");
+                                    qz.correctNextGuid = newGuid;
+                                    EditorUtility.SetDirty(sc);
+                                }
+                            }
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                GUILayout.Label("Wrong", GUILayout.Width(60));
+                                int iWrong = Popup(qz.wrongNextGuid);
+                                string newGuid = guids[Mathf.Clamp(iWrong, 0, guids.Count - 1)];
+                                if (newGuid != qz.wrongNextGuid)
+                                {
+                                    Undo.RecordObject(sc, "Route Change");
+                                    qz.wrongNextGuid = newGuid;
+                                    EditorUtility.SetDirty(sc);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                GUILayout.Label("Next", GUILayout.Width(60));
+                                int choice = Popup(qz.nextGuid);
+                                string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                                if (newGuid != qz.nextGuid)
+                                {
+                                    Undo.RecordObject(sc, "Route Change");
+                                    qz.nextGuid = newGuid;
+                                    EditorUtility.SetDirty(sc);
+                                }
+                            }
+                        }
+                    }
                     else if (s is Runtime.SelectionStep sel)
                     {
                         using (new EditorGUILayout.HorizontalScope())
@@ -510,6 +558,18 @@ namespace Pitech.XR.Scenario.Editor
                             { Styles.Info($"Step {i} Choice {c}: Button not set."); }
                     }
                 }
+                else if (s is Runtime.QuizStep qz)
+                {
+                    if (qz.quiz == null)
+                        Styles.Info($"Step {i}: Quiz has no QuizAsset assigned (will use SceneManager quiz if set).");
+                    if (string.IsNullOrEmpty(qz.questionId) && qz.questionIndex < 0)
+                        Styles.Info($"Step {i}: Quiz has no Question ID or Index set.");
+                    if (qz.completion == Runtime.QuizStep.CompleteMode.BranchOnCorrectness)
+                    {
+                        if (string.IsNullOrEmpty(qz.correctNextGuid) && string.IsNullOrEmpty(qz.wrongNextGuid))
+                            Styles.Info($"Step {i}: Quiz is BranchOnCorrectness but has no Correct/Wrong routes set.");
+                    }
+                }
                 else if (s is Runtime.SelectionStep sel)
                 {
                     if (!sel.lists)
@@ -568,7 +628,6 @@ namespace Pitech.XR.Scenario.Editor
                     }
                     else
                     {
-                        int pointerGated = 0;
                         for (int k = 0; k < g.steps.Count; k++)
                         {
                             var sub = g.steps[k];
@@ -577,9 +636,6 @@ namespace Pitech.XR.Scenario.Editor
                                 Styles.Info($"Step {i}: Group contains a null nested step at index {k} (remove it).");
                                 continue;
                             }
-
-                            if (sub is Runtime.CueCardsStep || sub is Runtime.QuestionStep)
-                                pointerGated++;
 
                             // Routing inside group is ignored at runtime; warn if authors set it.
                             if (sub is Runtime.TimelineStep subTl && !string.IsNullOrEmpty(subTl.nextGuid))
@@ -608,17 +664,10 @@ namespace Pitech.XR.Scenario.Editor
                                 }
                             }
                         }
-
-                        if (pointerGated > 1)
-                            Styles.Warn($"Step {i}: Group contains multiple click-driven steps (CueCards/Question). This is not supported yet; they will run sequentially.");
-
-                        if (g.completeWhen == Runtime.GroupStep.CompleteWhen.AfterSeconds && g.afterSeconds <= 0f)
-                            Styles.Info($"Step {i}: Group completion is AfterSeconds but AfterSeconds is 0 (group will complete immediately).");
-
-                        if (g.completeWhen == Runtime.GroupStep.CompleteWhen.WhenSpecificStepCompletes)
+                        if (g.completeWhen == Runtime.GroupStep.CompleteWhen.SpecificChildCompletes)
                         {
                             if (string.IsNullOrEmpty(g.specificStepGuid))
-                                Styles.Warn($"Step {i}: Group completion is WhenSpecificStepCompletes but SpecificStepGuid is empty.");
+                                Styles.Warn($"Step {i}: Group completion is SpecificChildCompletes but SpecificStepGuid is empty.");
                             else
                             {
                                 bool found = false;
@@ -627,6 +676,14 @@ namespace Pitech.XR.Scenario.Editor
                                 if (!found)
                                     Styles.Warn($"Step {i}: Group SpecificStepGuid does not match any nested step guid.");
                             }
+                        }
+                        if (g.completeWhen == Runtime.GroupStep.CompleteWhen.NOfMChildrenComplete)
+                        {
+                            int count = g.steps.Count;
+                            if (g.requiredCount <= 0)
+                                Styles.Warn($"Step {i}: Group N-of-M completion requires N >= 1.");
+                            else if (g.requiredCount > count)
+                                Styles.Warn($"Step {i}: Group N-of-M completion has N > child count.");
                         }
                     }
                 }
@@ -915,6 +972,7 @@ namespace Pitech.XR.Scenario.Editor
             "completion","submitButton",
             "requiredSelections","requireExactCount","allowedWrong","timeoutSeconds",
             "panelRoot","panelAnimator","showTrigger","hideTrigger","hint",
+            "onCorrectEffects","onWrongEffects",
             "onCorrect","onWrong"
         };
 
@@ -964,6 +1022,93 @@ namespace Pitech.XR.Scenario.Editor
                 if (f == "completion")
                     completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
             }
+        }
+    }
+
+    [CustomPropertyDrawer(typeof(Runtime.QuizStep))]
+    class QuizStepDrawer : PropertyDrawer
+    {
+        public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
+        {
+            if (p == null) return 0f;
+            float h = 0f;
+            h += PH(p, "quiz");
+            h += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing; // question dropdown
+            h += PH(p, "completion");
+            return h;
+        }
+
+        public override void OnGUI(Rect r, SerializedProperty p, GUIContent l)
+        {
+            if (p == null) return;
+
+            Draw(ref r, p, "quiz", "Quiz Asset");
+
+            DrawQuestionPicker(ref r, p);
+
+            Draw(ref r, p, "completion", "When Complete");
+        }
+
+        static void DrawQuestionPicker(ref Rect r, SerializedProperty p)
+        {
+            var quizProp = p.FindPropertyRelative("quiz");
+            var idProp = p.FindPropertyRelative("questionId");
+            var idxProp = p.FindPropertyRelative("questionIndex");
+            if (quizProp == null || idProp == null)
+            {
+                r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                return;
+            }
+
+            var asset = quizProp.objectReferenceValue as QuizAsset;
+            if (asset == null || asset.questions == null || asset.questions.Count == 0)
+            {
+                EditorGUI.LabelField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), "Question", "No questions in QuizAsset");
+                r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                return;
+            }
+
+            var labels = new List<string> { "Pick question…" };
+            var ids = new List<string> { "" };
+            for (int i = 0; i < asset.questions.Count; i++)
+            {
+                var q = asset.questions[i];
+                if (q == null) continue;
+                var ptxt = !string.IsNullOrWhiteSpace(q.prompt)
+                    ? (q.prompt.Length > 28 ? q.prompt.Substring(0, 28) + "…" : q.prompt)
+                    : "(No prompt)";
+                string label = $"{i + 1}. {ptxt}";
+                labels.Add(label);
+                ids.Add(q.id);
+            }
+
+            int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
+            int next = EditorGUI.Popup(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), "Question", cur, labels.ToArray());
+            idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
+            if (idxProp != null)
+                idxProp.intValue = next > 0 ? next - 1 : -1;
+            r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+        }
+
+        static float PH(SerializedProperty p, string name)
+        {
+            var sp = p.FindPropertyRelative(name);
+            float baseH = EditorGUIUtility.singleLineHeight;
+            return ((sp != null) ? EditorGUI.GetPropertyHeight(sp, true) : baseH)
+                 + EditorGUIUtility.standardVerticalSpacing;
+        }
+
+        static void Draw(ref Rect r, SerializedProperty p, string name, string label)
+        {
+            var sp = p.FindPropertyRelative(name);
+            if (sp == null)
+            {
+                r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                return;
+            }
+            var h = EditorGUI.GetPropertyHeight(sp, true);
+            EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(label), true);
+            r.y += h + EditorGUIUtility.standardVerticalSpacing;
         }
     }
 

@@ -230,7 +230,8 @@ public class ScenarioGraphWindow : EditorWindow
                 view,
                 () => { if (!_isLoading) ScheduleFullRouteSync(); },
                 OnSkipRequested,
-                DeleteStep
+                DeleteStep,
+                DuplicateStep
             );
 
             // IMPORTANT: do not treat (0,0) as "unset" (it's a valid graph position).
@@ -286,6 +287,19 @@ public class ScenarioGraphWindow : EditorWindow
 
             if (s is GroupStep grp && !string.IsNullOrEmpty(grp.nextGuid) && nodes.TryGetValue(grp.guid, out var grpNode))
                 Connect(grpNode.outNext, grp.nextGuid);
+
+            if (s is QuizStep qz && nodes.TryGetValue(qz.guid, out var qzNode))
+            {
+                if (qz.completion == QuizStep.CompleteMode.BranchOnCorrectness)
+                {
+                    if (!string.IsNullOrEmpty(qz.correctNextGuid)) Connect(qzNode.outCorrect, qz.correctNextGuid);
+                    if (!string.IsNullOrEmpty(qz.wrongNextGuid)) Connect(qzNode.outWrong, qz.wrongNextGuid);
+                }
+                else if (!string.IsNullOrEmpty(qz.nextGuid))
+                {
+                    Connect(qzNode.outNext, qz.nextGuid);
+                }
+            }
         }
         // Selection edges (Correct/Wrong)
         foreach (var s in scenario.steps)
@@ -530,6 +544,69 @@ public class ScenarioGraphWindow : EditorWindow
         return Mathf.Max(420f, w);
     }
 
+    static int CountRequiredChildren(GroupStep g)
+    {
+        if (g == null || g.steps == null) return 0;
+        int count = 0;
+        for (int i = 0; i < g.steps.Count; i++)
+        {
+            var st = g.steps[i];
+            if (st != null && g.IsChildRequired(st.guid)) count++;
+        }
+        return count;
+    }
+
+    static string GetSpecificChildLabel(GroupStep g)
+    {
+        if (g == null || g.steps == null || string.IsNullOrEmpty(g.specificStepGuid)) return "None";
+        for (int i = 0; i < g.steps.Count; i++)
+        {
+            var st = g.steps[i];
+            if (st != null && st.guid == g.specificStepGuid)
+                return $"{i + 1}. {st.Kind}";
+        }
+        return "None";
+    }
+
+    static string GroupSummary(GroupStep g)
+    {
+        if (g == null) return "Complete: -";
+        int total = g.steps != null ? g.steps.Count : 0;
+
+        switch (g.completeWhen)
+        {
+            case GroupStep.CompleteWhen.AnyChildCompletes:
+                return "Complete: Any";
+            case GroupStep.CompleteWhen.SpecificChildCompletes:
+                return $"Complete: Target = {GetSpecificChildLabel(g)}";
+            case GroupStep.CompleteWhen.RequiredChildrenComplete:
+                return $"Complete: Required ({CountRequiredChildren(g)}/{total})";
+            case GroupStep.CompleteWhen.NOfMChildrenComplete:
+                return $"Complete: {Mathf.Clamp(g.requiredCount, 1, Mathf.Max(1, total))} of {total}";
+            case GroupStep.CompleteWhen.AllChildrenComplete:
+            default:
+                return "Complete: All";
+        }
+    }
+
+    static void SetGroupChildRequired(GroupStep g, Step st, bool required)
+    {
+        if (g == null || st == null) return;
+        g.EnsureChildRequirements();
+        if (g.childRequirements == null) return;
+
+        for (int i = 0; i < g.childRequirements.Count; i++)
+        {
+            var req = g.childRequirements[i];
+            if (req != null && req.guid == st.guid)
+            {
+                req.required = required;
+                return;
+            }
+        }
+        g.childRequirements.Add(new GroupStep.ChildRequirement { guid = st.guid, required = required });
+    }
+
     void ScheduleResizeGroup(string groupGuid)
     {
         if (string.IsNullOrEmpty(groupGuid)) return;
@@ -572,6 +649,12 @@ public class ScenarioGraphWindow : EditorWindow
             else if (st is InsertStep ins) ins.nextGuid = "";
             else if (st is EventStep ev) ev.nextGuid = "";
             else if (st is GroupStep g) g.nextGuid = "";
+            else if (st is QuizStep qz)
+            {
+                qz.nextGuid = "";
+                qz.correctNextGuid = "";
+                qz.wrongNextGuid = "";
+            }
             else if (st is QuestionStep q && q.choices != null)
             {
                 foreach (var ch in q.choices)
@@ -652,6 +735,21 @@ public class ScenarioGraphWindow : EditorWindow
                 if (osl.wrongNextGuid != dstGuid) { osl.wrongNextGuid = dstGuid; changed = true; }
             }
         }
+        else if (outMeta.owner is QuizStep oqz)
+        {
+            if (outMeta.choiceIndex == -2)
+            {
+                if (oqz.correctNextGuid != dstGuid) { oqz.correctNextGuid = dstGuid; changed = true; }
+            }
+            else if (outMeta.choiceIndex == -3)
+            {
+                if (oqz.wrongNextGuid != dstGuid) { oqz.wrongNextGuid = dstGuid; changed = true; }
+            }
+            else
+            {
+                if (oqz.nextGuid != dstGuid) { oqz.nextGuid = dstGuid; changed = true; }
+            }
+        }
 
         return changed;
     }
@@ -708,6 +806,21 @@ public class ScenarioGraphWindow : EditorWindow
                     if (!string.IsNullOrEmpty(osl.wrongNextGuid)) { osl.wrongNextGuid = ""; changed = true; }
                 }
             }
+            else if (outMeta.owner is QuizStep oqz)
+            {
+                if (outMeta.choiceIndex == -2)
+                {
+                    if (!string.IsNullOrEmpty(oqz.correctNextGuid)) { oqz.correctNextGuid = ""; changed = true; }
+                }
+                else if (outMeta.choiceIndex == -3)
+                {
+                    if (!string.IsNullOrEmpty(oqz.wrongNextGuid)) { oqz.wrongNextGuid = ""; changed = true; }
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(oqz.nextGuid)) { oqz.nextGuid = ""; changed = true; }
+                }
+            }
         }
 
         return changed;
@@ -755,6 +868,8 @@ public class ScenarioGraphWindow : EditorWindow
                 AddEdge(from, ev.nextGuid);
             else if (st is GroupStep g && !string.IsNullOrEmpty(g.nextGuid))
                 AddEdge(from, g.nextGuid);
+            else if (st is QuizStep qz && !string.IsNullOrEmpty(qz.nextGuid))
+                AddEdge(from, qz.nextGuid);
 
             if (st is QuestionStep q && q.choices != null)
             {
@@ -769,6 +884,13 @@ public class ScenarioGraphWindow : EditorWindow
                     AddEdge(from, sel.correctNextGuid);
                 if (!string.IsNullOrEmpty(sel.wrongNextGuid))
                     AddEdge(from, sel.wrongNextGuid);
+            }
+            if (st is QuizStep qzb && qzb.completion == QuizStep.CompleteMode.BranchOnCorrectness)
+            {
+                if (!string.IsNullOrEmpty(qzb.correctNextGuid))
+                    AddEdge(from, qzb.correctNextGuid);
+                if (!string.IsNullOrEmpty(qzb.wrongNextGuid))
+                    AddEdge(from, qzb.wrongNextGuid);
             }
         }
 
@@ -949,6 +1071,12 @@ public class ScenarioGraphWindow : EditorWindow
             else if (st is CueCardsStep cc && cc.nextGuid == removedGuid) cc.nextGuid = "";
             else if (st is InsertStep ins && ins.nextGuid == removedGuid) ins.nextGuid = "";
             else if (st is EventStep ev && ev.nextGuid == removedGuid) ev.nextGuid = "";
+            else if (st is QuizStep qz)
+            {
+                if (qz.nextGuid == removedGuid) qz.nextGuid = "";
+                if (qz.correctNextGuid == removedGuid) qz.correctNextGuid = "";
+                if (qz.wrongNextGuid == removedGuid) qz.wrongNextGuid = "";
+            }
             else if (st is QuestionStep q && q.choices != null)
             {
                 foreach (var ch in q.choices)
@@ -961,13 +1089,48 @@ public class ScenarioGraphWindow : EditorWindow
                 if (sel.wrongNextGuid == removedGuid) sel.wrongNextGuid = "";
             }
         }
-
-        EditorUtility.SetDirty(scenario);
-        EditorSceneManager.MarkSceneDirty(scenario.gameObject.scene);
-
-        // Rebuild graph from *actual* serialized state
-        Load(scenario);
     }
+
+    void DuplicateStep(Step src)
+        {
+            if (!scenario || scenario.steps == null || src == null)
+                return;
+
+            int index = scenario.steps.IndexOf(src);
+            if (index < 0) return;
+
+            var type = src.GetType();
+            var json = JsonUtility.ToJson(src);
+            var copy = Activator.CreateInstance(type) as Step;
+            if (copy == null) return;
+
+            JsonUtility.FromJsonOverwrite(json, copy);
+            RegenerateGuids(copy);
+            copy.graphPos = src.graphPos + new Vector2(40f, 40f);
+
+            Undo.RecordObject(scenario, "Duplicate Step");
+            scenario.steps.Insert(Mathf.Clamp(index + 1, 0, scenario.steps.Count), copy);
+            Dirty(scenario, "Duplicate Step");
+
+            EditorApplication.delayCall += () =>
+            {
+                if (this != null && scenario != null)
+                    Load(scenario);
+            };
+        }
+
+        static void RegenerateGuids(Step step)
+        {
+            if (step == null) return;
+            step.guid = Guid.NewGuid().ToString();
+
+            if (step is GroupStep g && g.steps != null)
+            {
+                foreach (var st in g.steps)
+                    RegenerateGuids(st);
+                g.EnsureChildRequirements();
+            }
+        }
 
     void Connect(Port src, string dstGuid)
     {
@@ -1280,6 +1443,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Timeline", _ => CreateStep(typeof(TimelineStep)));
         evt.menu.AppendAction("Add/Cue Cards", _ => CreateStep(typeof(CueCardsStep)));
         evt.menu.AppendAction("Add/Question", _ => CreateStep(typeof(QuestionStep)));
+        evt.menu.AppendAction("Add/Quiz", _ => CreateStep(typeof(QuizStep)));
         evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
         evt.menu.AppendAction("Add/Insert", _ => CreateStep(typeof(InsertStep)));
         evt.menu.AppendAction("Add/Event", _ => CreateStep(typeof(EventStep)));
@@ -1666,6 +1830,7 @@ public class ScenarioGraphWindow : EditorWindow
         readonly Action rebuild;
         readonly Action<Step, int> skipRequest;
         readonly Action<Step> deleteRequest;
+        readonly Action<Step> duplicateRequest;
 
         bool _isActive;
         public bool IsNested { get; }
@@ -1673,11 +1838,13 @@ public class ScenarioGraphWindow : EditorWindow
         Foldout _foldout;
         public bool GroupSettingsExpanded => _foldout == null ? true : _foldout.value;
         bool _resizeQueued;
+        Label _groupSummaryLabel;
 
-        public StepNode(ScenarioGraphWindow ownerWindow, Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest, bool isNested = false, string parentGroupGuid = null)
+        public StepNode(ScenarioGraphWindow ownerWindow, Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest, Action<Step> onDuplicateRequest, bool isNested = false, string parentGroupGuid = null)
         {
             owner = ownerWindow;
             scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks; skipRequest = onSkipRequest; deleteRequest = onDeleteRequest;
+            duplicateRequest = onDuplicateRequest;
             IsNested = isNested;
             ParentGroupGuid = parentGroupGuid;
 
@@ -1696,6 +1863,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) tbox.style.backgroundColor = new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) tbox.style.backgroundColor = new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) tbox.style.backgroundColor = new Color(0.76f, 0.45f, 0.22f);
+            if (s is QuizStep) tbox.style.backgroundColor = new Color(0.45f, 0.70f, 0.95f);
             if (s is SelectionStep) tbox.style.backgroundColor = new Color(0.58f, 0.38f, 0.78f);
             if (s is InsertStep)
             {
@@ -1729,6 +1897,7 @@ public class ScenarioGraphWindow : EditorWindow
                 if (step is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (step is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
                 else if (step is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
+                else if (step is QuizStep qz) StepEditWindow.OpenQuiz(scenario, qz);
                 else if (step is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
                 else if (step is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
                 else if (step is EventStep ev) StepEditWindow.OpenEvent(scenario, ev);
@@ -1740,6 +1909,17 @@ public class ScenarioGraphWindow : EditorWindow
             editBtn.style.unityTextAlign = TextAnchor.MiddleCenter;
             editBtn.style.marginLeft = 6;
             titleContainer.Add(editBtn);
+
+            if (s is GroupStep gs)
+            {
+                _groupSummaryLabel = new Label();
+                _groupSummaryLabel.style.fontSize = 10;
+                _groupSummaryLabel.style.color = new Color(1f, 1f, 1f, 0.7f);
+                _groupSummaryLabel.style.marginTop = 2;
+                _groupSummaryLabel.style.marginBottom = 2;
+                mainContainer.Add(_groupSummaryLabel);
+                UpdateGroupSummaryLabel(gs);
+            }
 
             // quick inline fields foldout (kept for speed)
             var fold = new Foldout { text = "Settings", value = false };
@@ -2072,6 +2252,103 @@ public class ScenarioGraphWindow : EditorWindow
                 outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
                 outputContainer.Add(outNext);
             }
+            else if (s is QuizStep qz)
+            {
+                var so = new SerializedObject(scenario);
+                var stepsProp = so.FindProperty("steps");
+                SerializedProperty stepProp = null;
+
+                if (stepsProp != null)
+                {
+                    for (int i = 0; i < stepsProp.arraySize; i++)
+                    {
+                        var el = stepsProp.GetArrayElementAtIndex(i);
+                        var g = el.FindPropertyRelative("guid");
+                        if (g != null && g.stringValue == qz.guid)
+                        {
+                            stepProp = el;
+                            break;
+                        }
+                    }
+                }
+
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    if (stepProp == null) return;
+
+                    so.Update();
+                    EditorGUI.BeginChangeCheck();
+
+                    var quizProp = stepProp.FindPropertyRelative("quiz");
+                    var idProp = stepProp.FindPropertyRelative("questionId");
+                    var idxProp = stepProp.FindPropertyRelative("questionIndex");
+                    var completionProp = stepProp.FindPropertyRelative("completion");
+
+                    int beforeMode = completionProp != null ? completionProp.enumValueIndex : 0;
+
+                    if (quizProp != null)
+                        EditorGUILayout.PropertyField(quizProp, new GUIContent("Quiz Asset"));
+
+                    // Question picker
+                    if (quizProp != null && idProp != null)
+                    {
+                        var asset = quizProp.objectReferenceValue as Pitech.XR.Quiz.QuizAsset;
+                        if (asset != null && asset.questions != null && asset.questions.Count > 0)
+                        {
+                            var labels = new List<string> { "Pick question…" };
+                            var ids = new List<string> { "" };
+                            for (int i = 0; i < asset.questions.Count; i++)
+                            {
+                                var qq = asset.questions[i];
+                                if (qq == null) continue;
+                                var ptxt = !string.IsNullOrWhiteSpace(qq.prompt)
+                                    ? (qq.prompt.Length > 28 ? qq.prompt.Substring(0, 28) + "…" : qq.prompt)
+                                    : "(No prompt)";
+                                string label = $"{i + 1}. {ptxt}";
+                                labels.Add(label);
+                                ids.Add(qq.id);
+                            }
+                            int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
+                            int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
+                            idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
+                            if (idxProp != null)
+                                idxProp.intValue = next > 0 ? next - 1 : -1;
+                        }
+                    }
+
+                    if (completionProp != null)
+                        EditorGUILayout.PropertyField(completionProp, new GUIContent("When Complete"));
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        so.ApplyModifiedProperties();
+                        Dirty(scenario, "Edit Quiz");
+
+                        int afterMode = completionProp != null ? completionProp.enumValueIndex : 0;
+                        if (beforeMode != afterMode)
+                        {
+                            EditorApplication.delayCall += () =>
+                            {
+                                if (owner != null && owner.scenario != null)
+                                    owner.Load(owner.scenario);
+                            };
+                        }
+                    }
+                }));
+
+                if (qz.completion == QuizStep.CompleteMode.BranchOnCorrectness)
+                {
+                    outCorrect = MakePort(Direction.Output, Port.Capacity.Single, "Correct", -2);
+                    outWrong = MakePort(Direction.Output, Port.Capacity.Single, "Wrong", -3);
+                    outputContainer.Add(outCorrect);
+                    outputContainer.Add(outWrong);
+                }
+                else
+                {
+                    outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                    outputContainer.Add(outNext);
+                }
+            }
             else if (s is GroupStep g)
             {
                 // Make it feel like a container: settings on top + a visible drop zone area below.
@@ -2086,9 +2363,15 @@ public class ScenarioGraphWindow : EditorWindow
                 {
                     EditorGUI.BeginChangeCheck();
                     g.completeWhen = (GroupStep.CompleteWhen)EditorGUILayout.EnumPopup("Complete When", g.completeWhen);
-                    if (g.completeWhen == GroupStep.CompleteWhen.AfterSeconds)
-                        g.afterSeconds = EditorGUILayout.FloatField("After Seconds", g.afterSeconds);
-                    else if (g.completeWhen == GroupStep.CompleteWhen.WhenSpecificStepCompletes)
+
+                    int count = g.steps != null ? g.steps.Count : 0;
+
+                    if (g.completeWhen == GroupStep.CompleteWhen.NOfMChildrenComplete)
+                    {
+                        g.requiredCount = Mathf.Max(1, EditorGUILayout.IntField("Required Count", g.requiredCount));
+                        if (count > 0 && g.requiredCount > count) g.requiredCount = count;
+                    }
+                    else if (g.completeWhen == GroupStep.CompleteWhen.SpecificChildCompletes)
                     {
                         // Pick from nested steps (numbered) instead of typing GUID
                         if (g.steps != null && g.steps.Count > 0)
@@ -2119,9 +2402,32 @@ public class ScenarioGraphWindow : EditorWindow
                             g.specificStepGuid = EditorGUILayout.TextField("Specific Step Guid", g.specificStepGuid);
                         }
                     }
+
+                    if (g.completeWhen == GroupStep.CompleteWhen.RequiredChildrenComplete ||
+                        g.completeWhen == GroupStep.CompleteWhen.NOfMChildrenComplete)
+                    {
+                        EditorGUILayout.Space();
+                        EditorGUILayout.LabelField("Required Children", EditorStyles.boldLabel);
+                        if (g.steps != null && g.steps.Count > 0)
+                        {
+                            g.EnsureChildRequirements();
+                            for (int i = 0; i < g.steps.Count; i++)
+                            {
+                                var st = g.steps[i];
+                                if (st == null) continue;
+                                bool req = g.IsChildRequired(st.guid);
+                                bool next = EditorGUILayout.ToggleLeft($"{i + 1}. {st.Kind}", req);
+                                if (next != req) SetGroupChildRequired(g, st, next);
+                            }
+                        }
+                        else
+                        {
+                            EditorGUILayout.LabelField("No nested steps yet.");
+                        }
+                    }
+
                     g.stopOthersOnComplete = EditorGUILayout.Toggle("Stop Others On Complete", g.stopOthersOnComplete);
 
-                    int count = g.steps != null ? g.steps.Count : 0;
                     EditorGUILayout.LabelField("Nested Steps", $"{count} step(s)");
                     if (count > 0)
                     {
@@ -2136,7 +2442,12 @@ public class ScenarioGraphWindow : EditorWindow
                     EditorGUILayout.Space(4);
                     EditorGUILayout.LabelField("Tip: Drop steps into the big box above these settings.", EditorStyles.miniLabel);
 
-                    if (EditorGUI.EndChangeCheck()) Dirty(scenario, "Edit Group");
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Dirty(scenario, "Edit Group");
+                        UpdateGroupSummaryLabel(g);
+                        owner?.ScheduleResizeGroup(g.guid);
+                    }
                 }));
 
                 // Visual drop zone (container body; includes nested tiles)
@@ -2258,6 +2569,11 @@ public class ScenarioGraphWindow : EditorWindow
             // Kill Unity’s default items (Delete, Cut, etc)
             evt.menu.ClearItems();
 
+            evt.menu.AppendAction("Duplicate Step", _ =>
+            {
+                duplicateRequest?.Invoke(step);
+            });
+
             // Our single source of truth for deletion
             evt.menu.AppendAction("Delete Step", _ =>
             {
@@ -2324,6 +2640,12 @@ public class ScenarioGraphWindow : EditorWindow
             if (skipRow != null && skipRow.parent == mainContainer)
                 mainContainer.Remove(skipRow);
             skipRow = null;
+        }
+
+        void UpdateGroupSummaryLabel(GroupStep g)
+        {
+            if (_groupSummaryLabel == null) return;
+            _groupSummaryLabel.text = GroupSummary(g);
         }
 
 
@@ -2471,6 +2793,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) return new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) return new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) return new Color(0.76f, 0.45f, 0.22f);
+            if (s is QuizStep) return new Color(0.45f, 0.70f, 0.95f);
             if (s is SelectionStep) return new Color(0.58f, 0.38f, 0.78f);
             if (s is InsertStep) return new Color(0.90f, 0.75f, 0.25f);
             if (s is EventStep) return new Color(0.25f, 0.70f, 0.70f);
@@ -2625,6 +2948,8 @@ sealed class StepEditWindow : EditorWindow
 
     public static void OpenQuestion(Scenario sc, QuestionStep q, Action afterApply = null)
         => Open(sc, q.guid, "Question", w => w.DrawQuestion(), afterApply);
+    public static void OpenQuiz(Scenario sc, QuizStep qz)
+        => Open(sc, qz.guid, "Quiz", w => w.DrawQuiz());
     public static void OpenSelection(Scenario sc, SelectionStep sel)
     => Open(sc, sel.guid, "Selection", w => w.DrawSelection());
 
@@ -2851,6 +3176,72 @@ sealed class StepEditWindow : EditorWindow
             EditorGUILayout.HelpBox("Choices list not found.", MessageType.Warning);
         }
     }
+    void DrawQuiz()
+    {
+        EditorGUILayout.LabelField("Quiz", EditorStyles.boldLabel);
+        var quizProp = stepProp.FindPropertyRelative("quiz");
+        var idProp = stepProp.FindPropertyRelative("questionId");
+        var completionProp = stepProp.FindPropertyRelative("completion");
+
+        EditorGUILayout.PropertyField(quizProp, new GUIContent("Quiz Asset"));
+
+        // Question picker
+        if (quizProp != null && idProp != null)
+        {
+            var asset = quizProp.objectReferenceValue as Pitech.XR.Quiz.QuizAsset;
+            if (asset != null && asset.questions != null && asset.questions.Count > 0)
+            {
+                var labels = new List<string> { "Pick question…" };
+                var ids = new List<string> { "" };
+                for (int i = 0; i < asset.questions.Count; i++)
+                {
+                    var q = asset.questions[i];
+                    if (q == null) continue;
+                    string label = $"{i + 1}. {q.id}";
+                    if (!string.IsNullOrWhiteSpace(q.prompt))
+                    {
+                        var ptxt = q.prompt.Length > 24 ? q.prompt.Substring(0, 24) + "…" : q.prompt;
+                        label += $" — {ptxt}";
+                    }
+                    labels.Add(label);
+                    ids.Add(q.id);
+                }
+                int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
+                int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
+                idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
+            }
+        }
+
+        EditorGUILayout.PropertyField(completionProp, new GUIContent("When Complete"));
+
+        if (completionProp != null && completionProp.enumValueIndex == (int)QuizStep.CompleteMode.BranchOnCorrectness)
+            DrawQuizCorrectWrongGuids();
+        else
+            DrawNextGuid();
+    }
+
+    void DrawQuizCorrectWrongGuids()
+    {
+        var corr = stepProp.FindPropertyRelative("correctNextGuid");
+        var wrong = stepProp.FindPropertyRelative("wrongNextGuid");
+        if (corr == null || wrong == null) return;
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Branches", EditorStyles.boldLabel);
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField("Correct →", GUILayout.Width(70));
+            EditorGUILayout.SelectableLabel(string.IsNullOrEmpty(corr.stringValue) ? "(next in list)" : corr.stringValue, GUILayout.Height(18));
+            if (GUILayout.Button("Clear", GUILayout.Width(60))) corr.stringValue = "";
+        }
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField("Wrong →", GUILayout.Width(70));
+            EditorGUILayout.SelectableLabel(string.IsNullOrEmpty(wrong.stringValue) ? "(next in list)" : wrong.stringValue, GUILayout.Height(18));
+            if (GUILayout.Button("Clear", GUILayout.Width(60))) wrong.stringValue = "";
+        }
+    }
     void DrawSelection()
     {
         EditorGUILayout.LabelField("Selection", EditorStyles.boldLabel);
@@ -2931,25 +3322,149 @@ sealed class StepEditWindow : EditorWindow
 
         EditorGUILayout.HelpBox(
             "Group runs all nested steps together.\n" +
-            "Nested routing (nextGuid / branch guids) is ignored; only the Group's Next is used.\n" +
-            "Tip: Avoid multiple click-driven steps (Cue Cards / Question) in the same group.",
+            "Nested routing (nextGuid / branch guids) is ignored; only the Group's Next is used.",
             MessageType.Info);
 
-        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("completeWhen"));
         var modeProp = stepProp.FindPropertyRelative("completeWhen");
+        EditorGUILayout.PropertyField(modeProp);
         var mode = modeProp != null ? modeProp.enumValueIndex : 0;
-        if (mode == (int)GroupStep.CompleteWhen.AfterSeconds)
-            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("afterSeconds"));
-        else if (mode == (int)GroupStep.CompleteWhen.WhenSpecificStepCompletes)
-            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("specificStepGuid"));
+
+        var stepsProp = stepProp.FindPropertyRelative("steps");
+        var reqProp = stepProp.FindPropertyRelative("childRequirements");
+
+        if (mode == (int)GroupStep.CompleteWhen.NOfMChildrenComplete)
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("requiredCount"));
+        else if (mode == (int)GroupStep.CompleteWhen.SpecificChildCompletes)
+            DrawSpecificChildPopup(stepsProp, stepProp.FindPropertyRelative("specificStepGuid"));
+
+        if (mode == (int)GroupStep.CompleteWhen.RequiredChildrenComplete ||
+            mode == (int)GroupStep.CompleteWhen.NOfMChildrenComplete)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Required Children", EditorStyles.boldLabel);
+            EnsureGroupRequirements(stepsProp, reqProp);
+            DrawRequiredChildrenList(stepsProp, reqProp);
+        }
 
         EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("stopOthersOnComplete"));
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Nested Steps", EditorStyles.boldLabel);
-        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("steps"), includeChildren: true);
+        EditorGUILayout.PropertyField(stepsProp, includeChildren: true);
 
         DrawNextGuid();
+    }
+
+    void DrawSpecificChildPopup(SerializedProperty stepsProp, SerializedProperty guidProp)
+    {
+        if (stepsProp == null || guidProp == null) return;
+
+        if (stepsProp.arraySize <= 0)
+        {
+            EditorGUILayout.HelpBox("Add nested steps to the Group to select a specific completion step.", MessageType.Info);
+            EditorGUILayout.PropertyField(guidProp, new GUIContent("Specific Step Guid"));
+            return;
+        }
+
+        var options = new List<string> { "None" };
+        var guids = new List<string> { "" };
+        for (int i = 0; i < stepsProp.arraySize; i++)
+        {
+            var el = stepsProp.GetArrayElementAtIndex(i);
+            var g = el?.FindPropertyRelative("guid");
+            if (g == null || string.IsNullOrEmpty(g.stringValue)) continue;
+            options.Add($"{i + 1}. {GetStepKindLabel(el)}");
+            guids.Add(g.stringValue);
+        }
+
+        int cur = 0;
+        if (!string.IsNullOrEmpty(guidProp.stringValue))
+        {
+            int idx = guids.IndexOf(guidProp.stringValue);
+            if (idx >= 0) cur = idx;
+        }
+
+        int next = EditorGUILayout.Popup("Specific Step", cur, options.ToArray());
+        guidProp.stringValue = guids[Mathf.Clamp(next, 0, guids.Count - 1)];
+    }
+
+    static void EnsureGroupRequirements(SerializedProperty stepsProp, SerializedProperty reqProp)
+    {
+        if (stepsProp == null || reqProp == null || !stepsProp.isArray || !reqProp.isArray) return;
+
+        var existing = new HashSet<string>();
+        for (int i = 0; i < stepsProp.arraySize; i++)
+        {
+            var el = stepsProp.GetArrayElementAtIndex(i);
+            var g = el?.FindPropertyRelative("guid");
+            if (g == null || string.IsNullOrEmpty(g.stringValue)) continue;
+            existing.Add(g.stringValue);
+
+            if (FindRequirement(reqProp, g.stringValue) == null)
+            {
+                int idx = reqProp.arraySize;
+                reqProp.InsertArrayElementAtIndex(idx);
+                var item = reqProp.GetArrayElementAtIndex(idx);
+                item.FindPropertyRelative("guid").stringValue = g.stringValue;
+                item.FindPropertyRelative("required").boolValue = true;
+            }
+        }
+
+        for (int i = reqProp.arraySize - 1; i >= 0; i--)
+        {
+            var item = reqProp.GetArrayElementAtIndex(i);
+            var g = item.FindPropertyRelative("guid");
+            if (g == null || string.IsNullOrEmpty(g.stringValue) || !existing.Contains(g.stringValue))
+                reqProp.DeleteArrayElementAtIndex(i);
+        }
+    }
+
+    static void DrawRequiredChildrenList(SerializedProperty stepsProp, SerializedProperty reqProp)
+    {
+        if (stepsProp == null || stepsProp.arraySize == 0)
+        {
+            EditorGUILayout.LabelField("No nested steps yet.");
+            return;
+        }
+
+        for (int i = 0; i < stepsProp.arraySize; i++)
+        {
+            var el = stepsProp.GetArrayElementAtIndex(i);
+            var g = el?.FindPropertyRelative("guid");
+            if (g == null || string.IsNullOrEmpty(g.stringValue)) continue;
+
+            var req = FindRequirement(reqProp, g.stringValue);
+            bool cur = req != null ? req.FindPropertyRelative("required").boolValue : true;
+            bool next = EditorGUILayout.ToggleLeft($"{i + 1}. {GetStepKindLabel(el)}", cur);
+            if (req != null && next != cur)
+                req.FindPropertyRelative("required").boolValue = next;
+        }
+    }
+
+    static SerializedProperty FindRequirement(SerializedProperty reqProp, string guid)
+    {
+        if (reqProp == null || !reqProp.isArray) return null;
+        for (int i = 0; i < reqProp.arraySize; i++)
+        {
+            var item = reqProp.GetArrayElementAtIndex(i);
+            var g = item.FindPropertyRelative("guid");
+            if (g != null && g.stringValue == guid) return item;
+        }
+        return null;
+    }
+
+    static string GetStepKindLabel(SerializedProperty el)
+    {
+        if (el == null) return "Step";
+        string full = el.managedReferenceFullTypename ?? "";
+        if (full.Contains(nameof(TimelineStep))) return "Timeline";
+        if (full.Contains(nameof(CueCardsStep))) return "Cue Cards";
+        if (full.Contains(nameof(QuestionStep))) return "Question";
+        if (full.Contains(nameof(SelectionStep))) return "Selection";
+        if (full.Contains(nameof(InsertStep))) return "Insert";
+        if (full.Contains(nameof(EventStep))) return "Event";
+        if (full.Contains(nameof(GroupStep))) return "Group";
+        return "Step";
     }
 
 

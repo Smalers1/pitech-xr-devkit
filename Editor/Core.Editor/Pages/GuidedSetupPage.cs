@@ -3,6 +3,7 @@ using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Pitech.XR.Core.Editor;
 
 namespace Pitech.XR.Core.Editor
 {
@@ -20,6 +21,8 @@ namespace Pitech.XR.Core.Editor
         const string TStatsConfig = "Pitech.XR.Stats.StatsConfig";
         const string TSelectables = "Pitech.XR.Interactables.SelectablesManager";
         const string TSelectionLists = "Pitech.XR.Interactables.SelectionLists";
+        const string TQuizAsset = "Pitech.XR.Quiz.QuizAsset";
+        const string TQuizUI = "Pitech.XR.Quiz.QuizUIController";
 
         public void BuildUI(VisualElement root)
         {
@@ -61,6 +64,7 @@ namespace Pitech.XR.Core.Editor
             // ========== Optional modules ==========
             grid.Add(CardStats(svc));
             grid.Add(CardInteractables(svc));
+            grid.Add(CardQuiz(svc));
 
             section.Add(grid);
 
@@ -280,6 +284,66 @@ namespace Pitech.XR.Core.Editor
 
                         if (lists)
                             svc.AssignObjectProperty(sm, "selectionLists", lists, "Assign Selection Lists");
+
+                        EditorGUIUtility.PingObject(sm);
+                    })
+                ),
+                body
+            );
+        }
+
+        static VisualElement CardQuiz(GuidedSetupService svc)
+        {
+            var sm = svc.FindFirstInScene(TSceneManager) as Component;
+            var ui = svc.FindFirstInScene(TQuizUI) as Component;
+
+            bool hasUI = ui != null;
+
+            var assetType = GuidedSetupService.FindType(TQuizAsset) ?? typeof(ScriptableObject);
+            var pills = DevkitWidgets.PillsRow(
+                (hasUI ? DevkitWidgets.PillKind.Success : DevkitWidgets.PillKind.Neutral, hasUI ? "UI present" : "UI optional"),
+                (DevkitWidgets.PillKind.Neutral, "Quiz optional")
+            );
+
+            var body = new VisualElement();
+            body.Add(pills);
+            body.Add(DevkitTheme.VSpace(8));
+
+            var quizField = new ObjectField("Quiz Asset") { objectType = assetType, allowSceneObjects = false };
+            body.Add(quizField);
+
+            return DevkitWidgets.Card(
+                "Quiz (optional)",
+                "Create a QuizAsset and optional QuizUIController, then assign them to the Scene Manager.",
+                DevkitWidgets.Actions(
+                    DevkitTheme.Secondary("Add Quiz to Scene", () =>
+                    {
+                        new QuizService().AddQuizToScene();
+                    }),
+                    DevkitTheme.Secondary(hasUI ? "Ping Quiz UI" : "Create Quiz UI", () =>
+                    {
+                        if (!ui)
+                            ui = svc.CreateUnderManagersRoot(TQuizUI, "Quiz UI", "Create Quiz UI");
+                        if (ui) EditorGUIUtility.PingObject(ui.gameObject);
+                    }),
+                    DevkitTheme.Secondary("Create QuizAsset", () =>
+                    {
+                        new QuizService().CreateAsset();
+                    }),
+                    DevkitTheme.Primary("Assign to Scene Manager", () =>
+                    {
+                        sm = svc.FindFirstInScene(TSceneManager) as Component;
+                        if (!sm)
+                        {
+                            EditorUtility.DisplayDialog("DevKit", "Scene Manager not found in this scene.", "OK");
+                            return;
+                        }
+
+                        if (ui)
+                            svc.AssignObjectProperty(sm, "quizUI", ui, "Assign Quiz UI");
+
+                        if (quizField.value)
+                            svc.AssignObjectProperty(sm, "quiz", quizField.value, "Assign Quiz Asset");
 
                         EditorGUIUtility.PingObject(sm);
                     })
