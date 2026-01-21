@@ -30,6 +30,9 @@ public class ScenarioGraphWindow : EditorWindow
     readonly Dictionary<string, StepNode> nodes = new();
     readonly Dictionary<string, StickyNote> notes = new();
     readonly HashSet<StepNode> movedNodesSinceMouseDown = new HashSet<StepNode>();
+    // Keep node expanded/collapsed state stable across Refresh/Load (do not collapse nodes on refresh).
+    // Keyed by Step.guid. Not serialized into the Scenario asset.
+    readonly Dictionary<string, bool> _expandedByGuid = new Dictionary<string, bool>();
     // NOTE: We intentionally do NOT represent nested steps as GraphView nodes.
     // Nested steps are rendered as UI tiles inside the Group node to avoid z-order/picking issues in GraphView.
     Vector2 mouseWorld;
@@ -50,7 +53,7 @@ public class ScenarioGraphWindow : EditorWindow
 
     // Base node sizing (non-group)
     const float StepNodeWidth = 200f;
-    const float StepNodeWidthExpanded = 260f;
+    const float StepNodeWidthExpanded = 280f;
 
     string _activeGuid;
     string _prevGuid;
@@ -95,6 +98,13 @@ public class ScenarioGraphWindow : EditorWindow
         if (o is Component c) EditorSceneManager.MarkSceneDirty(c.gameObject.scene);
     }
 
+    bool GetExpanded(string guid) => !string.IsNullOrEmpty(guid) && _expandedByGuid.TryGetValue(guid, out var v) && v;
+    void SetExpanded(string guid, bool v)
+    {
+        if (string.IsNullOrEmpty(guid)) return;
+        _expandedByGuid[guid] = v;
+    }
+
     void OnEnable()
     {
         // minimal toolbar (works across 2021/2022/2023)
@@ -118,6 +128,14 @@ public class ScenarioGraphWindow : EditorWindow
         };
         rearrange.style.marginLeft = 6;
         bar.Add(rearrange);
+
+        var expandAll = new UIEButton(() => SetAllExpanded(true)) { text = "Expand All" };
+        expandAll.style.marginLeft = 6;
+        bar.Add(expandAll);
+
+        var collapseAll = new UIEButton(() => SetAllExpanded(false)) { text = "Collapse All" };
+        collapseAll.style.marginLeft = 6;
+        bar.Add(collapseAll);
 
         rootVisualElement.Add(bar);
 
@@ -150,6 +168,17 @@ public class ScenarioGraphWindow : EditorWindow
         // NEW: stop listening
         EditorApplication.update -= OnEditorUpdate;
         EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+    }
+
+    void SetAllExpanded(bool on)
+    {
+        foreach (var kv in nodes)
+        {
+            var n = kv.Value;
+            if (n == null) continue;
+            if (n.IsNested) continue;
+            n.SetExpanded(on);
+        }
     }
 
 
@@ -220,6 +249,8 @@ public class ScenarioGraphWindow : EditorWindow
             var s = scenario.steps[i];
             if (s == null) continue;
 
+            bool startExpanded = GetExpanded(s.guid);
+
             var node = new StepNode(
                 this,
                 scenario,
@@ -229,7 +260,8 @@ public class ScenarioGraphWindow : EditorWindow
                 () => { if (!_isLoading) ScheduleFullRouteSync(); },
                 OnSkipRequested,
                 DeleteStep,
-                DuplicateStep
+                DuplicateStep,
+                startExpanded
             );
 
             // IMPORTANT: do not treat (0,0) as "unset" (it's a valid graph position).
@@ -241,6 +273,10 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 int c = gs.steps != null ? gs.steps.Count : 0;
                 width = GetGroupPreferredWidth(c);
+            }
+            else if (startExpanded)
+            {
+                width = StepNodeWidthExpanded;
             }
             var h = node.GetHeight();
             if (s is GroupStep) h = Mathf.Max(h, 320f); // always show as container, even when empty
@@ -1020,6 +1056,10 @@ public class ScenarioGraphWindow : EditorWindow
                 // ensure the rect accounts for the UI tiles/settings state
                 FitGroupToChildren(gs, node);
                 h = Mathf.Max(h, node.GetPosition().height);
+            }
+            else if (node.IsExpanded)
+            {
+                w = StepNodeWidthExpanded;
             }
 
             sizeByGuid[guid] = new Vector2(w, h);
@@ -1917,11 +1957,20 @@ public class ScenarioGraphWindow : EditorWindow
         public bool IsNested { get; }
         public string ParentGroupGuid { get; }
         Foldout _foldout;
+        public bool IsExpanded => _foldout != null && _foldout.value;
         public bool GroupSettingsExpanded => _foldout == null ? true : _foldout.value;
         bool _resizeQueued;
         Label _groupSummaryLabel;
+        UIEButton _groupFoldBtn;
 
-        public StepNode(ScenarioGraphWindow ownerWindow, Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest, Action<Step> onDuplicateRequest, bool isNested = false, string parentGroupGuid = null)
+        public void SetExpanded(bool on)
+        {
+            if (IsNested) return;
+            if (_foldout == null) return;
+            _foldout.value = on;
+        }
+
+        public StepNode(ScenarioGraphWindow ownerWindow, Scenario sc, Step s, int idx, ScenarioGraphView gv, Action rebuildLinks, Action<Step, int> onSkipRequest, Action<Step> onDeleteRequest, Action<Step> onDuplicateRequest, bool startExpanded, bool isNested = false, string parentGroupGuid = null)
         {
             owner = ownerWindow;
             scenario = sc; step = s; index = idx; graph = gv; rebuild = rebuildLinks; skipRequest = onSkipRequest; deleteRequest = onDeleteRequest;
@@ -1944,8 +1993,9 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) tbox.style.backgroundColor = new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) tbox.style.backgroundColor = new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) tbox.style.backgroundColor = new Color(0.76f, 0.45f, 0.22f);
-            if (s is QuizStep) tbox.style.backgroundColor = new Color(0.45f, 0.70f, 0.95f);
-            if (s is QuizResultsStep) tbox.style.backgroundColor = new Color(0.20f, 0.60f, 0.90f);
+            // Quiz colors: red palette (distinct from Timeline blue). Keep contrast strong for white text.
+            if (s is QuizStep) tbox.style.backgroundColor = new Color(0.78f, 0.20f, 0.20f);
+            if (s is QuizResultsStep) tbox.style.backgroundColor = new Color(0.62f, 0.16f, 0.16f);
             if (s is SelectionStep) tbox.style.backgroundColor = new Color(0.58f, 0.38f, 0.78f);
             if (s is InsertStep)
             {
@@ -2038,6 +2088,12 @@ public class ScenarioGraphWindow : EditorWindow
                         SetPositionSilent(new Rect(r.position, new Vector2(StepNodeWidth, GetCollapsedHeight())));
                     }
                 }
+
+                // Remember state so Refresh doesn't collapse nodes.
+                owner?.SetExpanded(step != null ? step.guid : null, fold.value);
+
+                if (step is GroupStep && _groupFoldBtn != null)
+                    _groupFoldBtn.text = fold.value ? "▾" : "▸";
             });
 
             // When inline IMGUI content expands/collapses while the foldout is open, keep sizing in sync.
@@ -2064,6 +2120,7 @@ public class ScenarioGraphWindow : EditorWindow
                     builtinCollapse.style.display = DisplayStyle.None;
 
                 var expBtn = new UIEButton() { text = "▾" };
+                _groupFoldBtn = expBtn;
                 expBtn.clicked += () =>
                 {
                     // Toggle foldout content, never hide the header (so you can always reopen).
@@ -2081,6 +2138,12 @@ public class ScenarioGraphWindow : EditorWindow
                 // Keep node expanded; only toggle fold visibility.
                 fold.value = true;
                 expBtn.text = "▾";
+            }
+            else
+            {
+                // Restore previous foldout state for non-group nodes.
+                if (!IsNested)
+                    fold.value = startExpanded;
             }
 
             // Double-click to edit (especially important for nested tiles).
@@ -2401,26 +2464,71 @@ public class ScenarioGraphWindow : EditorWindow
                                 ids.Add(id);
                             }
                             int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
-                            int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
-                            idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
-                            if (idxProp != null)
-                                idxProp.intValue = next > 0 ? next - 1 : -1;
+
+                            // Custom dark dropdown (GraphView IMGUI popups can render with a very bright background).
+                            Rect rr = EditorGUILayout.GetControlRect();
+                            rr = EditorGUI.PrefixLabel(rr, new GUIContent("Question"));
+                            rr.height = EditorGUIUtility.singleLineHeight;
+
+                            var bg = new Color(0.16f, 0.16f, 0.16f, 1f);
+                            var border = new Color(0.28f, 0.28f, 0.28f, 1f);
+                            EditorGUI.DrawRect(rr, bg);
+                            EditorGUI.DrawRect(new Rect(rr.x, rr.y, rr.width, 1f), border);
+                            EditorGUI.DrawRect(new Rect(rr.x, rr.yMax - 1f, rr.width, 1f), border);
+                            EditorGUI.DrawRect(new Rect(rr.x, rr.y, 1f, rr.height), border);
+                            EditorGUI.DrawRect(new Rect(rr.xMax - 1f, rr.y, 1f, rr.height), border);
+
+                            string shown = (cur <= 0 || cur >= labels.Count) ? "Pick question…" : labels[cur];
+                            var textStyle = new GUIStyle(EditorStyles.label)
+                            {
+                                alignment = TextAnchor.MiddleLeft,
+                                clipping = TextClipping.Clip,
+                                padding = new RectOffset(8, 18, 0, 0)
+                            };
+                            textStyle.normal.textColor = Color.white;
+                            GUI.Label(rr, shown, textStyle);
+
+                            var arrowStyle = new GUIStyle(EditorStyles.label)
+                            {
+                                alignment = TextAnchor.MiddleRight,
+                                padding = new RectOffset(8, 8, 0, 0)
+                            };
+                            arrowStyle.normal.textColor = new Color(1f, 1f, 1f, 0.8f);
+                            GUI.Label(rr, "▾", arrowStyle);
+
+                            if (GUI.Button(rr, GUIContent.none, GUIStyle.none))
+                            {
+                                var menu = new GenericMenu();
+                                for (int i = 0; i < labels.Count; i++)
+                                {
+                                    int ii = i;
+                                    menu.AddItem(new GUIContent(labels[ii]), ii == cur, () =>
+                                    {
+                                        so.Update();
+                                        idProp.stringValue = ids[Mathf.Clamp(ii, 0, ids.Count - 1)];
+                                        if (idxProp != null) idxProp.intValue = ii > 0 ? ii - 1 : -1;
+                                        so.ApplyModifiedProperties();
+                                        Dirty(scenario, "Edit Quiz");
+                                    });
+                                }
+                                menu.DropDown(rr);
+                            }
                         }
                     }
 
                     if (completionProp != null)
-                        EditorGUILayout.PropertyField(completionProp, new GUIContent("When Complete"));
+                        EditorGUILayout.PropertyField(completionProp, new GUIContent("Routing"));
 
                     if (submitModeProp != null)
-                        EditorGUILayout.PropertyField(submitModeProp, new GUIContent("Answer Submit"));
+                        EditorGUILayout.PropertyField(submitModeProp, new GUIContent("Submit"));
 
                     if (feedbackProp != null)
                     {
-                        EditorGUILayout.PropertyField(feedbackProp, new GUIContent("After Answer"));
+                        EditorGUILayout.PropertyField(feedbackProp, new GUIContent("Explanation"));
                         if (feedbackProp.enumValueIndex == (int)QuizStep.FeedbackMode.ForSeconds && feedbackSecondsProp != null)
-                            EditorGUILayout.PropertyField(feedbackSecondsProp, new GUIContent("Feedback Seconds"));
+                            EditorGUILayout.PropertyField(feedbackSecondsProp, new GUIContent("Explanation Seconds"));
                         if (feedbackProp.enumValueIndex == (int)QuizStep.FeedbackMode.UntilContinue)
-                            EditorGUILayout.HelpBox("Requires Quiz Panel Continue button (recommended).", MessageType.Info);
+                            EditorGUILayout.HelpBox("Requires the Quiz Panel Continue button (recommended).", MessageType.Info);
                     }
 
                     if (EditorGUI.EndChangeCheck())
@@ -2979,8 +3087,8 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) return new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) return new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) return new Color(0.76f, 0.45f, 0.22f);
-            if (s is QuizStep) return new Color(0.45f, 0.70f, 0.95f);
-            if (s is QuizResultsStep) return new Color(0.20f, 0.60f, 0.90f);
+            if (s is QuizStep) return new Color(0.78f, 0.20f, 0.20f);
+            if (s is QuizResultsStep) return new Color(0.62f, 0.16f, 0.16f);
             if (s is SelectionStep) return new Color(0.58f, 0.38f, 0.78f);
             if (s is InsertStep) return new Color(0.90f, 0.75f, 0.25f);
             if (s is EventStep) return new Color(0.25f, 0.70f, 0.70f);
@@ -3398,13 +3506,55 @@ sealed class StepEditWindow : EditorWindow
                         ids.Add(id);
                     }
                     int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
-                    int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
-                    idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
+
+                    Rect rr = EditorGUILayout.GetControlRect();
+                    rr = EditorGUI.PrefixLabel(rr, new GUIContent("Question"));
+                    rr.height = EditorGUIUtility.singleLineHeight;
+
+                    var bg = new Color(0.16f, 0.16f, 0.16f, 1f);
+                    var border = new Color(0.28f, 0.28f, 0.28f, 1f);
+                    EditorGUI.DrawRect(rr, bg);
+                    EditorGUI.DrawRect(new Rect(rr.x, rr.y, rr.width, 1f), border);
+                    EditorGUI.DrawRect(new Rect(rr.x, rr.yMax - 1f, rr.width, 1f), border);
+                    EditorGUI.DrawRect(new Rect(rr.x, rr.y, 1f, rr.height), border);
+                    EditorGUI.DrawRect(new Rect(rr.xMax - 1f, rr.y, 1f, rr.height), border);
+
+                    string shown = (cur <= 0 || cur >= labels.Count) ? "Pick question…" : labels[cur];
+                    var textStyle = new GUIStyle(EditorStyles.label)
+                    {
+                        alignment = TextAnchor.MiddleLeft,
+                        clipping = TextClipping.Clip,
+                        padding = new RectOffset(8, 18, 0, 0)
+                    };
+                    textStyle.normal.textColor = Color.white;
+                    GUI.Label(rr, shown, textStyle);
+
+                    var arrowStyle = new GUIStyle(EditorStyles.label)
+                    {
+                        alignment = TextAnchor.MiddleRight,
+                        padding = new RectOffset(8, 8, 0, 0)
+                    };
+                    arrowStyle.normal.textColor = new Color(1f, 1f, 1f, 0.8f);
+                    GUI.Label(rr, "▾", arrowStyle);
+
+                    if (GUI.Button(rr, GUIContent.none, GUIStyle.none))
+                    {
+                        var menu = new GenericMenu();
+                        for (int i = 0; i < labels.Count; i++)
+                        {
+                            int ii = i;
+                            menu.AddItem(new GUIContent(labels[ii]), ii == cur, () =>
+                            {
+                                idProp.stringValue = ids[Mathf.Clamp(ii, 0, ids.Count - 1)];
+                            });
+                        }
+                        menu.DropDown(rr);
+                    }
                 }
             }
         }
 
-        EditorGUILayout.PropertyField(completionProp, new GUIContent("When Complete"));
+        EditorGUILayout.PropertyField(completionProp, new GUIContent("Routing"));
 
         if (completionProp != null && completionProp.enumValueIndex == (int)QuizStep.CompleteMode.BranchOnCorrectness)
             DrawQuizCorrectWrongGuids();

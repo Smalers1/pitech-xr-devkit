@@ -1065,17 +1065,17 @@ namespace Pitech.XR.Scenario.Editor
 
             DrawQuestionPicker(ref r, p);
 
-            Draw(ref r, p, "completion", "When Complete");
+            Draw(ref r, p, "completion", "Routing");
 
-            Draw(ref r, p, "submitMode", "Answer Submit");
-            Draw(ref r, p, "feedback", "After Answer");
+            Draw(ref r, p, "submitMode", "Submit");
+            Draw(ref r, p, "feedback", "Explanation");
 
             var feedbackProp = p.FindPropertyRelative("feedback");
             var secsProp = p.FindPropertyRelative("feedbackSeconds");
             if (feedbackProp != null && secsProp != null && feedbackProp.enumValueIndex == (int)Runtime.QuizStep.FeedbackMode.ForSeconds)
             {
                 var h = EditorGUI.GetPropertyHeight(secsProp, true);
-                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), secsProp, new GUIContent("Feedback Seconds"), true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), secsProp, new GUIContent("Explanation Seconds"), true);
                 r.y += h + EditorGUIUtility.standardVerticalSpacing;
             }
         }

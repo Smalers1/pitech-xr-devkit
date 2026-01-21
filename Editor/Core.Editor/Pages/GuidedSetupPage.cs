@@ -16,12 +16,10 @@ namespace Pitech.XR.Core.Editor
 
         // Runtime type names (reflection so Core.Editor stays decoupled)
         const string TSceneManager = "Pitech.XR.Scenario.SceneManager";
-        const string TScenario = "Pitech.XR.Scenario.Scenario";
         const string TStatsUI = "Pitech.XR.Stats.StatsUIController";
         const string TStatsConfig = "Pitech.XR.Stats.StatsConfig";
         const string TSelectables = "Pitech.XR.Interactables.SelectablesManager";
         const string TSelectionLists = "Pitech.XR.Interactables.SelectionLists";
-        const string TQuizAsset = "Pitech.XR.Quiz.QuizAsset";
         const string TQuizUI = "Pitech.XR.Quiz.QuizUIController";
         const string TQuizResultsUI = "Pitech.XR.Quiz.QuizResultsUIController";
 
@@ -60,7 +58,6 @@ namespace Pitech.XR.Core.Editor
             // ========== Core wiring ==========
             grid.Add(CardManagersRoot(svc));
             grid.Add(CardSceneManager(svc));
-            grid.Add(CardScenario(svc));
 
             // ========== Optional modules ==========
             grid.Add(CardStats(svc));
@@ -118,63 +115,6 @@ namespace Pitech.XR.Core.Editor
                     })
                 ),
                 pills
-            );
-        }
-
-        static VisualElement CardScenario(GuidedSetupService svc)
-        {
-            var sm = svc.FindFirstInScene(TSceneManager) as Component;
-            var sc = svc.FindFirstInScene(TScenario) as Component;
-
-            bool hasScenario = sc != null;
-            bool hasManager = sm != null;
-
-            var pills = DevkitWidgets.PillsRow(
-                (hasScenario ? DevkitWidgets.PillKind.Success : DevkitWidgets.PillKind.Warning, hasScenario ? "Scenario Ready" : "Scenario Missing"),
-                (hasManager ? DevkitWidgets.PillKind.Success : DevkitWidgets.PillKind.Warning, hasManager ? "Manager Ready" : "Manager Missing")
-            );
-
-            var body = new VisualElement();
-            body.Add(pills);
-            body.Add(DevkitTheme.VSpace(8));
-
-            // ObjectField (optional: assign existing)
-            var type = GuidedSetupService.FindType(TScenario) ?? typeof(UnityEngine.Object);
-            var field = new ObjectField("Scenario") { objectType = type, allowSceneObjects = true, value = sc };
-            field.style.color = DevkitTheme.Text;
-            body.Add(field);
-
-            field.RegisterValueChangedCallback(evt =>
-            {
-                sc = evt.newValue as Component;
-                if (sm && sc)
-                    svc.AssignObjectProperty(sm, "scenario", sc, "Assign Scenario");
-            });
-
-            return DevkitWidgets.Card(
-                "Scenario",
-                "Create a Scenario object and assign it to the Scene Manager.",
-                DevkitWidgets.Actions(
-                    DevkitTheme.Secondary("Create Scenario", () =>
-                    {
-                        if (!sc)
-                            sc = svc.CreateUnderManagersRoot(TScenario, "Scenario", "Create Scenario");
-                        if (sc) EditorGUIUtility.PingObject(sc.gameObject);
-                    }),
-                    DevkitTheme.Primary("Assign to Scene Manager", () =>
-                    {
-                        sm = svc.FindFirstInScene(TSceneManager) as Component;
-                        sc = sc ? sc : (svc.FindFirstInScene(TScenario) as Component);
-                        if (!sm || !sc)
-                        {
-                            EditorUtility.DisplayDialog("DevKit", "Need both a Scene Manager and a Scenario in the scene.", "OK");
-                            return;
-                        }
-                        svc.AssignObjectProperty(sm, "scenario", sc, "Assign Scenario");
-                        EditorGUIUtility.PingObject(sm);
-                    })
-                ),
-                body
             );
         }
 
@@ -301,7 +241,6 @@ namespace Pitech.XR.Core.Editor
 
             bool hasUI = ui != null && uiRes != null;
 
-            var assetType = GuidedSetupService.FindType(TQuizAsset) ?? typeof(ScriptableObject);
             var pills = DevkitWidgets.PillsRow(
                 (hasUI ? DevkitWidgets.PillKind.Success : DevkitWidgets.PillKind.Neutral, hasUI ? "UI present" : "UI optional"),
                 (DevkitWidgets.PillKind.Neutral, "Quiz optional")
@@ -310,15 +249,13 @@ namespace Pitech.XR.Core.Editor
             var body = new VisualElement();
             body.Add(pills);
             body.Add(DevkitTheme.VSpace(8));
-
-            var quizField = new ObjectField("Quiz Asset") { objectType = assetType, allowSceneObjects = false };
-            body.Add(quizField);
+            body.Add(DevkitTheme.Body("Note: Quiz assets are project data. Each scene can choose its own quiz(s), so Guided Setup does not assign a QuizAsset automatically.", dim: true));
 
             return DevkitWidgets.Card(
                 "Quiz (optional)",
-                "Adds the default Quiz UI prefabs (TMP) from the DevKit package into the scene and wires them to the Scene Manager.",
+                "Installs the default Quiz UI prefabs (TMP) into the current scene and wires the UI panels to the Scene Manager.",
                 DevkitWidgets.Actions(
-                    DevkitTheme.Secondary("Install Quiz UI + Wire", () =>
+                    DevkitTheme.Secondary("Install Quiz UI + Wire Panels", () =>
                     {
                         new QuizService().AddQuizToScene();
                         DevkitHubWindow.TryRefresh();
@@ -328,7 +265,7 @@ namespace Pitech.XR.Core.Editor
                         new QuizService().CreateAsset();
                         DevkitHubWindow.TryRefresh();
                     }),
-                    DevkitTheme.Primary("Assign to Scene Manager", () =>
+                    DevkitTheme.Primary("Assign Panels to Scene Manager", () =>
                     {
                         sm = svc.FindFirstInScene(TSceneManager) as Component;
                         if (!sm)
@@ -342,9 +279,6 @@ namespace Pitech.XR.Core.Editor
 
                         if (uiRes)
                             svc.AssignObjectProperty(sm, "quizResultsPanel", uiRes, "Assign Quiz Results Panel");
-
-                        if (quizField.value)
-                            svc.AssignObjectProperty(sm, "defaultQuiz", quizField.value, "Assign Default Quiz");
 
                         EditorGUIUtility.PingObject(sm);
                         DevkitHubWindow.TryRefresh();

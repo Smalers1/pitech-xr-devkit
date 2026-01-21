@@ -139,11 +139,8 @@ namespace Pitech.XR.Core.Editor
                     "OK");
             }
 
-            var asset = CreateAsset();
-
             if (sm)
             {
-                if (asset) setup.AssignObjectProperty(sm, "defaultQuiz", asset, "Assign Default Quiz");
                 if (quizPanel) setup.AssignObjectProperty(sm, "quizPanel", quizPanel, "Assign Quiz Panel");
                 if (quizResultsPanel) setup.AssignObjectProperty(sm, "quizResultsPanel", quizResultsPanel, "Assign Quiz Results Panel");
                 EditorGUIUtility.PingObject(sm);
