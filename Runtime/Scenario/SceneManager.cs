@@ -8,6 +8,7 @@ using UnityEngine.UI;
 using Pitech.XR.Stats;
 using Pitech.XR.Interactables;
 using Pitech.XR.Quiz;
+using UnityEngine.Serialization;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 #endif
@@ -30,8 +31,14 @@ namespace Pitech.XR.Scenario
         public StatsRuntime runtime;   // assign if you have one. if null we create a plain instance
 
         [Header("Quiz (optional)")]
-        public QuizAsset quiz;
-        public QuizUIController quizUI;
+        [FormerlySerializedAs("quiz")]
+        public QuizAsset defaultQuiz;
+
+        [FormerlySerializedAs("quizUI")]
+        public QuizUIController quizPanel;
+
+        [FormerlySerializedAs("quizResultsUI")]
+        public QuizResultsUIController quizResultsPanel;
         public QuizSession quizSession;
 
         [Header("Interactables (optional)")]
@@ -84,6 +91,16 @@ namespace Pitech.XR.Scenario
                 selectables.pickingEnabled = false;
 
             DeactivateAllVisuals();
+
+            // Optional: auto-wire quiz UI controllers if present in scene.
+            if (quizPanel == null)
+                quizPanel = UnityEngine.Object.FindObjectOfType<QuizUIController>(true);
+            if (quizResultsPanel == null)
+                quizResultsPanel = UnityEngine.Object.FindObjectOfType<QuizResultsUIController>(true);
+
+            // Hide (without disabling, if CanvasGroup is present)
+            if (quizPanel != null) quizPanel.Hide();
+            if (quizResultsPanel != null) quizResultsPanel.Hide();
         }
 
         // ------ Convenience bridges (so Timeline/UI can talk only to SceneManager) ------
@@ -157,6 +174,10 @@ namespace Pitech.XR.Scenario
                 else if (step is QuizStep qz)
                 {
                     yield return RunQuiz(qz, guid => branchGuid = guid);
+                }
+                else if (step is QuizResultsStep qrs)
+                {
+                    yield return RunQuizResults(qrs, guid => branchGuid = guid);
                 }
 
                 // compute next index. empty guid means "next in list"
@@ -547,7 +568,7 @@ namespace Pitech.XR.Scenario
         // ---------------- QUIZ ----------------
         IEnumerator RunQuiz(QuizStep qz, System.Action<string> onComplete)
         {
-            var asset = qz.quiz != null ? qz.quiz : quiz;
+            var asset = qz.quiz != null ? qz.quiz : defaultQuiz;
             if (asset == null)
             {
                 Debug.LogWarning("[Scenario] QuizStep: no QuizAsset assigned.");
@@ -568,7 +589,7 @@ namespace Pitech.XR.Scenario
 
             var session = GetOrCreateQuizSession(asset);
 
-            if (quizUI == null)
+            if (quizPanel == null)
             {
                 Debug.LogWarning("[Scenario] QuizStep: Quiz UI missing (QuizUIController).");
                 yield break;
@@ -576,16 +597,40 @@ namespace Pitech.XR.Scenario
 
             bool done = false;
             bool isCorrect = false;
-            quizUI.ShowQuestion(question, selected =>
+            // Multi-choice always requires submit. Single-choice can be immediate or submit-button based on step setting.
+            var submitMode = (question.type == QuizAsset.QuestionType.MultipleChoice)
+                ? QuizUIController.SubmitMode.OnSubmitButton
+                : (qz.submitMode == QuizStep.AnswerSubmitMode.OnSubmitButton
+                    ? QuizUIController.SubmitMode.OnSubmitButton
+                    : QuizUIController.SubmitMode.ImmediateSelection);
+
+            var feedbackMode =
+                qz.feedback == QuizStep.FeedbackMode.ForSeconds ? QuizUIController.FeedbackMode.ForSeconds :
+                qz.feedback == QuizStep.FeedbackMode.UntilContinue ? QuizUIController.FeedbackMode.UntilContinue :
+                QuizUIController.FeedbackMode.None;
+
+            quizPanel.ShowQuestion(question, asset, session, result =>
             {
-                var result = session.AnswerQuestion(question, selected);
                 isCorrect = result != null && result.isCorrect;
                 ApplyQuizStats(session, asset);
                 done = true;
-            });
+            },
+            submitMode,
+            feedbackMode,
+            qz.feedbackSeconds);
 
             while (!done)
+            {
+                // Editor skip support: allows jumping via graph without clicking UI.
+                if (_editorSkip)
+                {
+                    // Branch index: -2 correct, -3 wrong, else advance
+                    isCorrect = _editorSkipBranchIndex == -2;
+                    quizPanel.Hide();
+                    done = true;
+                }
                 yield return null;
+            }
 
             string next = qz.completion == QuizStep.CompleteMode.BranchOnCorrectness
                 ? (isCorrect ? FallbackGuid(qz.correctNextGuid) : FallbackGuid(qz.wrongNextGuid))
@@ -608,13 +653,82 @@ namespace Pitech.XR.Scenario
                 _statsBound = true;
             }
 
-            var summary = session.BuildSummary();
+            // Update stats frequently, but don't spam "quiz completed" events.
+            var summary = session.BuildSummary(invokeEvent: false);
             runtime["Quiz.Score"] = summary.totalScore;
             runtime["Quiz.MaxScore"] = summary.maxScore;
             runtime["Quiz.CorrectCount"] = summary.correctCount;
             runtime["Quiz.WrongCount"] = summary.wrongCount;
             runtime["Quiz.AnsweredCount"] = summary.answeredCount;
             runtime["Quiz.TotalQuestions"] = asset != null && asset.questions != null ? asset.questions.Count : 0;
+        }
+
+        IEnumerator RunQuizResults(QuizResultsStep rs, System.Action<string> onComplete)
+        {
+            var asset = rs.quiz != null ? rs.quiz : defaultQuiz;
+            if (asset == null)
+            {
+                Debug.LogWarning("[Scenario] QuizResultsStep: no QuizAsset assigned.");
+                onComplete?.Invoke(FallbackGuid(rs.nextGuid));
+                yield break;
+            }
+
+            var session = GetOrCreateQuizSession(asset);
+            var summary = session != null ? session.BuildSummary(invokeEvent: true) : null;
+
+            if (quizResultsPanel == null)
+            {
+                Debug.LogWarning("[Scenario] QuizResultsStep: Quiz Results UI missing (QuizResultsUIController).");
+            }
+            else
+            {
+                bool done = false;
+                // Configure continue button visibility based on "When Complete".
+                bool wantsContinue = rs.whenComplete == QuizResultsStep.WhenComplete.AfterContinueButtonPressed;
+                if (quizResultsPanel.continueButton != null)
+                    quizResultsPanel.continueButton.gameObject.SetActive(wantsContinue);
+
+                quizResultsPanel.Show(asset, summary, () => done = true);
+
+                if (wantsContinue)
+                {
+                    while (!done)
+                    {
+                        if (_editorSkip)
+                        {
+                            done = true;
+                            quizResultsPanel.Hide();
+                        }
+                        yield return null;
+                    }
+                }
+                else
+                {
+                    float seconds = Mathf.Max(0f, rs.completeAfterSeconds);
+                    float t = 0f;
+                    while (t < seconds)
+                    {
+                        if (_editorSkip)
+                        {
+                            done = true;
+                            quizResultsPanel.Hide();
+                            break;
+                        }
+                        t += Time.unscaledDeltaTime;
+                        yield return null;
+                    }
+                }
+
+                quizResultsPanel.Hide();
+                yield return WaitForPointerRelease();
+            }
+
+            bool passed = summary != null && (asset.passThresholdPercent <= 0f || summary.passed);
+            string next = rs.completion == QuizResultsStep.CompleteMode.BranchOnPassed
+                ? (passed ? FallbackGuid(rs.passedNextGuid) : FallbackGuid(rs.failedNextGuid))
+                : FallbackGuid(rs.nextGuid);
+
+            onComplete?.Invoke(next);
         }
 
         public QuizSession GetOrCreateQuizSession(QuizAsset asset)
@@ -913,12 +1027,44 @@ namespace Pitech.XR.Scenario
             if (go && go.activeSelf != on) go.SetActive(on);
         }
 
+        static void HidePanelRoot(RectTransform rt)
+        {
+            if (!rt) return;
+            var go = rt.gameObject;
+
+            // Prefer CanvasGroup-based hiding (doesn't disable hierarchy)
+            var cg = go.GetComponent<CanvasGroup>();
+            if (cg != null)
+            {
+                cg.alpha = 0f;
+                cg.interactable = false;
+                cg.blocksRaycasts = false;
+                if (!go.activeSelf) go.SetActive(true);
+                return;
+            }
+
+            // Common authoring mistake: assigning the whole Canvas as "panelRoot".
+            // Never disable a Canvas root; it would blank the entire UI and looks like a bug.
+            if (go.GetComponent<Canvas>() != null)
+            {
+                Debug.LogWarning(
+                    "[Scenario] panelRoot points to a Canvas. Please assign a child container GameObject instead (e.g. a Panel under the Canvas).",
+                    go);
+                return;
+            }
+
+            SafeSet(go, false);
+        }
+
         /// Disable all visuals of all steps so nothing is interactable until its turn
         void DeactivateAllVisuals()
         {
             if (scenario?.steps == null) return;
 
             DeactivateAllVisualsRecursive(scenario.steps);
+
+            if (quizPanel != null) quizPanel.Hide();
+            if (quizResultsPanel != null) quizResultsPanel.Hide();
         }
 
         void DeactivateAllVisualsRecursive(List<Step> list)
@@ -935,11 +1081,11 @@ namespace Pitech.XR.Scenario
                 }
                 else if (s is QuestionStep q)
                 {
-                    if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false);
+                    if (q.panelRoot) HidePanelRoot(q.panelRoot);
                 }
                 else if (s is SelectionStep sel)
                 {
-                    if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
+                    if (sel.panelRoot) HidePanelRoot(sel.panelRoot);
                     if (sel.hint) SafeSet(sel.hint, false);
                 }
                 else if (s is GroupStep g && g.steps != null)
@@ -963,7 +1109,8 @@ namespace Pitech.XR.Scenario
                 current is CueCardsStep ||
                 current is InsertStep ||
                 current is EventStep ||
-                current is GroupStep)
+                current is GroupStep ||
+                current is QuizResultsStep)
             {
                 _editorSkip = true;
                 _editorSkipBranchIndex = branchIndex;
@@ -984,6 +1131,14 @@ namespace Pitech.XR.Scenario
 
             // Selection: mark skip and branch type (-2 correct, -3 wrong)
             if (current is SelectionStep sel)
+            {
+                _editorSkip = true;
+                _editorSkipBranchIndex = branchIndex;
+                return;
+            }
+
+            // Quiz: mark skip and branch type (-2 correct, -3 wrong, else advance)
+            if (current is QuizStep)
             {
                 _editorSkip = true;
                 _editorSkipBranchIndex = branchIndex;
@@ -1133,14 +1288,14 @@ namespace Pitech.XR.Scenario
             else if (st is QuestionStep q)
             {
                 routine = RunQuestionGroup(q, token);
-                cleanup = () => { if (q.panelRoot) SafeSet(q.panelRoot.gameObject, false); };
+                cleanup = () => { if (q.panelRoot) HidePanelRoot(q.panelRoot); };
             }
             else if (st is SelectionStep sel)
             {
                 routine = RunSelectionGroup(sel, token);
                 cleanup = () =>
                 {
-                    if (sel.panelRoot) SafeSet(sel.panelRoot.gameObject, false);
+                    if (sel.panelRoot) HidePanelRoot(sel.panelRoot);
                     if (sel.hint) SafeSet(sel.hint, false);
                     var lists = sel.lists != null ? sel.lists : selectionLists;
                     if (lists != null && lists.selectables != null) SetGroupPicking(lists.selectables, false);

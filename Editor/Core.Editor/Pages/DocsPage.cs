@@ -130,10 +130,11 @@ namespace Pitech.XR.Core.Editor
                 ),
                 HowTo(
                     "Create a `QuizAsset` and add questions + answers.",
-                    "Add a `QuizUIController` if you want out-of-box UI.",
-                    "Assign `quiz` and/or `quizUI` on the SceneManager (optional).",
+                    "Use Guided Setup → Quiz → Install Quiz UI + Wire to add default UI panels.",
+                    "Or manually assign `defaultQuiz`, `quizPanel`, and `quizResultsPanel` on the SceneManager.",
                     "In Scenario, add a `Quiz` step and pick a Question from the dropdown.",
                     "Use 'When Complete' to choose single Next or Correct/Wrong branching.",
+                    "Add a `Quiz Results` step after quiz questions to show score/pass/fail.",
                     "If Quiz UI is missing at runtime, the step logs a warning and continues."
                 )
             );

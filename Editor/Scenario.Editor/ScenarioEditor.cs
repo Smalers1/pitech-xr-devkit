@@ -178,6 +178,7 @@ namespace Pitech.XR.Scenario.Editor
                 menu.AddItem(new GUIContent("Add Cue Cards"), false, () => AddStep(typeof(Runtime.CueCardsStep)));
                 menu.AddItem(new GUIContent("Add Question"), false, () => AddStep(typeof(Runtime.QuestionStep)));
                 menu.AddItem(new GUIContent("Add Quiz"), false, () => AddStep(typeof(Runtime.QuizStep)));
+                menu.AddItem(new GUIContent("Add Quiz Results"), false, () => AddStep(typeof(Runtime.QuizResultsStep)));
                 menu.AddItem(new GUIContent("Add Selection"), false, () => AddStep(typeof(Runtime.SelectionStep)));
                 menu.AddItem(new GUIContent("Add Insert"), false, () => AddStep(typeof(Runtime.InsertStep)));
                 menu.AddItem(new GUIContent("Add Event"), false, () => AddStep(typeof(Runtime.EventStep)));
@@ -567,6 +568,21 @@ namespace Pitech.XR.Scenario.Editor
                     {
                         if (string.IsNullOrEmpty(qz.correctNextGuid) && string.IsNullOrEmpty(qz.wrongNextGuid))
                             Styles.Info($"Step {i}: Quiz is BranchOnCorrectness but has no Correct/Wrong routes set.");
+                    }
+                }
+                else if (s is Runtime.QuizResultsStep qrs)
+                {
+                    if (qrs.quiz == null)
+                        Styles.Info($"Step {i}: Quiz Results has no QuizAsset assigned (will use SceneManager quiz if set).");
+
+                    if (qrs.whenComplete == Runtime.QuizResultsStep.WhenComplete.AfterSeconds && qrs.completeAfterSeconds <= 0f)
+                        Styles.Info($"Step {i}: Quiz Results is set to AfterSeconds but Complete After Seconds is 0 (will advance immediately).");
+
+                    if (qrs.completion == Runtime.QuizResultsStep.CompleteMode.BranchOnPassed)
+                    {
+                        if (string.IsNullOrEmpty(qrs.passedNextGuid) && string.IsNullOrEmpty(qrs.failedNextGuid))
+                            Styles.Info($"Step {i}: Quiz Results is BranchOnPassed but has no Passed/Failed routes set.");
+                        Styles.Info($"Step {i}: BranchOnPassed requires QuizAsset.passThresholdPercent > 0 to be meaningful.");
                     }
                 }
                 else if (s is Runtime.SelectionStep sel)
@@ -1034,6 +1050,10 @@ namespace Pitech.XR.Scenario.Editor
             h += PH(p, "quiz");
             h += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing; // question dropdown
             h += PH(p, "completion");
+            h += PH(p, "submitMode");
+            h += PH(p, "feedback");
+            // feedbackSeconds is conditional; reserve a line to avoid clipping when toggled.
+            h += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
             return h;
         }
 
@@ -1046,6 +1066,18 @@ namespace Pitech.XR.Scenario.Editor
             DrawQuestionPicker(ref r, p);
 
             Draw(ref r, p, "completion", "When Complete");
+
+            Draw(ref r, p, "submitMode", "Answer Submit");
+            Draw(ref r, p, "feedback", "After Answer");
+
+            var feedbackProp = p.FindPropertyRelative("feedback");
+            var secsProp = p.FindPropertyRelative("feedbackSeconds");
+            if (feedbackProp != null && secsProp != null && feedbackProp.enumValueIndex == (int)Runtime.QuizStep.FeedbackMode.ForSeconds)
+            {
+                var h = EditorGUI.GetPropertyHeight(secsProp, true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), secsProp, new GUIContent("Feedback Seconds"), true);
+                r.y += h + EditorGUIUtility.standardVerticalSpacing;
+            }
         }
 
         static void DrawQuestionPicker(ref Rect r, SerializedProperty p)
@@ -1119,6 +1151,60 @@ namespace Pitech.XR.Scenario.Editor
             var h = EditorGUI.GetPropertyHeight(sp, true);
             EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(label), true);
             r.y += h + EditorGUIUtility.standardVerticalSpacing;
+        }
+    }
+
+    [CustomPropertyDrawer(typeof(Runtime.QuizResultsStep))]
+    class QuizResultsStepDrawer : PropertyDrawer
+    {
+        static float PH(SerializedProperty p, string name)
+        {
+            var sp = p.FindPropertyRelative(name);
+            float baseH = EditorGUIUtility.singleLineHeight;
+            return ((sp != null) ? EditorGUI.GetPropertyHeight(sp, true) : baseH)
+                 + EditorGUIUtility.standardVerticalSpacing;
+        }
+
+        static void Draw(ref Rect r, SerializedProperty p, string name, string label)
+        {
+            var sp = p.FindPropertyRelative(name);
+            if (sp == null)
+            {
+                r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                return;
+            }
+            var h = EditorGUI.GetPropertyHeight(sp, true);
+            EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(label), true);
+            r.y += h + EditorGUIUtility.standardVerticalSpacing;
+        }
+
+        public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
+        {
+            if (p == null) return 0f;
+            float h = 0f;
+            h += PH(p, "quiz");
+            h += PH(p, "whenComplete");
+
+            var wc = p.FindPropertyRelative("whenComplete");
+            if (wc != null && wc.enumValueIndex == (int)Runtime.QuizResultsStep.WhenComplete.AfterSeconds)
+                h += PH(p, "completeAfterSeconds");
+
+            h += PH(p, "completion");
+            return h;
+        }
+
+        public override void OnGUI(Rect r, SerializedProperty p, GUIContent l)
+        {
+            if (p == null) return;
+
+            Draw(ref r, p, "quiz", "Quiz Asset");
+            Draw(ref r, p, "whenComplete", "When Complete");
+
+            var wc = p.FindPropertyRelative("whenComplete");
+            if (wc != null && wc.enumValueIndex == (int)Runtime.QuizResultsStep.WhenComplete.AfterSeconds)
+                Draw(ref r, p, "completeAfterSeconds", "Complete After Seconds");
+
+            Draw(ref r, p, "completion", "Routing");
         }
     }
 

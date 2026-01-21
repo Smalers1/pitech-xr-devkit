@@ -23,6 +23,7 @@ namespace Pitech.XR.Core.Editor
         const string TSelectionLists = "Pitech.XR.Interactables.SelectionLists";
         const string TQuizAsset = "Pitech.XR.Quiz.QuizAsset";
         const string TQuizUI = "Pitech.XR.Quiz.QuizUIController";
+        const string TQuizResultsUI = "Pitech.XR.Quiz.QuizResultsUIController";
 
         public void BuildUI(VisualElement root)
         {
@@ -296,8 +297,9 @@ namespace Pitech.XR.Core.Editor
         {
             var sm = svc.FindFirstInScene(TSceneManager) as Component;
             var ui = svc.FindFirstInScene(TQuizUI) as Component;
+            var uiRes = svc.FindFirstInScene(TQuizResultsUI) as Component;
 
-            bool hasUI = ui != null;
+            bool hasUI = ui != null && uiRes != null;
 
             var assetType = GuidedSetupService.FindType(TQuizAsset) ?? typeof(ScriptableObject);
             var pills = DevkitWidgets.PillsRow(
@@ -314,21 +316,17 @@ namespace Pitech.XR.Core.Editor
 
             return DevkitWidgets.Card(
                 "Quiz (optional)",
-                "Create a QuizAsset and optional QuizUIController, then assign them to the Scene Manager.",
+                "Adds the default Quiz UI prefabs (TMP) from the DevKit package into the scene and wires them to the Scene Manager.",
                 DevkitWidgets.Actions(
-                    DevkitTheme.Secondary("Add Quiz to Scene", () =>
+                    DevkitTheme.Secondary("Install Quiz UI + Wire", () =>
                     {
                         new QuizService().AddQuizToScene();
-                    }),
-                    DevkitTheme.Secondary(hasUI ? "Ping Quiz UI" : "Create Quiz UI", () =>
-                    {
-                        if (!ui)
-                            ui = svc.CreateUnderManagersRoot(TQuizUI, "Quiz UI", "Create Quiz UI");
-                        if (ui) EditorGUIUtility.PingObject(ui.gameObject);
+                        DevkitHubWindow.TryRefresh();
                     }),
                     DevkitTheme.Secondary("Create QuizAsset", () =>
                     {
                         new QuizService().CreateAsset();
+                        DevkitHubWindow.TryRefresh();
                     }),
                     DevkitTheme.Primary("Assign to Scene Manager", () =>
                     {
@@ -340,12 +338,16 @@ namespace Pitech.XR.Core.Editor
                         }
 
                         if (ui)
-                            svc.AssignObjectProperty(sm, "quizUI", ui, "Assign Quiz UI");
+                            svc.AssignObjectProperty(sm, "quizPanel", ui, "Assign Quiz Panel");
+
+                        if (uiRes)
+                            svc.AssignObjectProperty(sm, "quizResultsPanel", uiRes, "Assign Quiz Results Panel");
 
                         if (quizField.value)
-                            svc.AssignObjectProperty(sm, "quiz", quizField.value, "Assign Quiz Asset");
+                            svc.AssignObjectProperty(sm, "defaultQuiz", quizField.value, "Assign Default Quiz");
 
                         EditorGUIUtility.PingObject(sm);
+                        DevkitHubWindow.TryRefresh();
                     })
                 ),
                 body

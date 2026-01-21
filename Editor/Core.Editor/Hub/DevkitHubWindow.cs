@@ -9,6 +9,8 @@ namespace Pitech.XR.Core.Editor
 {
     public sealed class DevkitHubWindow : EditorWindow
     {
+        static DevkitHubWindow _instance;
+
         enum PageKind { Dashboard, GuidedSetup, Docs, Settings }
 
         readonly Dictionary<PageKind, IDevkitPage> _pages = new()
@@ -31,7 +33,22 @@ namespace Pitech.XR.Core.Editor
             w.Show();
         }
 
-        void OnEnable() => BuildUI();
+        public static void TryRefresh()
+        {
+            if (_instance == null) return;
+            _instance.RefreshCurrentPage();
+        }
+
+        void OnEnable()
+        {
+            _instance = this;
+            BuildUI();
+        }
+
+        void OnDisable()
+        {
+            if (_instance == this) _instance = null;
+        }
 
         void BuildUI()
         {
@@ -114,6 +131,8 @@ namespace Pitech.XR.Core.Editor
             if (_pages.TryGetValue(page, out var p))
                 p.BuildUI(_content); // uses your IDevkitPage contract :contentReference[oaicite:13]{index=13}
         }
+
+        void RefreshCurrentPage() => ShowPage(_current);
     }
 }
 #endif

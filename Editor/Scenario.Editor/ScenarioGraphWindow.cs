@@ -298,6 +298,19 @@ public class ScenarioGraphWindow : EditorWindow
                     Connect(qzNode.outNext, qz.nextGuid);
                 }
             }
+
+            if (s is QuizResultsStep qrs && nodes.TryGetValue(qrs.guid, out var qrsNode))
+            {
+                if (qrs.completion == QuizResultsStep.CompleteMode.BranchOnPassed)
+                {
+                    if (!string.IsNullOrEmpty(qrs.passedNextGuid)) Connect(qrsNode.outCorrect, qrs.passedNextGuid);
+                    if (!string.IsNullOrEmpty(qrs.failedNextGuid)) Connect(qrsNode.outWrong, qrs.failedNextGuid);
+                }
+                else if (!string.IsNullOrEmpty(qrs.nextGuid))
+                {
+                    Connect(qrsNode.outNext, qrs.nextGuid);
+                }
+            }
         }
         // Selection edges (Correct/Wrong)
         foreach (var s in scenario.steps)
@@ -339,15 +352,15 @@ public class ScenarioGraphWindow : EditorWindow
             if (change.movedElements != null)
             {
                 foreach (var el in change.movedElements)
-                {
+                    {
                     if (el is not StepNode sn) continue;
 
-                    sn.step.graphPos = sn.GetPosition().position;
-                    Dirty(scenario, "Move Node");
+                        sn.step.graphPos = sn.GetPosition().position;
+                        Dirty(scenario, "Move Node");
 
                     movedNodesSinceMouseDown.Add(sn);
                 }
-            }
+                    }
 
             // edges created/removed
             if (!_isLoading && scenario != null)
@@ -653,6 +666,12 @@ public class ScenarioGraphWindow : EditorWindow
                 qz.correctNextGuid = "";
                 qz.wrongNextGuid = "";
             }
+            else if (st is QuizResultsStep qrs)
+            {
+                qrs.nextGuid = "";
+                qrs.passedNextGuid = "";
+                qrs.failedNextGuid = "";
+            }
             else if (st is QuestionStep q && q.choices != null)
             {
                 foreach (var ch in q.choices)
@@ -748,6 +767,21 @@ public class ScenarioGraphWindow : EditorWindow
                 if (oqz.nextGuid != dstGuid) { oqz.nextGuid = dstGuid; changed = true; }
             }
         }
+        else if (outMeta.owner is QuizResultsStep oqrs)
+        {
+            if (outMeta.choiceIndex == -2)
+            {
+                if (oqrs.passedNextGuid != dstGuid) { oqrs.passedNextGuid = dstGuid; changed = true; }
+            }
+            else if (outMeta.choiceIndex == -3)
+            {
+                if (oqrs.failedNextGuid != dstGuid) { oqrs.failedNextGuid = dstGuid; changed = true; }
+            }
+            else
+            {
+                if (oqrs.nextGuid != dstGuid) { oqrs.nextGuid = dstGuid; changed = true; }
+            }
+        }
 
         return changed;
     }
@@ -819,6 +853,21 @@ public class ScenarioGraphWindow : EditorWindow
                     if (!string.IsNullOrEmpty(oqz.nextGuid)) { oqz.nextGuid = ""; changed = true; }
                 }
             }
+            else if (outMeta.owner is QuizResultsStep oqrs)
+            {
+                if (outMeta.choiceIndex == -2)
+                {
+                    if (!string.IsNullOrEmpty(oqrs.passedNextGuid)) { oqrs.passedNextGuid = ""; changed = true; }
+                }
+                else if (outMeta.choiceIndex == -3)
+                {
+                    if (!string.IsNullOrEmpty(oqrs.failedNextGuid)) { oqrs.failedNextGuid = ""; changed = true; }
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(oqrs.nextGuid)) { oqrs.nextGuid = ""; changed = true; }
+                }
+            }
         }
 
         return changed;
@@ -868,6 +917,8 @@ public class ScenarioGraphWindow : EditorWindow
                 AddEdge(from, g.nextGuid);
             else if (st is QuizStep qz && !string.IsNullOrEmpty(qz.nextGuid))
                 AddEdge(from, qz.nextGuid);
+            else if (st is QuizResultsStep qrs && !string.IsNullOrEmpty(qrs.nextGuid))
+                AddEdge(from, qrs.nextGuid);
 
             if (st is QuestionStep q && q.choices != null)
             {
@@ -889,6 +940,13 @@ public class ScenarioGraphWindow : EditorWindow
                     AddEdge(from, qzb.correctNextGuid);
                 if (!string.IsNullOrEmpty(qzb.wrongNextGuid))
                     AddEdge(from, qzb.wrongNextGuid);
+            }
+            if (st is QuizResultsStep qrsb && qrsb.completion == QuizResultsStep.CompleteMode.BranchOnPassed)
+            {
+                if (!string.IsNullOrEmpty(qrsb.passedNextGuid))
+                    AddEdge(from, qrsb.passedNextGuid);
+                if (!string.IsNullOrEmpty(qrsb.failedNextGuid))
+                    AddEdge(from, qrsb.failedNextGuid);
             }
         }
 
@@ -1085,6 +1143,12 @@ public class ScenarioGraphWindow : EditorWindow
                 if (qz.correctNextGuid == removedGuid) qz.correctNextGuid = "";
                 if (qz.wrongNextGuid == removedGuid) qz.wrongNextGuid = "";
             }
+            else if (st is QuizResultsStep qrs)
+            {
+                if (qrs.nextGuid == removedGuid) qrs.nextGuid = "";
+                if (qrs.passedNextGuid == removedGuid) qrs.passedNextGuid = "";
+                if (qrs.failedNextGuid == removedGuid) qrs.failedNextGuid = "";
+            }
             else if (st is QuestionStep q && q.choices != null)
             {
                 foreach (var ch in q.choices)
@@ -1123,7 +1187,7 @@ public class ScenarioGraphWindow : EditorWindow
             EditorApplication.delayCall += () =>
             {
                 if (this != null && scenario != null)
-                    Load(scenario);
+        Load(scenario);
             };
         }
 
@@ -1138,7 +1202,7 @@ public class ScenarioGraphWindow : EditorWindow
                     RegenerateGuids(st);
                 g.EnsureChildRequirements();
             }
-        }
+    }
 
     void Connect(Port src, string dstGuid)
     {
@@ -1460,6 +1524,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Cue Cards", _ => CreateStep(typeof(CueCardsStep)));
         evt.menu.AppendAction("Add/Question", _ => CreateStep(typeof(QuestionStep)));
         evt.menu.AppendAction("Add/Quiz", _ => CreateStep(typeof(QuizStep)));
+        evt.menu.AppendAction("Add/Quiz Results", _ => CreateStep(typeof(QuizResultsStep)));
         evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
         evt.menu.AppendAction("Add/Insert", _ => CreateStep(typeof(InsertStep)));
         evt.menu.AppendAction("Add/Event", _ => CreateStep(typeof(EventStep)));
@@ -1880,6 +1945,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is CueCardsStep) tbox.style.backgroundColor = new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) tbox.style.backgroundColor = new Color(0.76f, 0.45f, 0.22f);
             if (s is QuizStep) tbox.style.backgroundColor = new Color(0.45f, 0.70f, 0.95f);
+            if (s is QuizResultsStep) tbox.style.backgroundColor = new Color(0.20f, 0.60f, 0.90f);
             if (s is SelectionStep) tbox.style.backgroundColor = new Color(0.58f, 0.38f, 0.78f);
             if (s is InsertStep)
             {
@@ -1901,8 +1967,8 @@ public class ScenarioGraphWindow : EditorWindow
             // In (nested steps do not participate in routing inside the main graph)
             if (!IsNested)
             {
-                inPort = MakePort(Direction.Input, Port.Capacity.Multi, "In", -1);
-                inputContainer.Add(inPort);
+            inPort = MakePort(Direction.Input, Port.Capacity.Multi, "In", -1);
+            inputContainer.Add(inPort);
             }
 
             // top-right small “Edit…” button
@@ -2298,6 +2364,9 @@ public class ScenarioGraphWindow : EditorWindow
                     var quizProp = stepProp.FindPropertyRelative("quiz");
                     var idProp = stepProp.FindPropertyRelative("questionId");
                     var idxProp = stepProp.FindPropertyRelative("questionIndex");
+                    var submitModeProp = stepProp.FindPropertyRelative("submitMode");
+                    var feedbackProp = stepProp.FindPropertyRelative("feedback");
+                    var feedbackSecondsProp = stepProp.FindPropertyRelative("feedbackSeconds");
                     var completionProp = stepProp.FindPropertyRelative("completion");
 
                     int beforeMode = completionProp != null ? completionProp.enumValueIndex : 0;
@@ -2342,6 +2411,18 @@ public class ScenarioGraphWindow : EditorWindow
                     if (completionProp != null)
                         EditorGUILayout.PropertyField(completionProp, new GUIContent("When Complete"));
 
+                    if (submitModeProp != null)
+                        EditorGUILayout.PropertyField(submitModeProp, new GUIContent("Answer Submit"));
+
+                    if (feedbackProp != null)
+                    {
+                        EditorGUILayout.PropertyField(feedbackProp, new GUIContent("After Answer"));
+                        if (feedbackProp.enumValueIndex == (int)QuizStep.FeedbackMode.ForSeconds && feedbackSecondsProp != null)
+                            EditorGUILayout.PropertyField(feedbackSecondsProp, new GUIContent("Feedback Seconds"));
+                        if (feedbackProp.enumValueIndex == (int)QuizStep.FeedbackMode.UntilContinue)
+                            EditorGUILayout.HelpBox("Requires Quiz Panel Continue button (recommended).", MessageType.Info);
+                    }
+
                     if (EditorGUI.EndChangeCheck())
                     {
                         so.ApplyModifiedProperties();
@@ -2363,6 +2444,88 @@ public class ScenarioGraphWindow : EditorWindow
                 {
                     outCorrect = MakePort(Direction.Output, Port.Capacity.Single, "Correct", -2);
                     outWrong = MakePort(Direction.Output, Port.Capacity.Single, "Wrong", -3);
+                    outputContainer.Add(outCorrect);
+                    outputContainer.Add(outWrong);
+                }
+                else
+                {
+                    outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                    outputContainer.Add(outNext);
+                }
+            }
+            else if (s is QuizResultsStep qrs)
+            {
+                var so = new SerializedObject(scenario);
+                var stepsProp = so.FindProperty("steps");
+                SerializedProperty stepProp = null;
+
+                if (stepsProp != null)
+                {
+                    for (int i = 0; i < stepsProp.arraySize; i++)
+                    {
+                        var el = stepsProp.GetArrayElementAtIndex(i);
+                        var g = el.FindPropertyRelative("guid");
+                        if (g != null && g.stringValue == qrs.guid)
+                        {
+                            stepProp = el;
+                            break;
+                        }
+                    }
+                }
+
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    if (stepProp == null) return;
+
+                    so.Update();
+                    EditorGUI.BeginChangeCheck();
+
+                    var quizProp = stepProp.FindPropertyRelative("quiz");
+                    var completionProp = stepProp.FindPropertyRelative("completion");
+                    var whenCompleteProp = stepProp.FindPropertyRelative("whenComplete");
+                    var afterSecondsProp = stepProp.FindPropertyRelative("completeAfterSeconds");
+
+                    int beforeMode = completionProp != null ? completionProp.enumValueIndex : 0;
+
+                    if (quizProp != null)
+                        EditorGUILayout.PropertyField(quizProp, new GUIContent("Quiz Asset"));
+
+                    if (whenCompleteProp != null)
+                    {
+                        EditorGUILayout.PropertyField(whenCompleteProp, new GUIContent("When Complete"));
+                        if (whenCompleteProp.enumValueIndex == (int)QuizResultsStep.WhenComplete.AfterSeconds && afterSecondsProp != null)
+                            EditorGUILayout.PropertyField(afterSecondsProp, new GUIContent("Complete After Seconds"));
+                    }
+
+                    if (completionProp != null)
+                        EditorGUILayout.PropertyField(completionProp, new GUIContent("Routing"));
+
+                    EditorGUILayout.HelpBox(
+                        "Use this after a sequence of Quiz steps to show score/correct/wrong/pass.\n" +
+                        "Pass/Fail uses QuizAsset.passThresholdPercent.",
+                        MessageType.Info);
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        so.ApplyModifiedProperties();
+                        Dirty(scenario, "Edit Quiz Results");
+
+                        int afterMode = completionProp != null ? completionProp.enumValueIndex : 0;
+                        if (beforeMode != afterMode)
+                        {
+                            EditorApplication.delayCall += () =>
+                            {
+                                if (owner != null && owner.scenario != null)
+                                    owner.Load(owner.scenario);
+                            };
+                        }
+                    }
+                }));
+
+                if (qrs.completion == QuizResultsStep.CompleteMode.BranchOnPassed)
+                {
+                    outCorrect = MakePort(Direction.Output, Port.Capacity.Single, "Passed", -2);
+                    outWrong = MakePort(Direction.Output, Port.Capacity.Single, "Failed", -3);
                     outputContainer.Add(outCorrect);
                     outputContainer.Add(outWrong);
                 }
@@ -2817,6 +2980,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is CueCardsStep) return new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) return new Color(0.76f, 0.45f, 0.22f);
             if (s is QuizStep) return new Color(0.45f, 0.70f, 0.95f);
+            if (s is QuizResultsStep) return new Color(0.20f, 0.60f, 0.90f);
             if (s is SelectionStep) return new Color(0.58f, 0.38f, 0.78f);
             if (s is InsertStep) return new Color(0.90f, 0.75f, 0.25f);
             if (s is EventStep) return new Color(0.25f, 0.70f, 0.70f);
@@ -2899,7 +3063,7 @@ public class ScenarioGraphWindow : EditorWindow
                 int count = q.choices?.Count ?? 0;
                 // Keep enough vertical space to show choice ports without becoming huge.
                 return Mathf.Max(medium, 130f + 18f * Mathf.Clamp(count, 0, 8));
-            }
+        }
 
             return small;
         }

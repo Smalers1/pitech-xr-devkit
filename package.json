@@ -6,5 +6,12 @@
   "description": "Modular in-house toolkit for XR apps.",
   "author": {
     "name": "Pi tech"
-  }
+  },
+  "samples": [
+    {
+      "displayName": "Quiz UI (TMP) – Guided Setup",
+      "description": "Includes instructions for installing the default Quiz UI panels via DevKit Hub Guided Setup.",
+      "path": "Samples~/Quiz UI"
+    }
+  ]
 }

@@ -61,7 +61,7 @@ namespace Pitech.XR.Quiz
             return result;
         }
 
-        public QuizResult BuildSummary()
+        public QuizResult BuildSummary(bool invokeEvent = true)
         {
             var summary = new QuizResult();
             foreach (var kv in _results)
@@ -76,7 +76,8 @@ namespace Pitech.XR.Quiz
             }
             if (Asset != null && summary.maxScore > 0f && Asset.passThresholdPercent > 0f)
                 summary.passed = summary.totalScore >= summary.maxScore * Asset.passThresholdPercent;
-            OnQuizCompleted?.Invoke(summary);
+            if (invokeEvent)
+                OnQuizCompleted?.Invoke(summary);
             return summary;
         }
 
