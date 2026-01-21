@@ -1018,11 +1018,20 @@ public class ScenarioGraphWindow : EditorWindow
     {
         if (!Application.isPlaying) return;
 
-        var mgr = UnityEngine.Object
+        Pitech.XR.Scenario.SceneManager mgr = null;
+#if UNITY_2023_1_OR_NEWER
+        mgr = UnityEngine.Object
             .FindObjectsByType<Pitech.XR.Scenario.SceneManager>(FindObjectsSortMode.None)
             .FirstOrDefault(m => m && m.scenario == scenario)
             ?? UnityEngine.Object.FindObjectsByType<Pitech.XR.Scenario.SceneManager>(FindObjectsSortMode.None)
                 .FirstOrDefault();
+#else
+        mgr = UnityEngine.Object
+            .FindObjectsOfType<Pitech.XR.Scenario.SceneManager>()
+            .FirstOrDefault(m => m && m.scenario == scenario)
+            ?? UnityEngine.Object.FindObjectsOfType<Pitech.XR.Scenario.SceneManager>()
+                .FirstOrDefault();
+#endif
 
         if (!mgr) return;
 
@@ -1182,7 +1191,11 @@ public class ScenarioGraphWindow : EditorWindow
         }
 
         // Find any SceneManager in the scene
+#if UNITY_2023_1_OR_NEWER
         var managers = UnityEngine.Object.FindObjectsByType<Pitech.XR.Scenario.SceneManager>(FindObjectsSortMode.None);
+#else
+        var managers = UnityEngine.Object.FindObjectsOfType<Pitech.XR.Scenario.SceneManager>();
+#endif
         if (managers == null || managers.Length == 0)
         {
             UpdateNodeHighlights(null, null);
@@ -1365,7 +1378,11 @@ public class ScenarioGraphWindow : EditorWindow
         // 2) Fallback: search loaded scenes for matching name + scene path
         try
         {
+#if UNITY_2023_1_OR_NEWER
             var all = UnityEngine.Object.FindObjectsByType<Scenario>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = UnityEngine.Object.FindObjectsOfType<Scenario>(true);
+#endif
             foreach (var sc in all)
             {
                 if (!sc) continue;

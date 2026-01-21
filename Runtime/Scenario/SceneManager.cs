@@ -723,8 +723,7 @@ namespace Pitech.XR.Scenario
             if (body != null)
             {
                 // Always stop any crazy motion
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
+                StopBodyMotion(body);
                 // BUT: do NOT touch isKinematic here
                 // that depends on smoothAttach
             }
@@ -813,6 +812,19 @@ namespace Pitech.XR.Scenario
         }
 
         // ---------------- helpers ----------------
+        static void StopBodyMotion(Rigidbody body)
+        {
+            if (body == null) return;
+#if UNITY_6000_0_OR_NEWER
+            // Unity 6+
+            body.linearVelocity = Vector3.zero;
+#else
+            // Unity 2022/2023/2024
+            body.velocity = Vector3.zero;
+#endif
+            body.angularVelocity = Vector3.zero;
+        }
+
         static bool AnyPointerDown()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -1461,8 +1473,7 @@ namespace Pitech.XR.Scenario
             var body = ins.item.GetComponentInChildren<Rigidbody>();
             if (body != null)
             {
-                body.linearVelocity = Vector3.zero;
-                body.angularVelocity = Vector3.zero;
+                StopBodyMotion(body);
             }
 
             if (ins.smoothAttach)
