@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
-using Pitech.XR.Quiz;
 
 namespace Pitech.XR.Scenario.Editor
 {
@@ -1060,8 +1059,17 @@ namespace Pitech.XR.Scenario.Editor
                 return;
             }
 
-            var asset = quizProp.objectReferenceValue as QuizAsset;
-            if (asset == null || asset.questions == null || asset.questions.Count == 0)
+            var quizObj = quizProp.objectReferenceValue;
+            if (quizObj == null)
+            {
+                EditorGUI.LabelField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), "Question", "No QuizAsset assigned");
+                r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                return;
+            }
+
+            var so = new SerializedObject(quizObj);
+            var questions = so.FindProperty("questions");
+            if (questions == null || !questions.isArray || questions.arraySize == 0)
             {
                 EditorGUI.LabelField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), "Question", "No questions in QuizAsset");
                 r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
@@ -1070,16 +1078,18 @@ namespace Pitech.XR.Scenario.Editor
 
             var labels = new List<string> { "Pick question…" };
             var ids = new List<string> { "" };
-            for (int i = 0; i < asset.questions.Count; i++)
+            for (int i = 0; i < questions.arraySize; i++)
             {
-                var q = asset.questions[i];
+                var q = questions.GetArrayElementAtIndex(i);
                 if (q == null) continue;
-                var ptxt = !string.IsNullOrWhiteSpace(q.prompt)
-                    ? (q.prompt.Length > 28 ? q.prompt.Substring(0, 28) + "…" : q.prompt)
+                var id = q.FindPropertyRelative("id")?.stringValue ?? "";
+                var prompt = q.FindPropertyRelative("prompt")?.stringValue ?? "";
+                var ptxt = !string.IsNullOrWhiteSpace(prompt)
+                    ? (prompt.Length > 28 ? prompt.Substring(0, 28) + "…" : prompt)
                     : "(No prompt)";
                 string label = $"{i + 1}. {ptxt}";
                 labels.Add(label);
-                ids.Add(q.id);
+                ids.Add(id);
             }
 
             int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));

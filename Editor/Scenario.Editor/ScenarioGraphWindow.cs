@@ -64,7 +64,6 @@ public class ScenarioGraphWindow : EditorWindow
     int _suppressGraphPosWritesFrames;
     bool _wasPlaying;
     bool _pendingFullRouteSync;
-    bool _hasUserFramed; // if user clicked Frame All, we allow re-framing; otherwise preserve view on refresh
 
     // Persist GraphView pan/zoom across refresh/reload. Some Unity versions reset it on ClearGraph().
     [SerializeField] Vector3 _savedViewPos = Vector3.zero;
@@ -107,7 +106,6 @@ public class ScenarioGraphWindow : EditorWindow
 
         var frame = new UIEButton(() =>
         {
-            _hasUserFramed = true;
             view?.FrameAll();
         })
         { text = "Frame All" };
@@ -1021,9 +1019,10 @@ public class ScenarioGraphWindow : EditorWindow
         if (!Application.isPlaying) return;
 
         var mgr = UnityEngine.Object
-            .FindObjectsOfType<Pitech.XR.Scenario.SceneManager>()
+            .FindObjectsByType<Pitech.XR.Scenario.SceneManager>(FindObjectsSortMode.None)
             .FirstOrDefault(m => m && m.scenario == scenario)
-            ?? UnityEngine.Object.FindObjectsOfType<Pitech.XR.Scenario.SceneManager>().FirstOrDefault();
+            ?? UnityEngine.Object.FindObjectsByType<Pitech.XR.Scenario.SceneManager>(FindObjectsSortMode.None)
+                .FirstOrDefault();
 
         if (!mgr) return;
 
@@ -1183,7 +1182,7 @@ public class ScenarioGraphWindow : EditorWindow
         }
 
         // Find any SceneManager in the scene
-        var managers = UnityEngine.Object.FindObjectsOfType<Pitech.XR.Scenario.SceneManager>();
+        var managers = UnityEngine.Object.FindObjectsByType<Pitech.XR.Scenario.SceneManager>(FindObjectsSortMode.None);
         if (managers == null || managers.Length == 0)
         {
             UpdateNodeHighlights(null, null);
@@ -1366,7 +1365,7 @@ public class ScenarioGraphWindow : EditorWindow
         // 2) Fallback: search loaded scenes for matching name + scene path
         try
         {
-            var all = UnityEngine.Object.FindObjectsOfType<Scenario>(true);
+            var all = UnityEngine.Object.FindObjectsByType<Scenario>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             foreach (var sc in all)
             {
                 if (!sc) continue;
@@ -2292,21 +2291,28 @@ public class ScenarioGraphWindow : EditorWindow
                     // Question picker
                     if (quizProp != null && idProp != null)
                     {
-                        var asset = quizProp.objectReferenceValue as Pitech.XR.Quiz.QuizAsset;
-                        if (asset != null && asset.questions != null && asset.questions.Count > 0)
+                        var quizObj = quizProp.objectReferenceValue;
+                        if (quizObj != null)
                         {
+                            var soQuiz = new SerializedObject(quizObj);
+                            var questions = soQuiz.FindProperty("questions");
+                            if (questions == null || !questions.isArray || questions.arraySize == 0)
+                                return;
+
                             var labels = new List<string> { "Pick question…" };
                             var ids = new List<string> { "" };
-                            for (int i = 0; i < asset.questions.Count; i++)
+                            for (int i = 0; i < questions.arraySize; i++)
                             {
-                                var qq = asset.questions[i];
+                                var qq = questions.GetArrayElementAtIndex(i);
                                 if (qq == null) continue;
-                                var ptxt = !string.IsNullOrWhiteSpace(qq.prompt)
-                                    ? (qq.prompt.Length > 28 ? qq.prompt.Substring(0, 28) + "…" : qq.prompt)
+                                var id = qq.FindPropertyRelative("id")?.stringValue ?? "";
+                                var prompt = qq.FindPropertyRelative("prompt")?.stringValue ?? "";
+                                var ptxt = !string.IsNullOrWhiteSpace(prompt)
+                                    ? (prompt.Length > 28 ? prompt.Substring(0, 28) + "…" : prompt)
                                     : "(No prompt)";
                                 string label = $"{i + 1}. {ptxt}";
                                 labels.Add(label);
-                                ids.Add(qq.id);
+                                ids.Add(id);
                             }
                             int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
                             int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
@@ -2843,19 +2849,19 @@ public class ScenarioGraphWindow : EditorWindow
             bool expandedDetails = _foldout != null && _foldout.value;
             float collapsed = GetCollapsedHeight();
             if (!expandedDetails) return collapsed;
-            // Auto-height nodes: prefer actual laid-out height when available.
-            if (layout.height > 1f)
-                return Mathf.Max(collapsed, layout.height);
-            return collapsed;
-
+            float groupHeight = 0f;
             if (step is GroupStep g)
             {
                 int count = g.steps?.Count ?? 0;
                 int rows = Mathf.CeilToInt(count / (float)GroupTileColumns);
                 float tilesH = count == 0 ? 72f : rows * GroupTileH + Mathf.Max(0, rows - 1) * 10f + 18f;
-                return Mathf.Max(260f, 54f + tilesH + 160f);
+                groupHeight = Mathf.Max(260f, 54f + tilesH + 160f);
             }
-            return collapsed;
+
+            // Auto-height nodes: prefer actual laid-out height when available.
+            if (layout.height > 1f)
+                return Mathf.Max(collapsed, Mathf.Max(layout.height, groupHeight));
+            return Mathf.Max(collapsed, groupHeight);
         }
 
         float GetCollapsedHeight()
@@ -3188,27 +3194,32 @@ sealed class StepEditWindow : EditorWindow
         // Question picker
         if (quizProp != null && idProp != null)
         {
-            var asset = quizProp.objectReferenceValue as Pitech.XR.Quiz.QuizAsset;
-            if (asset != null && asset.questions != null && asset.questions.Count > 0)
+            var quizObj = quizProp.objectReferenceValue;
+            if (quizObj != null)
             {
-                var labels = new List<string> { "Pick question…" };
-                var ids = new List<string> { "" };
-                for (int i = 0; i < asset.questions.Count; i++)
+                var soQuiz = new SerializedObject(quizObj);
+                var questions = soQuiz.FindProperty("questions");
+                if (questions != null && questions.isArray && questions.arraySize > 0)
                 {
-                    var q = asset.questions[i];
-                    if (q == null) continue;
-                    string label = $"{i + 1}. {q.id}";
-                    if (!string.IsNullOrWhiteSpace(q.prompt))
+                    var labels = new List<string> { "Pick question…" };
+                    var ids = new List<string> { "" };
+                    for (int i = 0; i < questions.arraySize; i++)
                     {
-                        var ptxt = q.prompt.Length > 24 ? q.prompt.Substring(0, 24) + "…" : q.prompt;
-                        label += $" — {ptxt}";
+                        var q = questions.GetArrayElementAtIndex(i);
+                        if (q == null) continue;
+                        var id = q.FindPropertyRelative("id")?.stringValue ?? "";
+                        var prompt = q.FindPropertyRelative("prompt")?.stringValue ?? "";
+                        var ptxt = !string.IsNullOrWhiteSpace(prompt)
+                            ? (prompt.Length > 28 ? prompt.Substring(0, 28) + "…" : prompt)
+                            : "(No prompt)";
+                        string label = $"{i + 1}. {ptxt}";
+                        labels.Add(label);
+                        ids.Add(id);
                     }
-                    labels.Add(label);
-                    ids.Add(q.id);
+                    int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
+                    int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
+                    idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
                 }
-                int cur = Mathf.Max(0, ids.IndexOf(idProp.stringValue));
-                int next = EditorGUILayout.Popup("Question", cur, labels.ToArray());
-                idProp.stringValue = ids[Mathf.Clamp(next, 0, ids.Count - 1)];
             }
         }
 
