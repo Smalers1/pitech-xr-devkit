@@ -943,6 +943,65 @@ namespace Pitech.XR.Scenario.Editor
         }
     }
 
+    [CustomPropertyDrawer(typeof(Runtime.MiniQuizStep))]
+    class MiniQuizStepDrawer : PropertyDrawer
+    {
+        static readonly string[] fields =
+        {
+            "panelRoot","panelAnimator","showTrigger","hideTrigger",
+            "completion","submitButton","lockQuestionAfterAnswer",
+            "questions",
+            "outcomes","defaultNextGuid"
+        };
+
+        public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
+        {
+            if (p == null) return 0f;
+            float h = 0f;
+            var completionProp = p.FindPropertyRelative("completion");
+            int completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
+
+            foreach (var f in fields)
+            {
+                if (f == "submitButton" && completionMode != (int)Runtime.MiniQuizStep.CompleteMode.OnSubmitButton)
+                    continue;
+
+                var sp = p.FindPropertyRelative(f);
+                h += (sp != null ? EditorGUI.GetPropertyHeight(sp, true) : EditorGUIUtility.singleLineHeight)
+                     + EditorGUIUtility.standardVerticalSpacing;
+            }
+            return h;
+        }
+
+        public override void OnGUI(Rect r, SerializedProperty p, GUIContent l)
+        {
+            if (p == null) return;
+            var completionProp = p.FindPropertyRelative("completion");
+            int completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
+
+            foreach (var f in fields)
+            {
+                if (f == "submitButton" && completionMode != (int)Runtime.MiniQuizStep.CompleteMode.OnSubmitButton)
+                    continue;
+
+                var sp = p.FindPropertyRelative(f);
+                string label = f == "defaultNextGuid" ? "Default Next Guid" : ObjectNames.NicifyVariableName(f);
+                if (sp == null)
+                {
+                    EditorGUI.LabelField(new Rect(r.x, r.y, r.width, EditorGUIUtility.singleLineHeight), label);
+                    r.y += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+                    continue;
+                }
+                var h = EditorGUI.GetPropertyHeight(sp, true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(label), true);
+                r.y += h + EditorGUIUtility.standardVerticalSpacing;
+
+                if (f == "completion")
+                    completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
+            }
+        }
+    }
+
     [CustomPropertyDrawer(typeof(Runtime.Choice))]
     class ChoiceDrawer : PropertyDrawer
     {

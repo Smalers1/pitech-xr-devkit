@@ -54,6 +54,10 @@ public class ScenarioGraphWindow : EditorWindow
     // Base node sizing (non-group)
     const float StepNodeWidth = 200f;
     const float StepNodeWidthExpanded = 280f;
+    const float StepNodeWidthExpandedWide = 360f;
+
+    static float ExpandedWidthFor(Step s)
+        => s is MiniQuizStep ? StepNodeWidthExpandedWide : StepNodeWidthExpanded;
 
     string _activeGuid;
     string _prevGuid;
@@ -276,7 +280,7 @@ public class ScenarioGraphWindow : EditorWindow
             }
             else if (startExpanded)
             {
-                width = StepNodeWidthExpanded;
+                width = ExpandedWidthFor(s);
             }
             var h = node.GetHeight();
             if (s is GroupStep) h = Mathf.Max(h, 320f); // always show as container, even when empty
@@ -312,6 +316,20 @@ public class ScenarioGraphWindow : EditorWindow
                     if (!string.IsNullOrEmpty(next) && src.outChoices != null && c < src.outChoices.Count)
                         Connect(src.outChoices[c], next);
                 }
+            }
+            if (s is MiniQuizStep mq && nodes.TryGetValue(mq.guid, out var mqNode))
+            {
+                if (mq.outcomes != null)
+                {
+                    for (int o = 0; o < mq.outcomes.Count; o++)
+                    {
+                        var next = mq.outcomes[o]?.nextGuid;
+                        if (!string.IsNullOrEmpty(next) && mqNode.outChoices != null && o < mqNode.outChoices.Count)
+                            Connect(mqNode.outChoices[o], next);
+                    }
+                }
+                if (!string.IsNullOrEmpty(mq.defaultNextGuid) && mqNode.outNext != null)
+                    Connect(mqNode.outNext, mq.defaultNextGuid);
             }
             if (s is InsertStep ins && !string.IsNullOrEmpty(ins.nextGuid) && nodes.TryGetValue(ins.guid, out var insNode))
                 Connect(insNode.outNext, ins.nextGuid);
@@ -549,6 +567,16 @@ public class ScenarioGraphWindow : EditorWindow
                     if (ch != null && ch.nextGuid == fromGuid)
                         ch.nextGuid = toGuid;
             }
+            else if (st is MiniQuizStep mq)
+            {
+                if (mq.defaultNextGuid == fromGuid) mq.defaultNextGuid = toGuid;
+                if (mq.outcomes != null)
+                {
+                    foreach (var o in mq.outcomes)
+                        if (o != null && o.nextGuid == fromGuid)
+                            o.nextGuid = toGuid;
+                }
+            }
             else if (st is SelectionStep sel)
             {
                 if (sel.correctNextGuid == fromGuid) sel.correctNextGuid = toGuid;
@@ -713,6 +741,15 @@ public class ScenarioGraphWindow : EditorWindow
                 foreach (var ch in q.choices)
                     if (ch != null) ch.nextGuid = "";
             }
+            else if (st is MiniQuizStep mq)
+            {
+                mq.defaultNextGuid = "";
+                if (mq.outcomes != null)
+                {
+                    foreach (var o in mq.outcomes)
+                        if (o != null) o.nextGuid = "";
+                }
+            }
 
             if (st is SelectionStep sl)
             {
@@ -775,6 +812,22 @@ public class ScenarioGraphWindow : EditorWindow
         {
             var ch = oq.choices[outMeta.choiceIndex];
             if (ch.nextGuid != dstGuid) { ch.nextGuid = dstGuid; changed = true; }
+        }
+        else if (outMeta.owner is MiniQuizStep omq)
+        {
+            // -1 = default route, >=0 = outcomes index
+            if (outMeta.choiceIndex == -1)
+            {
+                if (omq.defaultNextGuid != dstGuid) { omq.defaultNextGuid = dstGuid; changed = true; }
+            }
+            else if (outMeta.choiceIndex >= 0 &&
+                     omq.outcomes != null &&
+                     outMeta.choiceIndex < omq.outcomes.Count &&
+                     omq.outcomes[outMeta.choiceIndex] != null)
+            {
+                var o = omq.outcomes[outMeta.choiceIndex];
+                if (o.nextGuid != dstGuid) { o.nextGuid = dstGuid; changed = true; }
+            }
         }
         else if (outMeta.owner is SelectionStep osl)
         {
@@ -862,6 +915,21 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 var ch = oq.choices[outMeta.choiceIndex];
                 if (!string.IsNullOrEmpty(ch.nextGuid)) { ch.nextGuid = ""; changed = true; }
+            }
+            else if (outMeta.owner is MiniQuizStep omq)
+            {
+                if (outMeta.choiceIndex == -1)
+                {
+                    if (!string.IsNullOrEmpty(omq.defaultNextGuid)) { omq.defaultNextGuid = ""; changed = true; }
+                }
+                else if (outMeta.choiceIndex >= 0 &&
+                         omq.outcomes != null &&
+                         outMeta.choiceIndex < omq.outcomes.Count &&
+                         omq.outcomes[outMeta.choiceIndex] != null)
+                {
+                    var o = omq.outcomes[outMeta.choiceIndex];
+                    if (!string.IsNullOrEmpty(o.nextGuid)) { o.nextGuid = ""; changed = true; }
+                }
             }
             else if (outMeta.owner is SelectionStep osl)
             {
@@ -962,6 +1030,17 @@ public class ScenarioGraphWindow : EditorWindow
                     if (ch != null && !string.IsNullOrEmpty(ch.nextGuid))
                         AddEdge(from, ch.nextGuid);
             }
+            if (st is MiniQuizStep mq)
+            {
+                if (!string.IsNullOrEmpty(mq.defaultNextGuid))
+                    AddEdge(from, mq.defaultNextGuid);
+                if (mq.outcomes != null)
+                {
+                    foreach (var o in mq.outcomes)
+                        if (o != null && !string.IsNullOrEmpty(o.nextGuid))
+                            AddEdge(from, o.nextGuid);
+                }
+            }
 
             if (st is SelectionStep sel)
             {
@@ -1059,7 +1138,7 @@ public class ScenarioGraphWindow : EditorWindow
             }
             else if (node.IsExpanded)
             {
-                w = StepNodeWidthExpanded;
+                w = ExpandedWidthFor(node.step);
             }
 
             sizeByGuid[guid] = new Vector2(w, h);
@@ -1194,6 +1273,16 @@ public class ScenarioGraphWindow : EditorWindow
                 foreach (var ch in q.choices)
                     if (ch != null && ch.nextGuid == removedGuid)
                         ch.nextGuid = "";
+            }
+            else if (st is MiniQuizStep mq)
+            {
+                if (mq.defaultNextGuid == removedGuid) mq.defaultNextGuid = "";
+                if (mq.outcomes != null)
+                {
+                    foreach (var o in mq.outcomes)
+                        if (o != null && o.nextGuid == removedGuid)
+                            o.nextGuid = "";
+                }
             }
             else if (st is SelectionStep sel)
             {
@@ -1563,6 +1652,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Timeline", _ => CreateStep(typeof(TimelineStep)));
         evt.menu.AppendAction("Add/Cue Cards", _ => CreateStep(typeof(CueCardsStep)));
         evt.menu.AppendAction("Add/Question", _ => CreateStep(typeof(QuestionStep)));
+        evt.menu.AppendAction("Add/Mini Quiz", _ => CreateStep(typeof(MiniQuizStep)));
         evt.menu.AppendAction("Add/Quiz", _ => CreateStep(typeof(QuizStep)));
         evt.menu.AppendAction("Add/Quiz Results", _ => CreateStep(typeof(QuizResultsStep)));
         evt.menu.AppendAction("Add/Selection", _ => CreateStep(typeof(SelectionStep)));
@@ -1993,6 +2083,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) tbox.style.backgroundColor = new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) tbox.style.backgroundColor = new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) tbox.style.backgroundColor = new Color(0.76f, 0.45f, 0.22f);
+            if (s is MiniQuizStep) tbox.style.backgroundColor = new Color(0.62f, 0.34f, 0.16f);
             // Quiz colors: red palette (distinct from Timeline blue). Keep contrast strong for white text.
             if (s is QuizStep) tbox.style.backgroundColor = new Color(0.78f, 0.20f, 0.20f);
             if (s is QuizResultsStep) tbox.style.backgroundColor = new Color(0.62f, 0.16f, 0.16f);
@@ -2029,6 +2120,7 @@ public class ScenarioGraphWindow : EditorWindow
                 if (step is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (step is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
                 else if (step is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
+                else if (step is MiniQuizStep mq) StepEditWindow.OpenMiniQuiz(scenario, mq, () => owner?.Load(owner.scenario));
                 else if (step is QuizStep qz) StepEditWindow.OpenQuiz(scenario, qz);
                 else if (step is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
                 else if (step is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
@@ -2069,9 +2161,10 @@ public class ScenarioGraphWindow : EditorWindow
                     if (fold.value)
                     {
                         // Expand width a bit for editing comfort.
-                        style.minWidth = StepNodeWidthExpanded;
-                        style.maxWidth = StepNodeWidthExpanded;
-                        style.width = StepNodeWidthExpanded;
+                        float w = ExpandedWidthFor(step);
+                        style.minWidth = w;
+                        style.maxWidth = w;
+                        style.width = w;
                         // IMPORTANT: Let the node auto-size to its actual IMGUI content.
                         // This avoids brittle height calculations (especially for nested lists like Question.Choices).
                         style.minHeight = GetCollapsedHeight();
@@ -2249,6 +2342,69 @@ public class ScenarioGraphWindow : EditorWindow
                 }));
 
                 RecreateChoicePorts();
+            }
+            else if (s is MiniQuizStep mq)
+            {
+                // Use SerializedProperty so we can show nested lists (Questions + Outcomes) inline.
+                var so = new SerializedObject(scenario);
+                var self = this;
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    so.Update();
+                    var stepProp = StepEditWindow.FindStepPropertyRecursive(so, mq.guid);
+                    if (stepProp == null) return;
+
+                    var outcomesProp = stepProp.FindPropertyRelative("outcomes");
+                    int beforeOutcomes = outcomesProp != null && outcomesProp.isArray ? outcomesProp.arraySize : -1;
+
+                    EditorGUI.BeginChangeCheck();
+
+                    // Panel
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelRoot"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelAnimator"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("showTrigger"));
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hideTrigger"));
+
+                    EditorGUILayout.Space(6);
+                    var completionProp = stepProp.FindPropertyRelative("completion");
+                    if (completionProp != null)
+                    {
+                        EditorGUILayout.PropertyField(completionProp);
+                        if (completionProp.enumValueIndex == (int)MiniQuizStep.CompleteMode.OnSubmitButton)
+                            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("submitButton"));
+                    }
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("lockQuestionAfterAnswer"));
+
+                    EditorGUILayout.Space(6);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("questions"), new GUIContent("Questions"), includeChildren: true);
+
+                    EditorGUILayout.Space(6);
+                    EditorGUILayout.PropertyField(outcomesProp, new GUIContent("Outcomes"), includeChildren: true);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("defaultNextGuid"), new GUIContent("Default Next Guid"));
+
+                    EditorGUILayout.Space(12);
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Dirty(scenario, "Edit Mini Quiz");
+                        so.ApplyModifiedProperties();
+                        
+                        // Always refresh ports after edits (not only add/remove).
+                        // Reasons:
+                        // - Users edit min/max/label without changing array size -> port labels should update.
+                        // - Users reorder outcomes -> indices change; we reload the graph so edges rebind from stored nextGuid.
+                        RecreateMiniQuizOutcomePorts();
+                        EditorApplication.delayCall += () =>
+                        {
+                            if (owner != null && owner.scenario != null)
+                                owner.Load(owner.scenario);
+                        };
+
+                        self?.QueueResizeToFitDetails();
+                    }
+                }));
+
+                RecreateMiniQuizOutcomePorts();
             }
             else if (s is SelectionStep sel)
             {
@@ -2924,6 +3080,20 @@ public class ScenarioGraphWindow : EditorWindow
                     skipRow.Add(b);
                 }
             }
+            else if (step is MiniQuizStep mq)
+            {
+                // Provide a simple Skip for playmode testing (routes via Default).
+                var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip ▶" };
+                skipRow.Add(btn);
+                int count = mq.outcomes != null ? mq.outcomes.Count : 0;
+                for (int i = 0; i < Mathf.Min(count, 4); i++)
+                {
+                    int idx = i;
+                    var b = new UIEButton(() => skipRequest?.Invoke(step, idx)) { text = $"Outcome {idx} ▶" };
+                    b.style.marginLeft = 2;
+                    skipRow.Add(b);
+                }
+            }
 
             if (skipRow.childCount > 0)
                 mainContainer.Add(skipRow);
@@ -2984,6 +3154,53 @@ public class ScenarioGraphWindow : EditorWindow
             rebuild?.Invoke(); // will be ignored during Load thanks to guard
         }
 
+        void RecreateMiniQuizOutcomePorts()
+        {
+            if (step is not MiniQuizStep mq) return;
+
+            // Remove previous ports
+            if (outChoices != null)
+                foreach (var p in outChoices) outputContainer.Remove(p);
+            outChoices = new List<Port>();
+
+            if (outNext != null)
+                outputContainer.Remove(outNext);
+
+            // Default route port
+            outNext = MakePort(Direction.Output, Port.Capacity.Single, "Default", -1);
+            outputContainer.Add(outNext);
+
+            int count = mq.outcomes != null ? mq.outcomes.Count : 0;
+            if (count == 0)
+            {
+                outputContainer.Add(new Label("No outcomes (edit in “Edit…”)"));
+            }
+            else
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var o = mq.outcomes[i];
+                    string label = o != null && !string.IsNullOrWhiteSpace(o.label) ? o.label : OutcomeLabel(o, i);
+                    var p = MakePort(Direction.Output, Port.Capacity.Single, label, i);
+                    outChoices.Add(p);
+                    outputContainer.Add(p);
+                }
+            }
+
+            RefreshPorts();
+            rebuild?.Invoke(); // ignored during Load thanks to guard
+        }
+
+        static string OutcomeLabel(MiniQuizOutcome o, int index)
+        {
+            if (o == null) return $"Outcome {index}";
+            int min = Mathf.Max(0, o.minCorrect);
+            int max = o.maxCorrect;
+            if (max < 0) return $"{min}+ Correct";
+            if (max == min) return $"{min} Correct";
+            return $"{min}-{max} Correct";
+        }
+
         VisualElement BuildNestedTile(GroupStep group, Step sub, int ordinalIndex)
         {
             var tile = new VisualElement();
@@ -3033,6 +3250,7 @@ public class ScenarioGraphWindow : EditorWindow
                 if (sub is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (sub is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
                 else if (sub is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
+                else if (sub is MiniQuizStep mq) StepEditWindow.OpenMiniQuiz(scenario, mq, () => owner?.Load(owner.scenario));
                 else if (sub is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
                 else if (sub is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
                 else if (sub is EventStep ev) StepEditWindow.OpenEvent(scenario, ev);
@@ -3087,6 +3305,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is TimelineStep) return new Color(0.20f, 0.42f, 0.85f);
             if (s is CueCardsStep) return new Color(0.32f, 0.62f, 0.32f);
             if (s is QuestionStep) return new Color(0.76f, 0.45f, 0.22f);
+            if (s is MiniQuizStep) return new Color(0.62f, 0.34f, 0.16f);
             if (s is QuizStep) return new Color(0.78f, 0.20f, 0.20f);
             if (s is QuizResultsStep) return new Color(0.62f, 0.16f, 0.16f);
             if (s is SelectionStep) return new Color(0.58f, 0.38f, 0.78f);
@@ -3172,6 +3391,12 @@ public class ScenarioGraphWindow : EditorWindow
                 // Keep enough vertical space to show choice ports without becoming huge.
                 return Mathf.Max(medium, 130f + 18f * Mathf.Clamp(count, 0, 8));
         }
+            if (step is MiniQuizStep mq)
+            {
+                int count = mq.outcomes?.Count ?? 0;
+                // Default port + outcome ports
+                return Mathf.Max(medium, 140f + 18f * Mathf.Clamp(count + 1, 0, 8));
+            }
 
             return small;
         }
@@ -3243,6 +3468,8 @@ sealed class StepEditWindow : EditorWindow
 
     public static void OpenQuestion(Scenario sc, QuestionStep q, Action afterApply = null)
         => Open(sc, q.guid, "Question", w => w.DrawQuestion(), afterApply);
+    public static void OpenMiniQuiz(Scenario sc, MiniQuizStep mq, Action afterApply = null)
+        => Open(sc, mq.guid, "Mini Quiz", w => w.DrawMiniQuiz(), afterApply);
     public static void OpenQuiz(Scenario sc, QuizStep qz)
         => Open(sc, qz.guid, "Quiz", w => w.DrawQuiz());
     public static void OpenSelection(Scenario sc, SelectionStep sel)
@@ -3470,6 +3697,42 @@ sealed class StepEditWindow : EditorWindow
         {
             EditorGUILayout.HelpBox("Choices list not found.", MessageType.Warning);
         }
+    }
+
+    void DrawMiniQuiz()
+    {
+        EditorGUILayout.LabelField("Mini Quiz", EditorStyles.boldLabel);
+
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelRoot"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("panelAnimator"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("showTrigger"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("hideTrigger"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("completion"));
+        var completionProp = stepProp.FindPropertyRelative("completion");
+        int completionMode = completionProp != null ? completionProp.enumValueIndex : 0;
+        if (completionMode == (int)MiniQuizStep.CompleteMode.OnSubmitButton)
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("submitButton"));
+
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("lockQuestionAfterAnswer"));
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Questions", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("questions"), includeChildren: true);
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Routing (by correct count)", EditorStyles.boldLabel);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("outcomes"), includeChildren: true);
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("defaultNextGuid"), new GUIContent("Default Next Guid"));
+
+        EditorGUILayout.HelpBox(
+            "Mini Quiz = multiple questions shown at once. Score is the number of questions answered correctly.\n" +
+            "Routing: the first Outcome whose [minCorrect..maxCorrect] contains the score will be used.\n" +
+            "Use maxCorrect = -1 for no maximum. If no outcome matches, Default Next Guid is used (or linear next if empty).\n\n" +
+            "Important: The chosen outcome routes to ONE step, but the scenario will keep going from there.\n" +
+            "If your other outcome step is placed right after it in the list, it will still run unless you connect a Next from the chosen step to a join point (or move/reorder steps).",
+            MessageType.Info);
     }
     void DrawQuiz()
     {

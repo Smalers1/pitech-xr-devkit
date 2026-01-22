@@ -179,6 +179,10 @@ namespace Pitech.XR.Scenario
                 {
                     yield return RunQuizResults(qrs, guid => branchGuid = guid);
                 }
+                else if (step is MiniQuizStep mq)
+                {
+                    yield return RunMiniQuiz(mq, guid => branchGuid = guid);
+                }
 
                 // compute next index. empty guid means "next in list"
                 if (string.IsNullOrEmpty(branchGuid))
@@ -735,6 +739,183 @@ namespace Pitech.XR.Scenario
             onComplete?.Invoke(next);
         }
 
+        // ---------------- MINI QUIZ ----------------
+        IEnumerator RunMiniQuiz(MiniQuizStep s, System.Action<string> onComplete, StepRunContext ctx = null)
+        {
+            if (s == null)
+                yield break;
+
+            // show and enable only now
+            if (s.panelRoot) s.panelRoot.gameObject.SetActive(true);
+            if (s.panelAnimator && !string.IsNullOrEmpty(s.showTrigger))
+                s.panelAnimator.SetTrigger(s.showTrigger);
+
+            var wired = new List<(Button btn, UnityAction fn)>();
+            UnityAction submitCb = null;
+
+            int correct = 0;
+            int qCount = s.questions != null ? s.questions.Count : 0;
+            var answered = new bool[Mathf.Max(0, qCount)];
+
+            bool done = false;
+            string nextGuid = null;
+
+            void Cleanup()
+            {
+                if (wired.Count > 0)
+                {
+                    foreach (var (btn, fn) in wired) if (btn) btn.onClick.RemoveListener(fn);
+                    wired.Clear();
+                }
+                if (submitCb != null && s.submitButton)
+                {
+                    s.submitButton.onClick.RemoveListener(submitCb);
+                    submitCb = null;
+                }
+                if (s.panelRoot) s.panelRoot.gameObject.SetActive(false);
+            }
+
+            if (ctx != null)
+                ctx.cancel = Cleanup;
+
+            bool AllAnswered()
+            {
+                for (int i = 0; i < answered.Length; i++)
+                    if (!answered[i]) return false;
+                return true;
+            }
+
+            // wire all answer buttons
+            if (s.questions != null)
+            {
+                for (int qi = 0; qi < s.questions.Count; qi++)
+                {
+                    int qIndex = qi;
+                    var q = s.questions[qIndex];
+                    if (q == null || q.choices == null) continue;
+
+                    for (int ci = 0; ci < q.choices.Count; ci++)
+                    {
+                        var ch = q.choices[ci];
+                        if (ch == null || ch.button == null) continue;
+
+                        UnityAction fn = () =>
+                        {
+                            // first answer wins (unless user opted out of locking)
+                            if (answered[qIndex] && s.lockQuestionAfterAnswer) return;
+                            if (!answered[qIndex])
+                            {
+                                answered[qIndex] = true;
+                                if (ch.isCorrect) correct++;
+                            }
+
+                            ch.onSelected?.Invoke();
+                            ApplyEffects(ch.effects);
+
+                            if (s.lockQuestionAfterAnswer)
+                            {
+                                // disable all buttons for that question after answering
+                                if (q.choices != null)
+                                    foreach (var other in q.choices)
+                                        if (other != null && other.button != null)
+                                            other.button.interactable = false;
+                            }
+
+                            if (s.completion == MiniQuizStep.CompleteMode.AutoWhenAllAnswered && AllAnswered())
+                                done = true;
+                        };
+
+                        ch.button.onClick.AddListener(fn);
+                        wired.Add((ch.button, fn));
+                    }
+                }
+            }
+
+            // submit mode
+            if (s.completion == MiniQuizStep.CompleteMode.OnSubmitButton && s.submitButton)
+            {
+                submitCb = () => done = true;
+                s.submitButton.onClick.AddListener(submitCb);
+            }
+
+            // wait until complete
+            while (!done)
+            {
+                if (ctx != null && ctx.cancelRequested)
+                    break;
+
+                // Editor skip (playmode testing from ScenarioGraph)
+                if (_editorSkip)
+                {
+                    if (_editorSkipBranchIndex == -1)
+                    {
+                        done = true;
+                        nextGuid = s.defaultNextGuid;
+                    }
+                    else if (_editorSkipBranchIndex >= 0 && s.outcomes != null && _editorSkipBranchIndex < s.outcomes.Count)
+                    {
+                        done = true;
+                        nextGuid = s.outcomes[_editorSkipBranchIndex]?.nextGuid;
+                    }
+                    else
+                    {
+                        done = true;
+                        nextGuid = s.defaultNextGuid;
+                    }
+                    break;
+                }
+                yield return null;
+            }
+
+            // route by score
+            if (nextGuid == null && s.outcomes != null && s.outcomes.Count > 0)
+            {
+                // Pick the MOST SPECIFIC matching outcome (smallest range),
+                // so authoring mistakes like having an "Any (0..-1)" outcome before an "Exact 0..0" outcome
+                // still resolve to the intended exact match.
+                MiniQuizOutcome best = null;
+                int bestSpan = int.MaxValue;
+
+                for (int i = 0; i < s.outcomes.Count; i++)
+                {
+                    var o = s.outcomes[i];
+                    if (o == null) continue;
+
+                    int min = Mathf.Max(0, o.minCorrect);
+                    int max = o.maxCorrect;
+                    if (max >= 0 && max < min) continue; // invalid range
+
+                    bool minOk = correct >= min;
+                    bool maxOk = max < 0 || correct <= max;
+                    if (!minOk || !maxOk) continue;
+
+                    int span = max < 0 ? int.MaxValue : Mathf.Max(0, max - min);
+                    if (best == null || span < bestSpan)
+                    {
+                        best = o;
+                        bestSpan = span;
+                        if (bestSpan == 0) break; // exact match can't be beaten
+                    }
+                }
+
+                if (best != null)
+                    nextGuid = best.nextGuid;
+            }
+
+            if (nextGuid == null)
+                nextGuid = s.defaultNextGuid;
+
+            if (!string.IsNullOrEmpty(nextGuid))
+                Debug.Log($"[Scenario] MiniQuiz: correct={correct}/{(s.questions != null ? s.questions.Count : 0)} -> next={nextGuid}", this);
+
+            Cleanup();
+
+            onComplete?.Invoke(nextGuid);
+
+            // debounce so last click doesn't also hit something behind
+            yield return WaitForPointerRelease();
+        }
+
         public QuizSession GetOrCreateQuizSession(QuizAsset asset)
         {
             if (asset == null) return quizSession;
@@ -1092,6 +1273,10 @@ namespace Pitech.XR.Scenario
                     if (sel.panelRoot) HidePanelRoot(sel.panelRoot);
                     if (sel.hint) SafeSet(sel.hint, false);
                 }
+                else if (s is MiniQuizStep mq)
+                {
+                    if (mq.panelRoot) HidePanelRoot(mq.panelRoot);
+                }
                 else if (s is GroupStep g && g.steps != null)
                 {
                     DeactivateAllVisualsRecursive(g.steps);
@@ -1143,6 +1328,14 @@ namespace Pitech.XR.Scenario
 
             // Quiz: mark skip and branch type (-2 correct, -3 wrong, else advance)
             if (current is QuizStep)
+            {
+                _editorSkip = true;
+                _editorSkipBranchIndex = branchIndex;
+                return;
+            }
+
+            // Mini Quiz: -1 = default, >= 0 = outcomes index
+            if (current is MiniQuizStep)
             {
                 _editorSkip = true;
                 _editorSkipBranchIndex = branchIndex;
@@ -1305,6 +1498,11 @@ namespace Pitech.XR.Scenario
                     if (lists != null && lists.selectables != null) SetGroupPicking(lists.selectables, false);
                 };
             }
+            else if (st is MiniQuizStep mq)
+            {
+                routine = RunMiniQuizGroup(mq, token);
+                cleanup = () => { if (mq.panelRoot) HidePanelRoot(mq.panelRoot); };
+            }
             else if (st is InsertStep ins)
             {
                 routine = RunInsertGroup(ins, token);
@@ -1330,6 +1528,88 @@ namespace Pitech.XR.Scenario
             }
 
             return h;
+        }
+
+        IEnumerator RunMiniQuizGroup(MiniQuizStep s, GroupCancelToken token)
+        {
+            if (s == null) yield break;
+            if (s.panelRoot) s.panelRoot.gameObject.SetActive(true);
+            if (s.panelAnimator && !string.IsNullOrEmpty(s.showTrigger))
+                s.panelAnimator.SetTrigger(s.showTrigger);
+
+            var wired = new List<(Button btn, UnityAction fn)>();
+            UnityAction submitCb = null;
+            int correct = 0;
+            int qCount = s.questions != null ? s.questions.Count : 0;
+            var answered = new bool[Mathf.Max(0, qCount)];
+            bool done = false;
+
+            bool AllAnswered()
+            {
+                for (int i = 0; i < answered.Length; i++)
+                    if (!answered[i]) return false;
+                return true;
+            }
+
+            if (s.questions != null)
+            {
+                for (int qi = 0; qi < s.questions.Count; qi++)
+                {
+                    int qIndex = qi;
+                    var q = s.questions[qIndex];
+                    if (q == null || q.choices == null) continue;
+                    for (int ci = 0; ci < q.choices.Count; ci++)
+                    {
+                        var ch = q.choices[ci];
+                        if (ch == null || ch.button == null) continue;
+
+                        UnityAction fn = () =>
+                        {
+                            if (answered[qIndex] && s.lockQuestionAfterAnswer) return;
+                            if (!answered[qIndex])
+                            {
+                                answered[qIndex] = true;
+                                if (ch.isCorrect) correct++;
+                            }
+
+                            ch.onSelected?.Invoke();
+                            ApplyEffects(ch.effects);
+
+                            if (s.lockQuestionAfterAnswer)
+                            {
+                                if (q.choices != null)
+                                    foreach (var other in q.choices)
+                                        if (other != null && other.button != null)
+                                            other.button.interactable = false;
+                            }
+
+                            if (s.completion == MiniQuizStep.CompleteMode.AutoWhenAllAnswered && AllAnswered())
+                                done = true;
+                        };
+
+                        ch.button.onClick.AddListener(fn);
+                        wired.Add((ch.button, fn));
+                    }
+                }
+            }
+
+            if (s.completion == MiniQuizStep.CompleteMode.OnSubmitButton && s.submitButton)
+            {
+                submitCb = () => done = true;
+                s.submitButton.onClick.AddListener(submitCb);
+            }
+
+            while (!done && !token.Cancelled)
+                yield return null;
+
+            foreach (var (btn, fn) in wired)
+                if (btn) btn.onClick.RemoveListener(fn);
+            if (submitCb != null && s.submitButton) s.submitButton.onClick.RemoveListener(submitCb);
+
+            if (s.panelRoot) s.panelRoot.gameObject.SetActive(false);
+
+            if (!token.Cancelled)
+                yield return WaitForPointerRelease();
         }
 
         IEnumerator WrapGroupChild(IEnumerator routine, Action onDone)
