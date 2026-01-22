@@ -2281,6 +2281,9 @@ public class ScenarioGraphWindow : EditorWindow
                     cc.director = (PlayableDirector)EditorGUILayout.ObjectField("Clock (opt)", cc.director, typeof(PlayableDirector), true);
                     cc.autoShowFirst = EditorGUILayout.Toggle("Auto Show First", cc.autoShowFirst);
                     cc.tapHint = (GameObject)EditorGUILayout.ObjectField("Tap Hint", cc.tapHint, typeof(GameObject), true);
+                    cc.advanceMode = (CueCardsStep.AdvanceMode)EditorGUILayout.EnumPopup("Advance", cc.advanceMode);
+                    if (cc.advanceMode == CueCardsStep.AdvanceMode.OnButton)
+                        cc.nextButton = (UGUIButton)EditorGUILayout.ObjectField("Next Button", cc.nextButton, typeof(UGUIButton), true);
                     cc.extraObject = (GameObject)EditorGUILayout.ObjectField("Extra Object", cc.extraObject, typeof(GameObject), true);
                     cc.extraShowAtIndex = EditorGUILayout.IntField("Extra Show At Index", cc.extraShowAtIndex);
                     cc.hideExtraWithFinalTap = EditorGUILayout.Toggle("Hide Extra With Final Tap", cc.hideExtraWithFinalTap);
@@ -2388,17 +2391,24 @@ public class ScenarioGraphWindow : EditorWindow
                     {
                         Dirty(scenario, "Edit Mini Quiz");
                         so.ApplyModifiedProperties();
-                        
-                        // Always refresh ports after edits (not only add/remove).
-                        // Reasons:
-                        // - Users edit min/max/label without changing array size -> port labels should update.
-                        // - Users reorder outcomes -> indices change; we reload the graph so edges rebind from stored nextGuid.
-                        RecreateMiniQuizOutcomePorts();
-                        EditorApplication.delayCall += () =>
+
+                        int afterOutcomes = outcomesProp != null && outcomesProp.isArray ? outcomesProp.arraySize : -1;
+                        if (beforeOutcomes != afterOutcomes)
                         {
-                            if (owner != null && owner.scenario != null)
-                                owner.Load(owner.scenario);
-                        };
+                            // Only reload the graph when the outcomes list size changes (ports count changes).
+                            // Reloading on every keypress steals IMGUI focus while typing.
+                            RecreateMiniQuizOutcomePorts();
+                            EditorApplication.delayCall += () =>
+                            {
+                                if (owner != null && owner.scenario != null)
+                                    owner.Load(owner.scenario);
+                            };
+                        }
+                        else
+                        {
+                            // No graph reload: just update port labels in-place so typing keeps focus.
+                            UpdateMiniQuizOutcomePortLabels();
+                        }
 
                         self?.QueueResizeToFitDetails();
                     }
@@ -3191,6 +3201,27 @@ public class ScenarioGraphWindow : EditorWindow
             rebuild?.Invoke(); // ignored during Load thanks to guard
         }
 
+        void UpdateMiniQuizOutcomePortLabels()
+        {
+            if (step is not MiniQuizStep mq) return;
+            if (outNext != null)
+                outNext.portName = "Default";
+
+            if (outChoices == null || outChoices.Count == 0) return;
+
+            int count = mq.outcomes != null ? mq.outcomes.Count : 0;
+            for (int i = 0; i < outChoices.Count; i++)
+            {
+                if (outChoices[i] == null) continue;
+                if (i >= count) break;
+                var o = mq.outcomes[i];
+                string label = o != null && !string.IsNullOrWhiteSpace(o.label) ? o.label : OutcomeLabel(o, i);
+                outChoices[i].portName = label;
+            }
+
+            RefreshPorts();
+        }
+
         static string OutcomeLabel(MiniQuizOutcome o, int index)
         {
             if (o == null) return $"Outcome {index}";
@@ -3656,6 +3687,10 @@ sealed class StepEditWindow : EditorWindow
         EditorGUILayout.LabelField("Behavior", EditorStyles.boldLabel);
         EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("autoShowFirst"));
         EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("tapHint"));
+        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("advanceMode"), new GUIContent("Advance"));
+        var adv = stepProp.FindPropertyRelative("advanceMode");
+        if (adv != null && adv.enumValueIndex == (int)CueCardsStep.AdvanceMode.OnButton)
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("nextButton"), new GUIContent("Next Button"));
 
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Optional extra object", EditorStyles.boldLabel);

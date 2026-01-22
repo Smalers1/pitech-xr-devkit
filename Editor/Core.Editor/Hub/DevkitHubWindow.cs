@@ -94,7 +94,7 @@ namespace Pitech.XR.Core.Editor
             var top = DevkitTheme.Row();
             top.style.paddingLeft = 12; top.style.paddingRight = 12;
             top.style.paddingTop = 8; top.style.paddingBottom = 8;
-            var hdr = new Label($"Pi tech XR DevKit � {DevkitContext.Version}")
+            var hdr = new Label($"Pi tech XR DevKit {DevkitContext.Version}")
             {
                 style = { color = DevkitTheme.Text, unityFontStyleAndWeight = FontStyle.Bold }
             };

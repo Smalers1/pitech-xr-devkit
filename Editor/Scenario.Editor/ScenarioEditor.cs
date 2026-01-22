@@ -870,6 +870,7 @@ namespace Pitech.XR.Scenario.Editor
         {
             "director","cards","cueTimes",
             "autoShowFirst","tapHint",
+            "advanceMode","nextButton",
             "extraObject","extraShowAtIndex","hideExtraWithFinalTap","useRenderersForExtra",
             "fadeDuration","popScale","popDuration","fadeCurve","scaleCurve"
         };
@@ -878,19 +879,30 @@ namespace Pitech.XR.Scenario.Editor
         {
             if (p == null) return 0f;
             float h = 0;
+            var advProp = p.FindPropertyRelative("advanceMode");
+            int adv = advProp != null ? advProp.enumValueIndex : 0;
             foreach (var f in fields)
             {
+                if (f == "nextButton" && advProp != null && adv != (int)Runtime.CueCardsStep.AdvanceMode.OnButton)
+                    continue;
                 var sp = p.FindPropertyRelative(f);
                 if (sp == null) { h += EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing; continue; }
                 h += EditorGUI.GetPropertyHeight(sp, true) + EditorGUIUtility.standardVerticalSpacing;
+
+                if (f == "advanceMode" && advProp != null)
+                    adv = advProp.enumValueIndex;
             }
             return h;
         }
         public override void OnGUI(Rect r, SerializedProperty p, GUIContent l)
         {
             if (p == null) return;
+            var advProp = p.FindPropertyRelative("advanceMode");
+            int adv = advProp != null ? advProp.enumValueIndex : 0;
             foreach (var f in fields)
             {
+                if (f == "nextButton" && advProp != null && adv != (int)Runtime.CueCardsStep.AdvanceMode.OnButton)
+                    continue;
                 var sp = p.FindPropertyRelative(f);
                 var nicified = ObjectNames.NicifyVariableName(f);
                 if (sp == null)
@@ -902,6 +914,9 @@ namespace Pitech.XR.Scenario.Editor
                 var h = EditorGUI.GetPropertyHeight(sp, true);
                 EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(nicified), true);
                 r.y += h + EditorGUIUtility.standardVerticalSpacing;
+
+                if (f == "advanceMode" && advProp != null)
+                    adv = advProp.enumValueIndex;
             }
         }
     }

@@ -52,6 +52,18 @@ namespace Pitech.XR.Scenario
         public bool autoShowFirst = true;
         public GameObject tapHint;
 
+        public enum AdvanceMode
+        {
+            TapAnywhere,
+            OnButton
+        }
+
+        [Tooltip("How the learner advances to the next cue card.")]
+        public AdvanceMode advanceMode = AdvanceMode.TapAnywhere;
+
+        [Tooltip("Optional button used when Advance Mode == OnButton.")]
+        public Button nextButton;
+
         [Header("Optional extra object")]
         public GameObject extraObject;
         public int extraShowAtIndex = 1;

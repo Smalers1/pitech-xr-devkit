@@ -273,6 +273,18 @@ namespace Pitech.XR.Scenario
             var cards = cc.cards;
             if (cards == null || cards.Length == 0) yield break;
 
+            // Advance input
+            bool useButton = cc.advanceMode == CueCardsStep.AdvanceMode.OnButton && cc.nextButton != null;
+            bool advanceRequested = false;
+            UnityAction nextCb = null;
+            if (cc.advanceMode == CueCardsStep.AdvanceMode.OnButton && cc.nextButton == null)
+                Debug.LogWarning("[Scenario] CueCardsStep: Advance Mode is OnButton but Next Button is not assigned. Falling back to TapAnywhere.", this);
+            if (useButton)
+            {
+                nextCb = () => advanceRequested = true;
+                cc.nextButton.onClick.AddListener(nextCb);
+            }
+
             // hide all first
             for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
 
@@ -294,7 +306,16 @@ namespace Pitech.XR.Scenario
                 // if not auto showing the first card wait for first click to reveal it
                 if (cur < 0)
                 {
-                    yield return WaitForCleanClick();
+                    if (!useButton)
+                    {
+                        yield return WaitForCleanClick();
+                    }
+                    else
+                    {
+                        while (!advanceRequested && !_editorSkip)
+                            yield return null;
+                        advanceRequested = false;
+                    }
                     cur = 0;
                     SafeSet(cards[cur], true);
                 }
@@ -309,7 +330,15 @@ namespace Pitech.XR.Scenario
                 float t = 0f;
                 while (true)
                 {
-                    if (JustClicked()) break;
+                    if (!useButton)
+                    {
+                        if (JustClicked()) break;
+                    }
+                    else if (advanceRequested)
+                    {
+                        advanceRequested = false;
+                        break;
+                    }
 
                     if (timeout > 0f)
                     {
@@ -322,7 +351,8 @@ namespace Pitech.XR.Scenario
                 }
 
                 // consume click so it does not skip next card
-                yield return WaitForPointerRelease();
+                if (!useButton)
+                    yield return WaitForPointerRelease();
 
                 // advance
                 SafeSet(cards[cur], false);
@@ -335,6 +365,9 @@ namespace Pitech.XR.Scenario
 
             // all off at end
             for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
+
+            if (useButton && cc.nextButton && nextCb != null)
+                cc.nextButton.onClick.RemoveListener(nextCb);
         }
 
         // ---------------- QUESTION ----------------
@@ -1660,6 +1693,18 @@ namespace Pitech.XR.Scenario
             var cards = cc.cards;
             if (cards == null || cards.Length == 0) yield break;
 
+            // Advance input
+            bool useButton = cc.advanceMode == CueCardsStep.AdvanceMode.OnButton && cc.nextButton != null;
+            bool advanceRequested = false;
+            UnityAction nextCb = null;
+            if (cc.advanceMode == CueCardsStep.AdvanceMode.OnButton && cc.nextButton == null)
+                Debug.LogWarning("[Scenario] CueCardsStep (Group): Advance Mode is OnButton but Next Button is not assigned. Falling back to TapAnywhere.", this);
+            if (useButton)
+            {
+                nextCb = () => advanceRequested = true;
+                cc.nextButton.onClick.AddListener(nextCb);
+            }
+
             for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
 
             var d = cc.director;
@@ -1674,7 +1719,16 @@ namespace Pitech.XR.Scenario
             {
                 if (cur < 0)
                 {
-                    yield return WaitForCleanClick();
+                    if (!useButton)
+                    {
+                        yield return WaitForCleanClick();
+                    }
+                    else
+                    {
+                        while (!advanceRequested && !token.Cancelled)
+                            yield return null;
+                        advanceRequested = false;
+                    }
                     if (token.Cancelled) break;
                     cur = 0;
                     SafeSet(cards[cur], true);
@@ -1688,7 +1742,15 @@ namespace Pitech.XR.Scenario
                 float t = 0f;
                 while (!token.Cancelled)
                 {
-                    if (JustClicked()) break;
+                    if (!useButton)
+                    {
+                        if (JustClicked()) break;
+                    }
+                    else if (advanceRequested)
+                    {
+                        advanceRequested = false;
+                        break;
+                    }
                     if (timeout > 0f)
                     {
                         if (d && d.state != PlayState.Playing) break;
@@ -1699,7 +1761,8 @@ namespace Pitech.XR.Scenario
                 }
                 if (token.Cancelled) break;
 
-                yield return WaitForPointerRelease();
+                if (!useButton)
+                    yield return WaitForPointerRelease();
 
                 SafeSet(cards[cur], false);
                 if (cur >= cards.Length - 1) break;
@@ -1708,6 +1771,9 @@ namespace Pitech.XR.Scenario
             }
 
             for (int i = 0; i < cards.Length; i++) SafeSet(cards[i], false);
+
+            if (useButton && cc.nextButton && nextCb != null)
+                cc.nextButton.onClick.RemoveListener(nextCb);
         }
 
         IEnumerator RunQuestionGroup(QuestionStep q, GroupCancelToken token)
