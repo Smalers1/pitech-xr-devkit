@@ -77,6 +77,10 @@ namespace Pitech.XR.Scenario
         [Tooltip("UGUI Button in your panel")]
         public UnityEngine.UI.Button button;
 
+        [Header("Events")]
+        [Tooltip("Invoked when this choice is selected (button pressed).")]
+        public UnityEvent onSelected = new UnityEvent();
+
         [Tooltip("Stat changes when this is pressed")]
         public List<StatEffect> effects = new();
 

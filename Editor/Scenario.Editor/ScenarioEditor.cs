@@ -946,13 +946,29 @@ namespace Pitech.XR.Scenario.Editor
     [CustomPropertyDrawer(typeof(Runtime.Choice))]
     class ChoiceDrawer : PropertyDrawer
     {
+        static string EventsFoldoutKey(SerializedProperty choiceProp)
+        {
+            // Persist per-choice (per object) foldout state for the onSelected UnityEvent.
+            // This makes it behave like other list foldouts (Effects) instead of always taking lots of vertical space.
+            var obj = choiceProp?.serializedObject?.targetObject;
+            int id = obj != null ? obj.GetInstanceID() : 0;
+            return $"PitechXR.ChoiceDrawer.EventsExpanded.{id}.{choiceProp.propertyPath}";
+        }
+
         public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
         {
             if (p == null) return 0f;
             float h = 0;
             var btn = p.FindPropertyRelative("button");
+            var ev = p.FindPropertyRelative("onSelected");
             var fx = p.FindPropertyRelative("effects");
             if (btn != null) h += EditorGUI.GetPropertyHeight(btn, true) + EditorGUIUtility.standardVerticalSpacing;
+            if (ev != null)
+            {
+                // Default-collapsed, like Effects. Persist the foldout state per choice.
+                ev.isExpanded = SessionState.GetBool(EventsFoldoutKey(p), false);
+                h += EditorGUI.GetPropertyHeight(ev, true) + EditorGUIUtility.standardVerticalSpacing;
+            }
             if (fx != null) h += EditorGUI.GetPropertyHeight(fx, true) + EditorGUIUtility.standardVerticalSpacing;
             return h;
         }
@@ -960,6 +976,7 @@ namespace Pitech.XR.Scenario.Editor
         {
             if (p == null) return;
             var btn = p.FindPropertyRelative("button");
+            var ev = p.FindPropertyRelative("onSelected");
             var fx = p.FindPropertyRelative("effects");
 
             if (btn != null)
@@ -967,6 +984,17 @@ namespace Pitech.XR.Scenario.Editor
                 var h0 = EditorGUI.GetPropertyHeight(btn, true);
                 EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h0), btn, new GUIContent("Button"), true);
                 r.y += h0 + EditorGUIUtility.standardVerticalSpacing;
+            }
+            if (ev != null)
+            {
+                var key = EventsFoldoutKey(p);
+                ev.isExpanded = SessionState.GetBool(key, false);
+                bool before = ev.isExpanded;
+                var hE = EditorGUI.GetPropertyHeight(ev, true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, hE), ev, new GUIContent("Events"), true);
+                r.y += hE + EditorGUIUtility.standardVerticalSpacing;
+                if (before != ev.isExpanded)
+                    SessionState.SetBool(key, ev.isExpanded);
             }
             if (fx != null)
             {

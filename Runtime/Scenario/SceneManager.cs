@@ -367,6 +367,9 @@ namespace Pitech.XR.Scenario
 
                     UnityAction fn = () =>
                     {
+                        // per-choice events (SFX, animations, etc.)
+                        choice.onSelected?.Invoke();
+
                         // apply stat effects (shared helper)
                         ApplyEffects(choice.effects);
 
@@ -396,6 +399,7 @@ namespace Pitech.XR.Scenario
                     var choice = q.choices[_editorSkipBranchIndex];
                     if (choice != null)
                     {
+                        choice.onSelected?.Invoke();
                         ApplyEffects(choice.effects);
                         nextGuid = FallbackGuid(choice.nextGuid);
                     }
@@ -1445,6 +1449,7 @@ namespace Pitech.XR.Scenario
                     UnityAction fn = () =>
                     {
                         if (answered) return;
+                        choice.onSelected?.Invoke();
                         ApplyEffects(choice.effects);
                         answered = true;
                         if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
