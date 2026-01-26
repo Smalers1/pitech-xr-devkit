@@ -22,6 +22,7 @@ namespace Pitech.XR.Core.Editor
             grid.Add(StatsDoc());
             grid.Add(InteractablesDoc());
             grid.Add(QuizDoc());
+            grid.Add(DevBlocksDoc());
 
             section.Add(grid);
             root.Add(section);
@@ -136,6 +137,25 @@ namespace Pitech.XR.Core.Editor
                     "Use 'When Complete' to choose single Next or Correct/Wrong branching.",
                     "Add a `Quiz Results` step after quiz questions to show score/pass/fail.",
                     "If Quiz UI is missing at runtime, the step logs a warning and continues."
+                )
+            );
+        }
+
+        static VisualElement DevBlocksDoc()
+        {
+            return DevkitWidgets.Card(
+                "Dev Blocks",
+                "Reusable prefab library for fast scene building.",
+                DevkitWidgets.Actions(
+                    DevkitTheme.Primary("Open Dev Blocks", () => EditorApplication.ExecuteMenuItem("Pi tech/Dev Blocks"))
+                ),
+                HowTo(
+                    "Open `Pi tech → Dev Blocks`.",
+                    "Create a Dev Block by assigning a prefab, name, and category.",
+                    "Use category chips and search to find blocks quickly.",
+                    "Click the + button to add a block to the active scene.",
+                    "Blocks are parented under the matching scene anchor (e.g. `--- UI ---`).",
+                    "If a block suggests missing dependencies, you’ll get a prompt to fix them."
                 )
             );
         }
