@@ -46,7 +46,7 @@ namespace Pitech.XR.Core.Editor
             int ok = 0; var missing = new System.Collections.Generic.List<string>();
             if (PlayerSettings.colorSpace == ColorSpace.Linear) ok++; else missing.Add("Color space: Linear");
             if (EditorSettings.serializationMode == SerializationMode.ForceText) ok++; else missing.Add("Asset serialization: Force Text");
-            if (EditorSettings.externalVersionControl == "Visible Meta Files") ok++; else missing.Add("Version Control: Visible Meta Files");
+            if (VersionControlSettings.mode == "Visible Meta Files") ok++; else missing.Add("Version Control: Visible Meta Files");
             return (ok, 3, missing.ToArray());
         }
 

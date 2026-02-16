@@ -1,0 +1,23 @@
+{
+    "name": "Pitech.XR.ContentDelivery.Editor.Tests",
+    "rootNamespace": "Pitech.XR.ContentDelivery.Editor.Tests",
+    "references": [
+        "Pitech.XR.ContentDelivery",
+        "Pitech.XR.ContentDelivery.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ],
+    "testAssemblies": true
+}

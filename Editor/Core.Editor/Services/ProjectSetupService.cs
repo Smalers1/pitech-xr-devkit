@@ -39,7 +39,7 @@ namespace Pitech.XR.Core.Editor
         public void ApplyRecommendedSettings()
         {
             EditorSettings.serializationMode = SerializationMode.ForceText;
-            EditorSettings.externalVersionControl = "Visible Meta Files";
+            VersionControlSettings.mode = "Visible Meta Files";
             PlayerSettings.colorSpace = ColorSpace.Linear;
 
             // Try to import TMP essentials if available

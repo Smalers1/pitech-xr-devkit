@@ -3,6 +3,8 @@ using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Pitech.XR.ContentDelivery;
+using Pitech.XR.ContentDelivery.Editor;
 using Pitech.XR.Core.Editor;
 
 namespace Pitech.XR.Core.Editor
@@ -63,6 +65,7 @@ namespace Pitech.XR.Core.Editor
             grid.Add(CardStats(svc));
             grid.Add(CardInteractables(svc));
             grid.Add(CardQuiz(svc));
+            grid.Add(CardAddressables());
 
             section.Add(grid);
 
@@ -287,6 +290,52 @@ namespace Pitech.XR.Core.Editor
                 body
             );
         }
+
+        static VisualElement CardAddressables()
+        {
+            bool hasAddr = ContentDeliveryCapability.HasAddressablesPackage;
+            bool hasCcd = ContentDeliveryCapability.HasCcdPackage;
+            var setupService = new AddressablesService();
+
+            var pills = DevkitWidgets.PillsRow(
+                (hasAddr ? DevkitWidgets.PillKind.Success : DevkitWidgets.PillKind.Warning, hasAddr ? "Addressables ready" : "Addressables missing"),
+                (hasCcd ? DevkitWidgets.PillKind.Success : DevkitWidgets.PillKind.Neutral, hasCcd ? "CCD package present" : "CCD optional"),
+                (DevkitWidgets.PillKind.Neutral, "Content delivery optional")
+            );
+
+            var body = new VisualElement();
+            body.Add(pills);
+            body.Add(DevkitTheme.VSpace(8));
+            body.Add(DevkitTheme.Body(
+                "Addressables/CCD publishing is handled in a dedicated builder window.\n" +
+                "Guided Setup stays focused on scene wiring.",
+                dim: true));
+            body.Add(DevkitTheme.VSpace(6));
+            body.Add(DevkitTheme.Body(
+                "Use Addressables Builder for Setup, Prefab mapping, Validate, and Build in one place.",
+                dim: true));
+
+            return DevkitWidgets.Card(
+                "Addressables / CCD (optional)",
+                "Use a dedicated builder window (separate from scene setup).",
+                DevkitWidgets.Actions(
+                    DevkitTheme.Primary("Open Addressables Builder", () =>
+                    {
+                        AddressablesBuilderWindow.Open();
+                    }),
+                    DevkitTheme.Secondary("Ping Module Config", () =>
+                    {
+                        AddressablesModuleConfig config = setupService.EnsureConfigAsset(out _, out _);
+                        if (config != null)
+                        {
+                            EditorGUIUtility.PingObject(config);
+                        }
+                    })
+                ),
+                body
+            );
+        }
+
     }
 }
 #endif

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -44,6 +44,10 @@ namespace Pitech.XR.Scenario
         [Header("Interactables (optional)")]
         public SelectablesManager selectables;     // the catalog of clickable colliders
         public SelectionLists selectionLists;      // the quiz/controller using that catalog
+
+        [Header("Content Delivery (optional)")]
+        [Tooltip("Optional reference to ContentDeliverySpawner (or compatible component).")]
+        public MonoBehaviour contentDelivery;
 
         /// Current step index while running. -1 when idle or finished
         public int StepIndex { get; private set; } = -1;

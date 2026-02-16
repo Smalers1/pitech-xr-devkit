@@ -12,6 +12,11 @@
       "displayName": "Quiz UI (TMP) – Guided Setup",
       "description": "Includes instructions for installing the default Quiz UI panels via DevKit Hub Guided Setup.",
       "path": "Samples~/Quiz UI"
+    },
+    {
+      "displayName": "Addressables Content Delivery – Guided Setup",
+      "description": "Optional Setup + Validate + hidden Build workflow with runtime bootstrap guidance.",
+      "path": "Samples~/Addressables Content Delivery"
     }
   ]
 }

@@ -1,0 +1,31 @@
+{
+    "name": "Pitech.XR.ContentDelivery.Editor",
+    "rootNamespace": "Pitech.XR.ContentDelivery.Editor",
+    "references": [
+        "Pitech.XR.Core",
+        "Pitech.XR.ContentDelivery",
+        "Unity.Addressables.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.addressables",
+            "expression": "1.0.0",
+            "define": "PITECH_ADDR"
+        },
+        {
+            "name": "com.unity.services.ccd.management",
+            "expression": "1.0.0",
+            "define": "PITECH_CCD"
+        }
+    ],
+    "noEngineReferences": false
+}

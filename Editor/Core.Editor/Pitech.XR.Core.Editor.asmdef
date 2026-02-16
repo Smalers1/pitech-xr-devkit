@@ -1,6 +1,10 @@
 {
   "name": "Pitech.XR.Core.Editor",
   "rootNamespace": "Pitech.XR.Core.Editor",
-  "references": [ "Pitech.XR.Core" ],
+  "references": [
+    "Pitech.XR.Core",
+    "Pitech.XR.ContentDelivery",
+    "Pitech.XR.ContentDelivery.Editor"
+  ],
   "includePlatforms": [ "Editor" ]
 }

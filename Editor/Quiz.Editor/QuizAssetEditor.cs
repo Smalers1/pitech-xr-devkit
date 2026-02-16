@@ -58,7 +58,7 @@ namespace Pitech.XR.Quiz.Editor
             Styles.Ensure();
             serializedObject.Update();
 
-            DrawHeader();
+            DrawTopHeader();
             EditorGUILayout.Space(6);
 
             Styles.Section("Quiz Settings", true, () =>
@@ -82,7 +82,7 @@ namespace Pitech.XR.Quiz.Editor
             serializedObject.ApplyModifiedProperties();
         }
 
-        void DrawHeader()
+        void DrawTopHeader()
         {
             using (new EditorGUILayout.VerticalScope(Styles.InfoBox))
             {

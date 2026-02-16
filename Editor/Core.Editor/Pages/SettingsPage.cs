@@ -16,6 +16,8 @@ namespace Pitech.XR.Core.Editor
                 el.Add(new Label($"Version: {DevkitContext.Version}"));
                 el.Add(new Label($"Timeline present: {DevkitContext.HasTimeline}"));
                 el.Add(new Label($"TextMeshPro present: {DevkitContext.HasTextMeshPro}"));
+                el.Add(new Label($"Addressables present: {DevkitContext.HasAddressables}"));
+                el.Add(new Label($"CCD package present: {DevkitContext.HasCcdManagement}"));
             }));
 
             root.Add(Section("Project Settings", el =>

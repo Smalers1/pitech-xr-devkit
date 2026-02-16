@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,6 +24,7 @@ namespace Pitech.XR.Scenario.Editor
         SerializedProperty _defaultQuizProp;      // Pitech.XR.Quiz.QuizAsset
         SerializedProperty _quizPanelProp;        // Pitech.XR.Quiz.QuizUIController
         SerializedProperty _quizResultsPanelProp; // Pitech.XR.Quiz.QuizResultsUIController
+        SerializedProperty _contentDeliveryProp;  // Pitech.XR.ContentDelivery.ContentDeliverySpawner (as MonoBehaviour)
         const string ManagersRootName = "--- SCENE MANAGERS ---";
 
         // ❌ DO NOT cache EditorStyles in static fields — causes NREs on domain reload
@@ -41,6 +42,7 @@ namespace Pitech.XR.Scenario.Editor
             _defaultQuizProp = serializedObject.FindProperty("defaultQuiz");
             _quizPanelProp = serializedObject.FindProperty("quizPanel");
             _quizResultsPanelProp = serializedObject.FindProperty("quizResultsPanel");
+            _contentDeliveryProp = serializedObject.FindProperty("contentDelivery");
 
         }
 
@@ -66,6 +68,9 @@ namespace Pitech.XR.Scenario.Editor
             
             EditorGUILayout.Space(6);
             DrawQuizFeature();
+
+            EditorGUILayout.Space(6);
+            DrawContentDeliveryFeature();
 
             EditorGUILayout.Space(8);
             if (_autoStartProp != null)
@@ -222,6 +227,45 @@ namespace Pitech.XR.Scenario.Editor
             }
         }
 
+        void DrawContentDeliveryFeature()
+        {
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Content Delivery", TitleStyle);
+
+                if (_contentDeliveryProp == null)
+                {
+                    EditorGUILayout.HelpBox(
+                        "SceneManager.contentDelivery property was not found. Recompile scripts and reopen inspector.",
+                        MessageType.Warning);
+                    return;
+                }
+
+                bool hasDelivery = _contentDeliveryProp.objectReferenceValue != null;
+
+                MiniCaption("Delivery Object");
+                ObjectFieldWithPingClear(
+                    serializedObject,
+                    _contentDeliveryProp,
+                    undoName: "Assign Content Delivery",
+                    simpleTypeName: "ContentDeliverySpawner",
+                    ns: "Pitech.XR.ContentDelivery");
+
+                EditorGUILayout.Space(2);
+                if (!hasDelivery)
+                {
+                    if (GUILayout.Button("Create & assign Content Delivery Object", GUILayout.Height(22)))
+                        CreateAndAssignContentDelivery();
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox(
+                        "Content Delivery object is assigned. Configure spawn parent and addressable prefab on that component.",
+                        MessageType.Info);
+                }
+            }
+        }
+
         void CreateAndAssignSelectablesManager()
         {
             var parent = EnsureManagersRoot();
@@ -266,6 +310,52 @@ namespace Pitech.XR.Scenario.Editor
             new Pitech.XR.Core.Editor.QuizService().CreateAsset();
             var obj = Selection.activeObject;
             if (obj) AssignSceneObjectProperty(_defaultQuizProp, obj, "Assign Default Quiz");
+        }
+
+        void CreateAndAssignContentDelivery()
+        {
+            var parent = EnsureManagersRoot();
+            if (!parent) return;
+
+            var deliveryType = FindType("ContentDeliverySpawner", "Pitech.XR.ContentDelivery");
+            if (deliveryType == null)
+            {
+                EditorUtility.DisplayDialog(
+                    "Content Delivery",
+                    "Could not find Pitech.XR.ContentDelivery.ContentDeliverySpawner.\n\n" +
+                    "Make sure the ContentDelivery module compiled successfully.",
+                    "OK");
+                return;
+            }
+
+            var go = new GameObject("Content Delivery");
+            Undo.RegisterCreatedObjectUndo(go, "Create Content Delivery");
+            go.transform.SetParent(parent, false);
+            var comp = go.AddComponent(deliveryType) as Component;
+
+            // Create a dedicated spawn root so users can choose where content appears.
+            var contentRoot = new GameObject("Lab Content Root");
+            Undo.RegisterCreatedObjectUndo(contentRoot, "Create Lab Content Root");
+            contentRoot.transform.SetParent(go.transform, false);
+
+            if (comp != null)
+            {
+                var so = new SerializedObject(comp);
+                var sceneManagerProp = so.FindProperty("sceneManager");
+                var spawnParentProp = so.FindProperty("spawnParent");
+                if (sceneManagerProp != null)
+                    sceneManagerProp.objectReferenceValue = target as MonoBehaviour;
+                if (spawnParentProp != null)
+                    spawnParentProp.objectReferenceValue = contentRoot.transform;
+
+                so.ApplyModifiedProperties();
+
+                EditorUtility.SetDirty(comp);
+            }
+
+            AssignSceneObjectProperty(_contentDeliveryProp, comp, "Assign Content Delivery");
+            EditorSceneManager.MarkSceneDirty(go.scene);
+            Selection.activeObject = go;
         }
 
         // Deprecated manual creator kept only for older versions; install via QuizService for best UX.

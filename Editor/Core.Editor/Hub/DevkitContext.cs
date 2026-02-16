@@ -18,6 +18,9 @@ namespace Pitech.XR.Core.Editor
         // Capability checks (optional)
         public static bool HasTimeline => Type.GetType("UnityEngine.Timeline.TimelineAsset, UnityEngine.Timeline") != null;
         public static bool HasTextMeshPro => Type.GetType("TMPro.TMP_Text, Unity.TextMeshPro") != null;
+        public static bool HasAddressables => Type.GetType(
+            "UnityEditor.AddressableAssets.Settings.AddressableAssetSettings, Unity.Addressables.Editor") != null;
+        public static bool HasCcdManagement => HasPackage("com.unity.services.ccd.management");
 
         // Finder
         static Texture2D FindTextureByName(string assetName)
@@ -30,6 +33,23 @@ namespace Pitech.XR.Core.Editor
                 if (tex != null) return tex;
             }
             return null;
+        }
+
+        static bool HasPackage(string packageName)
+        {
+            if (string.IsNullOrWhiteSpace(packageName))
+            {
+                return false;
+            }
+
+            var manifest = System.IO.Path.GetFullPath("Packages/manifest.json");
+            if (!System.IO.File.Exists(manifest))
+            {
+                return false;
+            }
+
+            var text = System.IO.File.ReadAllText(manifest);
+            return text.IndexOf($"\"{packageName}\"", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

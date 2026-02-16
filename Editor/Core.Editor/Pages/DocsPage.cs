@@ -22,6 +22,7 @@ namespace Pitech.XR.Core.Editor
             grid.Add(StatsDoc());
             grid.Add(InteractablesDoc());
             grid.Add(QuizDoc());
+            grid.Add(ContentDeliveryDoc());
             grid.Add(DevBlocksDoc());
 
             section.Add(grid);
@@ -156,6 +157,25 @@ namespace Pitech.XR.Core.Editor
                     "Click the + button to add a block to the active scene.",
                     "Blocks are parented under the matching scene anchor (e.g. `--- UI ---`).",
                     "If a block suggests missing dependencies, you’ll get a prompt to fix them."
+                )
+            );
+        }
+
+        static VisualElement ContentDeliveryDoc()
+        {
+            return DevkitWidgets.Card(
+                "Addressables Content Delivery (optional)",
+                "Setup + Validate first, hidden Build for internal verification.",
+                DevkitWidgets.Actions(
+                    DevkitTheme.Secondary("Open Guided Setup", () => EditorApplication.ExecuteMenuItem("Pi tech/DevKit"))
+                ),
+                HowTo(
+                    "In Guided Setup, open the Addressables / CCD card.",
+                    "Run Setup (idempotent) to ensure config/settings/profile/group.",
+                    "Run Validate to check duplicate keys, schema, and group mapping.",
+                    "Enable hidden Build only for internal verification workflows.",
+                    "Use AddressablesBootstrapper + launch context providers for runtime wiring.",
+                    "Persist and inspect publish transaction reports in Assets/Settings/ContentDelivery/Reports."
                 )
             );
         }
