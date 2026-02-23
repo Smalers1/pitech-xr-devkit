@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -59,6 +59,8 @@ namespace Pitech.XR.ContentDelivery.Editor
     {
         private const string SettingsFolder = "Assets/Settings";
         private const string ContentDeliverySettingsFolder = "Assets/Settings/ContentDelivery";
+        private const string DefaultRemoteBaseUrl = "https://cdn.example.invalid/content";
+        private const string DefaultRemoteLoadPathTemplate = "{baseUrl}/{environment}/[BuildTarget]";
 
         public AddressablesSetupResult EnsureInitialized(string labIdHint)
         {
@@ -532,15 +534,25 @@ namespace Pitech.XR.ContentDelivery.Editor
             settings.profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, remoteLoadPath);
 
             return profileName;
-        }
-
-        private static string BuildRemoteLoadPath(AddressablesModuleConfig config)
+        }        private static string BuildRemoteLoadPath(AddressablesModuleConfig config)
         {
+            if (config == null)
+            {
+                return $"{DefaultRemoteBaseUrl}/development/[BuildTarget]";
+            }
+
             string env = config.environment.ToString().ToLowerInvariant();
             string baseUrl = string.IsNullOrWhiteSpace(config.remoteCatalogBaseUrl)
-                ? "https://cdn.example.invalid/content"
+                ? DefaultRemoteBaseUrl
                 : config.remoteCatalogBaseUrl.Trim().TrimEnd('/');
-            return $"{baseUrl}/{env}/[BuildTarget]";
+
+            string template = string.IsNullOrWhiteSpace(config.remoteLoadPathTemplate)
+                ? DefaultRemoteLoadPathTemplate
+                : config.remoteLoadPathTemplate.Trim();
+
+            return template
+                .Replace("{baseUrl}", baseUrl)
+                .Replace("{environment}", env);
         }
 
         private static string BuildRemoteBuildPath(AddressablesModuleConfig config, string profileName)
@@ -607,3 +619,4 @@ namespace Pitech.XR.ContentDelivery.Editor
     }
 }
 #endif
+

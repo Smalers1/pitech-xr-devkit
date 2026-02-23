@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace Pitech.XR.ContentDelivery
 {
@@ -39,6 +39,9 @@ namespace Pitech.XR.ContentDelivery
         [Header("Remote Catalog")]
         [Tooltip("Optional base URL for remote catalog content.")]
         public string remoteCatalogBaseUrl = string.Empty;
+
+        [Tooltip("Template used by Setup to populate Addressables profile Remote.LoadPath. Supports {baseUrl}, {environment}, and [BuildTarget].")]
+        public string remoteLoadPathTemplate = "{baseUrl}/{environment}/[BuildTarget]";
 
         [Tooltip("Template supports {baseUrl}, {environment}, {labId}, {resolvedVersionId}.")]
         public string remoteCatalogUrlTemplate =

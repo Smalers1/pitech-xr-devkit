@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+﻿#if UNITY_EDITOR
 using Pitech.XR.ContentDelivery;
 using Pitech.XR.ContentDelivery.Editor;
 using UnityEditor;
@@ -48,14 +48,7 @@ namespace Pitech.XR.Core.Editor
             window.minSize = new Vector2(980f, 620f);
             window.Show();
         }
-
-        [MenuItem("Pi tech/DevKit/Addressables Builder")]
-        public static void OpenFromDevkitMenu()
-        {
-            Open();
-        }
-
-        private void OnEnable()
+private void OnEnable()
         {
             BuildUi();
             RefreshMappingPreview();
@@ -640,3 +633,4 @@ namespace Pitech.XR.Core.Editor
     }
 }
 #endif
+
