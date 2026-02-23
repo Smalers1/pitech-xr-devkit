@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using Pitech.XR.Core;
+using UnityEngine;
 
 namespace Pitech.XR.ContentDelivery
 {
@@ -56,10 +57,6 @@ namespace Pitech.XR.ContentDelivery
             {
                 context.requestedAt = Timestamp.UtcNowIso8601();
             }
-            if (string.IsNullOrWhiteSpace(context.resolvedVersionId))
-            {
-                context.resolvedVersionId = "unknown";
-            }
 
             bool cfgOffline = config == null || config.allowOfflineCacheLaunch;
             bool cfgOlderCache = config == null || config.allowOlderCachedSameLab;
@@ -67,6 +64,13 @@ namespace Pitech.XR.ContentDelivery
             context.allowOfflineCacheLaunch = context.allowOfflineCacheLaunch || cfgOffline;
             context.allowOlderCachedSameLab = context.allowOlderCachedSameLab || cfgOlderCache;
             context.networkRequiredIfCacheMiss = context.networkRequiredIfCacheMiss || cfgNetworkMiss;
+
+            if (!LaunchContextValidation.TryValidateRuntimeLaunchContext(context, out string validationError))
+            {
+                Debug.LogError($"[ContentDelivery] Launch context rejected: {validationError}");
+                return;
+            }
+
             currentContext = context;
             OnLaunchContextResolved?.Invoke(context);
         }

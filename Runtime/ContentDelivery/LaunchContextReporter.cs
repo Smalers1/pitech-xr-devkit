@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Pitech.XR.Core;
 using UnityEngine;
 using UnityEngine.Events;
@@ -37,6 +37,9 @@ namespace Pitech.XR.ContentDelivery
         [Tooltip("JSON payload callback for bridge handlers.")]
         public UnityEvent<string> onLifecycleJson;
 
+        [Tooltip("Optional analytics adapter to emit attempt-end payloads.")]
+        public RuntimeTelemetryAdapter telemetryAdapter;
+
         [Tooltip("Logs emitted payloads for debugging.")]
         public bool logPayloads;
 
@@ -45,6 +48,10 @@ namespace Pitech.XR.ContentDelivery
 
         private void Start()
         {
+            if (telemetryAdapter == null)
+            {
+                telemetryAdapter = GetComponent<RuntimeTelemetryAdapter>();
+            }
             TrySubscribe();
         }
 
@@ -66,15 +73,19 @@ namespace Pitech.XR.ContentDelivery
 
         public void EmitExperienceAbandoned(float sessionDurationSeconds)
         {
+            telemetryAdapter?.EmitAttemptAbandoned(sessionDurationSeconds);
+
             if (service == null || !service.TryGetCurrentContext(out LaunchContext context) || context == null)
             {
                 return;
             }
 
-            LaunchLifecyclePayload payload = BuildPayload(
-                context,
-                "experience_abandoned",
-                sessionDurationSeconds);
+            if (!TryBuildPayload(context, "experience_abandoned", sessionDurationSeconds, out LaunchLifecyclePayload payload, out string reason))
+            {
+                Debug.LogWarning($"[ContentDelivery] Skipping lifecycle payload: {reason}", this);
+                return;
+            }
+
             EmitPayload(payload);
         }
 
@@ -85,16 +96,35 @@ namespace Pitech.XR.ContentDelivery
                 return;
             }
 
-            LaunchLifecyclePayload payload = BuildPayload(context, "launch_resolved", 0f);
+            if (!TryBuildPayload(context, "launch_resolved", 0f, out LaunchLifecyclePayload payload, out string reason))
+            {
+                Debug.LogWarning($"[ContentDelivery] Skipping lifecycle payload: {reason}", this);
+                return;
+            }
+
             EmitPayload(payload);
         }
 
-        private static LaunchLifecyclePayload BuildPayload(
+        private static bool TryBuildPayload(
             LaunchContext context,
             string eventName,
-            float sessionDurationSeconds)
+            float sessionDurationSeconds,
+            out LaunchLifecyclePayload payload,
+            out string reason)
         {
-            LaunchLifecyclePayload payload = new LaunchLifecyclePayload
+            payload = null;
+            if (!LaunchContextValidation.TryValidateLineage(context, requireResolvedVersionId: true, out reason))
+            {
+                return false;
+            }
+
+            if (LaunchContextValidation.RequiresRuntimeUrl(context) && string.IsNullOrWhiteSpace(context.runtimeUrl))
+            {
+                reason = "runtimeUrl is required for online lifecycle events.";
+                return false;
+            }
+
+            payload = new LaunchLifecyclePayload
             {
                 contractVersion = string.IsNullOrWhiteSpace(context.contractVersion) ? "1.1.0" : context.contractVersion,
                 launchRequestId = context.launchRequestId,
@@ -112,7 +142,9 @@ namespace Pitech.XR.ContentDelivery
                     durationMs = (long)(sessionDurationSeconds * 1000f),
                 }
             };
-            return payload;
+
+            reason = string.Empty;
+            return true;
         }
 
         private void EmitPayload(LaunchLifecyclePayload payload)

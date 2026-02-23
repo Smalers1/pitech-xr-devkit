@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Reflection;
 using Pitech.XR.Core;
@@ -91,6 +91,10 @@ namespace Pitech.XR.ContentDelivery
         [Tooltip("Hide the overlay automatically after successful spawn.")]
         public bool hideStatusOverlayAfterSpawn = true;
 
+        [Header("Analytics (optional)")]
+        [Tooltip("Optional runtime analytics adapter for batched telemetry payloads.")]
+        public RuntimeTelemetryAdapter analyticsAdapter;
+
         [Header("SceneManager Coordination (optional)")]
         [Tooltip("Optional SceneManager reference. If set, autoStart can be deferred until spawn completes.")]
         public MonoBehaviour sceneManager;
@@ -120,6 +124,11 @@ namespace Pitech.XR.ContentDelivery
             if (sceneManager == null)
             {
                 sceneManager = FindSceneManagerLike();
+            }
+
+            if (analyticsAdapter == null)
+            {
+                analyticsAdapter = GetComponentInChildren<RuntimeTelemetryAdapter>(true);
             }
 
             if (deferSceneManagerUntilSpawn && sceneManager != null)
@@ -228,6 +237,24 @@ namespace Pitech.XR.ContentDelivery
             bool onlineEnabled = contentSource != ContentSourceMode.LocalOnly;
             bool onlineRequired = contentSource == ContentSourceMode.OnlineOnly;
             bool externalLaunchDriven = onlineEnabled && onlineMetadataSource == OnlineMetadataSource.ExternalLaunchContext;
+
+            if (externalLaunchDriven)
+            {
+                string launchValidationError = ValidateExternalLaunchMetadata(context, effectiveVersionId, effectiveCatalogUrl);
+                if (!string.IsNullOrWhiteSpace(launchValidationError))
+                {
+                    analyticsAdapter?.TrackError("launch_metadata_invalid", launchValidationError, true);
+                    if (overlay != null)
+                    {
+                        overlay.ShowStatus(
+                            ResolveText(runtimeUiOverride != null ? runtimeUiOverride.issueTitle : null, "Launch Blocked"),
+                            launchValidationError);
+                    }
+
+                    isSpawning = false;
+                    yield break;
+                }
+            }
 
             bool allowOfflineCache = context == null || context.allowOfflineCacheLaunch;
             bool allowOlderCached = context == null || context.allowOlderCachedSameLab;
@@ -582,6 +609,25 @@ namespace Pitech.XR.ContentDelivery
             return statusOverlay;
         }
 
+        private static string ValidateExternalLaunchMetadata(
+            LaunchContext context,
+            string effectiveVersionId,
+            string effectiveCatalogUrl)
+        {
+            if (string.IsNullOrWhiteSpace(effectiveVersionId))
+            {
+                return "LaunchContext.versioning.resolvedVersionId is required for online launches.";
+            }
+
+            bool launchedFromCache = context != null && context.launchedFromCache;
+            if (!launchedFromCache && string.IsNullOrWhiteSpace(effectiveCatalogUrl))
+            {
+                return "LaunchContext.delivery.runtimeUrl is required for online launches.";
+            }
+
+            return null;
+        }
+
         private string ResolveEffectiveAddressKey(LaunchContext context)
         {
             if (contentSource != ContentSourceMode.LocalOnly &&
@@ -912,9 +958,9 @@ namespace Pitech.XR.ContentDelivery
             AsyncOperationHandle downloadHandle = Addressables.DownloadDependenciesAsync(key, false);
             while (!downloadHandle.IsDone)
             {
+                var status = downloadHandle.GetDownloadStatus();
                 if (overlay != null)
                 {
-                    var status = downloadHandle.GetDownloadStatus();
                     float progress = status.TotalBytes > 0
                         ? Mathf.Clamp01((float)status.DownloadedBytes / status.TotalBytes)
                         : Mathf.Clamp01(downloadHandle.PercentComplete);
@@ -928,7 +974,14 @@ namespace Pitech.XR.ContentDelivery
                         progressText);
                 }
 
+                analyticsAdapter?.TrackDownloadProgress((long)status.DownloadedBytes, (long)status.TotalBytes);
                 yield return null;
+            }
+
+            if (analyticsAdapter != null)
+            {
+                var finalStatus = downloadHandle.GetDownloadStatus();
+                analyticsAdapter.TrackDownloadProgress((long)finalStatus.DownloadedBytes, (long)finalStatus.TotalBytes);
             }
 
             bool success = downloadHandle.Status == AsyncOperationStatus.Succeeded;
@@ -1022,3 +1075,5 @@ namespace Pitech.XR.ContentDelivery
         }
     }
 }
+
+
