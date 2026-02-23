@@ -534,7 +534,9 @@ namespace Pitech.XR.ContentDelivery.Editor
             settings.profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, remoteLoadPath);
 
             return profileName;
-        }        private static string BuildRemoteLoadPath(AddressablesModuleConfig config)
+        }
+
+        private static string BuildRemoteLoadPath(AddressablesModuleConfig config)
         {
             if (config == null)
             {
@@ -619,4 +621,7 @@ namespace Pitech.XR.ContentDelivery.Editor
     }
 }
 #endif
+
+
+
 
