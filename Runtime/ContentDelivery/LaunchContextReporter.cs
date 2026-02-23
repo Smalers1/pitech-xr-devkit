@@ -154,6 +154,8 @@ namespace Pitech.XR.ContentDelivery
             {
                 Debug.Log($"[ContentDelivery] Lifecycle payload: {json}", this);
             }
+
+            AndroidUnityBridgeEmitter.EmitLifecycleJson(json);
             onLifecycleJson?.Invoke(json);
         }
 
@@ -174,3 +176,4 @@ namespace Pitech.XR.ContentDelivery
         }
     }
 }
+

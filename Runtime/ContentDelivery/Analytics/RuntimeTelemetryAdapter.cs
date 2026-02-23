@@ -476,6 +476,7 @@ namespace Pitech.XR.ContentDelivery
                 Debug.Log($"[Analytics] Telemetry batch: {json}", this);
             }
 
+            AndroidUnityBridgeEmitter.EmitTelemetryBatchJson(json);
             onTelemetryBatchJson?.Invoke(json);
         }
 
@@ -700,5 +701,8 @@ namespace Pitech.XR.ContentDelivery
         }
     }
 }
+
+
+
 
 
