@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Reflection;
 using Pitech.XR.Core;
@@ -112,6 +112,8 @@ namespace Pitech.XR.ContentDelivery
         private string loadedCatalogUrl = string.Empty;
         private AsyncOperationHandle<IResourceLocator> loadedCatalogHandle;
         private bool hasLoadedCatalogHandle;
+        private AsyncOperationHandle<GameObject> loadedPrefabHandle;
+        private bool hasLoadedPrefabHandle;
 #endif
 
         private void Awake()
@@ -140,6 +142,7 @@ namespace Pitech.XR.ContentDelivery
         private void OnDestroy()
         {
 #if PITECH_ADDR
+            ReleasePrefabHandle();
             if (hasLoadedCatalogHandle && loadedCatalogHandle.IsValid())
             {
                 Addressables.Release(loadedCatalogHandle);
@@ -182,6 +185,10 @@ namespace Pitech.XR.ContentDelivery
                 Destroy(spawnedInstance);
                 spawnedInstance = null;
             }
+
+#if PITECH_ADDR
+            ReleasePrefabHandle();
+#endif
 
             if (replaceExistingChildren && spawnParent != null)
             {
@@ -999,16 +1006,16 @@ namespace Pitech.XR.ContentDelivery
 
         private IEnumerator LoadAddressablePrefab(string key, Action<bool, GameObject, string> onComplete)
         {
+            ReleasePrefabHandle();
+
             AsyncOperationHandle<GameObject> loadHandle = Addressables.LoadAssetAsync<GameObject>(key);
             yield return loadHandle;
 
             if (loadHandle.Status == AsyncOperationStatus.Succeeded)
             {
                 GameObject result = loadHandle.Result;
-                if (loadHandle.IsValid())
-                {
-                    Addressables.Release(loadHandle);
-                }
+                loadedPrefabHandle = loadHandle;
+                hasLoadedPrefabHandle = true;
                 onComplete?.Invoke(result != null, result, null);
                 yield break;
             }
@@ -1021,6 +1028,16 @@ namespace Pitech.XR.ContentDelivery
                 Addressables.Release(loadHandle);
             }
             onComplete?.Invoke(false, null, error);
+        }
+
+        private void ReleasePrefabHandle()
+        {
+            if (hasLoadedPrefabHandle && loadedPrefabHandle.IsValid())
+            {
+                Addressables.Release(loadedPrefabHandle);
+            }
+            hasLoadedPrefabHandle = false;
+            loadedPrefabHandle = default;
         }
 #endif
 
