@@ -36,6 +36,7 @@ namespace Pitech.XR.ContentDelivery.Editor
 
             report.lab.labId = Safe(labId);
             report.lab.labVersionId = Safe(labVersionId);
+            report.addressables.addressKey = AddressablesService.ComputeAddressKey(labId);
             report.addressables.profileName = config != null ? Safe(config.profileName) : string.Empty;
             report.addressables.catalogMode = config != null ? config.catalogMode.ToString().ToLowerInvariant() : string.Empty;
             report.addressables.remoteLoadPathTemplate = config != null ? Safe(config.remoteCatalogUrlTemplate) : string.Empty;
@@ -378,6 +379,7 @@ namespace Pitech.XR.ContentDelivery.Editor
                 addressables = new PublishPipelineAddressablesInfo
                 {
                     groupName = Safe(report.addressables != null ? report.addressables.groupName : null),
+                    addressKey = Safe(report.addressables != null ? report.addressables.addressKey : null),
                     profileName = Safe(report.addressables != null ? report.addressables.profileName : null),
                     buildTarget = Safe(report.addressables != null ? report.addressables.buildTarget : null),
                 },
@@ -543,6 +545,7 @@ namespace Pitech.XR.ContentDelivery.Editor
         private sealed class PublishPipelineAddressablesInfo
         {
             public string groupName = string.Empty;
+            public string addressKey = string.Empty;
             public string profileName = string.Empty;
             public string buildTarget = string.Empty;
         }

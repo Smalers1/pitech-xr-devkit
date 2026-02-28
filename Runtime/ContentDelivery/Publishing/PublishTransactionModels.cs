@@ -75,6 +75,7 @@ namespace Pitech.XR.ContentDelivery
     {
         public string groupPolicy = "one_remote_group_per_lab";
         public string groupName = string.Empty;
+        public string addressKey = string.Empty;
         public string profileName = string.Empty;
         public string buildTarget = string.Empty;
         public string catalogMode = string.Empty;

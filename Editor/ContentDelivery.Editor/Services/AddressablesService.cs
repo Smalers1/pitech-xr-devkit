@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -471,11 +471,19 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
         }
 
-        private static string BuildDefaultPrefabAddressKey(string labId, string prefabName)
+        /// <summary>
+        /// Returns the canonical Addressables address key for a lab's main prefab.
+        /// Public so that report services can include it in build reports.
+        /// </summary>
+        public static string ComputeAddressKey(string labId)
         {
             string normalizedLabId = NormalizeKeySegment(labId, "default");
-            string normalizedPrefabName = NormalizeKeySegment(prefabName, "prefab");
-            return $"lab/{normalizedLabId}/prefab/{normalizedPrefabName}".ToLowerInvariant();
+            return $"lab/{normalizedLabId}/prefab/main".ToLowerInvariant();
+        }
+
+        private static string BuildDefaultPrefabAddressKey(string labId, string prefabName)
+        {
+            return ComputeAddressKey(labId);
         }
 
         private static string NormalizeKeySegment(string value, string fallback)
