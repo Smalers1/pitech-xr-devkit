@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.Playables;
@@ -186,6 +187,10 @@ namespace Pitech.XR.Scenario
                 else if (step is MiniQuizStep mq)
                 {
                     yield return RunMiniQuiz(mq, guid => branchGuid = guid);
+                }
+                else if (step is ConditionsStep cnd)
+                {
+                    yield return RunConditions(cnd, guid => branchGuid = guid);
                 }
 
                 // compute next index. empty guid means "next in list"
@@ -979,6 +984,108 @@ namespace Pitech.XR.Scenario
         {
             // empty => linear next
             return string.IsNullOrEmpty(prefer) ? "" : prefer;
+        }
+
+        // ---------------- CONDITIONS ----------------
+        IEnumerator RunConditions(ConditionsStep cnd, System.Action<string> onComplete)
+        {
+            if (cnd == null)
+            {
+                onComplete?.Invoke(FallbackGuid(""));
+                yield break;
+            }
+
+            var outcomes = cnd.outcomes;
+            if (outcomes == null || outcomes.Count == 0)
+            {
+                onComplete?.Invoke(FallbackGuid(""));
+                yield break;
+            }
+
+            string nextGuid = null;
+
+#if UNITY_EDITOR
+            if (_editorSkip)
+            {
+                if (_editorSkipBranchIndex >= 0 && outcomes != null && _editorSkipBranchIndex < outcomes.Count)
+                {
+                    var o = outcomes[_editorSkipBranchIndex];
+                    if (o != null) nextGuid = o.nextGuid;
+                }
+                if (nextGuid == null) nextGuid = "";
+                onComplete?.Invoke(FallbackGuid(nextGuid));
+                yield break;
+            }
+#endif
+
+            float value = GetConditionValue(cnd);
+            foreach (var o in outcomes)
+            {
+                if (o == null) continue;
+                if (ConditionsEvaluator.EvalCompare(value, o.compareOp, o.compareValue))
+                {
+                    nextGuid = o.nextGuid;
+                    break;
+                }
+            }
+            if (nextGuid == null)
+                nextGuid = "";
+            onComplete?.Invoke(FallbackGuid(nextGuid));
+        }
+
+        float GetConditionValue(ConditionsStep step)
+        {
+            if (step.valueSource == ConditionValueSource.Stat)
+            {
+                if (runtime == null) return 0f;
+                var key = string.IsNullOrEmpty(step.statKey) ? step.memberName : step.statKey;
+                return runtime.TryGet(key, out var v) ? v : 0f;
+            }
+            if (step.source == null || string.IsNullOrEmpty(step.memberName))
+                return 0f;
+            return GetValueFromComponent(step.source, step.memberName);
+        }
+
+        static float GetValueFromComponent(Component comp, string memberName)
+        {
+            if (comp == null || string.IsNullOrEmpty(memberName)) return 0f;
+            var t = comp.GetType();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;
+            var f = t.GetField(memberName, flags);
+            if (f != null)
+            {
+                var val = f.GetValue(comp);
+                if (val is float fv) return fv;
+                if (val is int iv) return iv;
+                if (val is bool bv) return bv ? 1f : 0f;
+                return 0f;
+            }
+            var p = t.GetProperty(memberName, flags);
+            if (p != null)
+            {
+                var val = p.GetValue(comp);
+                if (val is float fv) return fv;
+                if (val is int iv) return iv;
+                if (val is bool bv) return bv ? 1f : 0f;
+                return 0f;
+            }
+            return 0f;
+        }
+
+        static bool EvalCompare(float value, CompareOp op, float compareValue)
+        {
+            switch (op)
+            {
+                case CompareOp.Less: return value < compareValue;
+                case CompareOp.LessOrEqual: return value <= compareValue;
+                case CompareOp.Greater: return value > compareValue;
+                case CompareOp.GreaterOrEqual: return value >= compareValue;
+                case CompareOp.Equal: return Mathf.Approximately(value, compareValue);
+                case CompareOp.NotEqual: return !Mathf.Approximately(value, compareValue);
+                case CompareOp.IsTrue: return value > 0.5f;
+                case CompareOp.IsFalse: return value < 0.5f;
+                default: return false;
+            }
         }
 
         void ApplyEffects(List<StatEffect> effects)

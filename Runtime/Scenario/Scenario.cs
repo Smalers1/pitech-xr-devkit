@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Playables;
@@ -316,6 +316,68 @@ namespace Pitech.XR.Scenario
         public string nextGuid = "";
 
         public override string Kind => "Event";
+    }
+
+    // -------- ConditionsStep --------
+    public enum CompareOp { Less, LessOrEqual, Greater, GreaterOrEqual, Equal, NotEqual, IsTrue, IsFalse }
+
+    public enum ConditionValueSource { Stat, Component }
+
+    /// <summary>One outcome route: when value matches this comparison, go to nextGuid.</summary>
+    [Serializable]
+    public class ConditionOutcome
+    {
+        [Tooltip("Optional label for graph port (e.g. \"Low\", \"OK\")")]
+        public string label;
+
+        public CompareOp compareOp = CompareOp.Less;
+        public float compareValue;
+
+        [Tooltip("Next step (GUID) when this outcome matches. Empty = next item in list")]
+        public string nextGuid = "";
+    }
+
+    [Serializable]
+    public sealed class ConditionsStep : Step
+    {
+        [Header("What to check (one value)")]
+        [Tooltip("Where to read the value from")]
+        public ConditionValueSource valueSource = ConditionValueSource.Component;
+
+        [Tooltip("Stat key when valueSource is Stat (e.g. \"Health\", \"Money\")")]
+        public string statKey = "Health";
+
+        [Tooltip("Component (script) when valueSource is Component. Assign from any GameObject.")]
+        public Component source;
+
+        [Tooltip("Public field or property name when valueSource is Component (e.g. \"health\", \"Score\")")]
+        public string memberName;
+
+        [Header("Outcomes (checked in order, first match wins)")]
+        [Tooltip("Add multiple outcomes: if value &lt; 50 → A, if value &lt; 80 → B. Connect ports in graph for routing.")]
+        public List<ConditionOutcome> outcomes = new();
+
+        public override string Kind => "Conditions";
+    }
+
+    /// <summary>Testable evaluation logic for Conditions steps.</summary>
+    public static class ConditionsEvaluator
+    {
+        public static bool EvalCompare(float value, CompareOp op, float compareValue)
+        {
+            switch (op)
+            {
+                case CompareOp.Less: return value < compareValue;
+                case CompareOp.LessOrEqual: return value <= compareValue;
+                case CompareOp.Greater: return value > compareValue;
+                case CompareOp.GreaterOrEqual: return value >= compareValue;
+                case CompareOp.Equal: return UnityEngine.Mathf.Approximately(value, compareValue);
+                case CompareOp.NotEqual: return !UnityEngine.Mathf.Approximately(value, compareValue);
+                case CompareOp.IsTrue: return value > 0.5f;
+                case CompareOp.IsFalse: return value < 0.5f;
+                default: return false;
+            }
+        }
     }
 
     // -------- GroupStep --------

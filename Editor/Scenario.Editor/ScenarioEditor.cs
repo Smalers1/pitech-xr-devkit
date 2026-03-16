@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using UnityEditor;
@@ -70,6 +70,7 @@ namespace Pitech.XR.Scenario.Editor
                 EditorGUILayout.LabelField("• Question: set Panel Root, Animator and Buttons then add Effects", Styles.Small);
                 EditorGUILayout.LabelField("• Selection: set SelectionLists, choose list (Key or Index), rule & completion.", Styles.Small);
                 EditorGUILayout.LabelField("• Insert: set item, target trigger and optional attach behaviour.", Styles.Small);
+                EditorGUILayout.LabelField("• Conditions: assign component (or use Stat), pick member, set compare + next step per branch.", Styles.Small);
             }
 
             // STEPS SECTION
@@ -182,6 +183,7 @@ namespace Pitech.XR.Scenario.Editor
                 menu.AddItem(new GUIContent("Add Selection"), false, () => AddStep(typeof(Runtime.SelectionStep)));
                 menu.AddItem(new GUIContent("Add Insert"), false, () => AddStep(typeof(Runtime.InsertStep)));
                 menu.AddItem(new GUIContent("Add Event"), false, () => AddStep(typeof(Runtime.EventStep)));
+                menu.AddItem(new GUIContent("Add Conditions"), false, () => AddStep(typeof(Runtime.ConditionsStep)));
                 menu.AddItem(new GUIContent("Add Group"), false, () => AddStep(typeof(Runtime.GroupStep)));
                 menu.ShowAsContext();
             };
@@ -231,6 +233,7 @@ namespace Pitech.XR.Scenario.Editor
                     full.Contains(nameof(Runtime.SelectionStep)) ? "Selection" :
                     full.Contains(nameof(Runtime.InsertStep)) ? "Insert" :
                     full.Contains(nameof(Runtime.EventStep)) ? "Event" :
+                    full.Contains(nameof(Runtime.ConditionsStep)) ? "Conditions" :
                     full.Contains(nameof(Runtime.GroupStep)) ? "Group" :
                     "Step";
 
@@ -510,6 +513,33 @@ namespace Pitech.XR.Scenario.Editor
                             }
                         }
                     }
+                    else if (s is Runtime.ConditionsStep cnd)
+                    {
+                        if (cnd.outcomes == null || cnd.outcomes.Count == 0)
+                        {
+                            EditorGUILayout.LabelField("No outcomes", Styles.Muted);
+                        }
+                        else
+                        {
+                            for (int b = 0; b < cnd.outcomes.Count; b++)
+                            {
+                                var br = cnd.outcomes[b];
+                                if (br == null) continue;
+                                using (new EditorGUILayout.HorizontalScope())
+                                {
+                                    GUILayout.Label(string.IsNullOrEmpty(br.label) ? $"Branch {b}" : br.label, GUILayout.Width(80));
+                                    int choice = Popup(br.nextGuid);
+                                    string newGuid = guids[Mathf.Clamp(choice, 0, guids.Count - 1)];
+                                    if (newGuid != br.nextGuid)
+                                    {
+                                        Undo.RecordObject(sc, "Route Change");
+                                        br.nextGuid = newGuid;
+                                        EditorUtility.SetDirty(sc);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -721,6 +751,7 @@ namespace Pitech.XR.Scenario.Editor
             static readonly Color cBadgeInsert = new Color(0.90f, 0.75f, 0.25f);
             static readonly Color cBadgeEvent = new Color(0.30f, 0.70f, 0.75f);
             static readonly Color cBadgeGroup = new Color(0.55f, 0.55f, 0.60f);
+            static readonly Color cBadgeConditions = new Color(0.95f, 0.55f, 0.15f);
 
             static bool _inited;
 
@@ -813,6 +844,7 @@ namespace Pitech.XR.Scenario.Editor
                 else if (kind == "Insert") col = cBadgeInsert;
                 else if (kind == "Event") col = cBadgeEvent;
                 else if (kind == "Group") col = cBadgeGroup;
+                else if (kind == "Conditions") col = cBadgeConditions;
 
                 var bg = new Rect(r.x, r.y, r.width, r.height);
                 EditorGUI.DrawRect(bg, col);
@@ -966,7 +998,7 @@ namespace Pitech.XR.Scenario.Editor
             "panelRoot","panelAnimator","showTrigger","hideTrigger",
             "completion","submitButton","lockQuestionAfterAnswer",
             "questions",
-            "outcomes","defaultNextGuid"
+            "outcomes"
         };
 
         public override float GetPropertyHeight(SerializedProperty p, GUIContent l)
@@ -1408,5 +1440,38 @@ namespace Pitech.XR.Scenario.Editor
         }
     }
 
+    /// <summary>Hides nextGuid (routing via graph ports). Shows label, compareOp, compareValue.</summary>
+    [CustomPropertyDrawer(typeof(Runtime.ConditionOutcome))]
+    class ConditionOutcomeDrawer : PropertyDrawer
+    {
+        static readonly string[] fields = { "label", "compareOp", "compareValue" };
+
+        public override float GetPropertyHeight(SerializedProperty p, GUIContent label)
+        {
+            if (p == null) return 0f;
+            float h = 0f;
+            foreach (var f in fields)
+            {
+                var sp = p.FindPropertyRelative(f);
+                h += ((sp != null) ? EditorGUI.GetPropertyHeight(sp, true) : EditorGUIUtility.singleLineHeight)
+                   + EditorGUIUtility.standardVerticalSpacing;
+            }
+            return h;
+        }
+
+        public override void OnGUI(Rect r, SerializedProperty p, GUIContent label)
+        {
+            if (p == null) return;
+            foreach (var f in fields)
+            {
+                var sp = p.FindPropertyRelative(f);
+                string nice = f == "compareOp" ? "Compare" : f == "compareValue" ? "Value" : "Label";
+                if (sp == null) continue;
+                var h = EditorGUI.GetPropertyHeight(sp, true);
+                EditorGUI.PropertyField(new Rect(r.x, r.y, r.width, h), sp, new GUIContent(nice), true);
+                r.y += h + EditorGUIUtility.standardVerticalSpacing;
+            }
+        }
+    }
 }
 #endif

@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -57,7 +57,7 @@ public class ScenarioGraphWindow : EditorWindow
     const float StepNodeWidthExpandedWide = 360f;
 
     static float ExpandedWidthFor(Step s)
-        => s is MiniQuizStep ? StepNodeWidthExpandedWide : StepNodeWidthExpanded;
+        => (s is MiniQuizStep || s is ConditionsStep) ? StepNodeWidthExpandedWide : StepNodeWidthExpanded;
 
     string _activeGuid;
     string _prevGuid;
@@ -340,6 +340,19 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is GroupStep grp && !string.IsNullOrEmpty(grp.nextGuid) && nodes.TryGetValue(grp.guid, out var grpNode))
                 Connect(grpNode.outNext, grp.nextGuid);
 
+            if (s is ConditionsStep cnd && nodes.TryGetValue(cnd.guid, out var cndNode))
+            {
+                if (cnd.outcomes != null)
+                {
+                    for (int b = 0; b < cnd.outcomes.Count; b++)
+                    {
+                        var next = cnd.outcomes[b]?.nextGuid;
+                        if (!string.IsNullOrEmpty(next) && cndNode.outChoices != null && b < cndNode.outChoices.Count)
+                            Connect(cndNode.outChoices[b], next);
+                    }
+                }
+            }
+
             if (s is QuizStep qz && nodes.TryGetValue(qz.guid, out var qzNode))
             {
                 if (qz.completion == QuizStep.CompleteMode.BranchOnCorrectness)
@@ -577,6 +590,15 @@ public class ScenarioGraphWindow : EditorWindow
                             o.nextGuid = toGuid;
                 }
             }
+            else if (st is ConditionsStep cnd)
+            {
+                if (cnd.outcomes != null)
+                {
+                    foreach (var b in cnd.outcomes)
+                        if (b != null && b.nextGuid == fromGuid)
+                            b.nextGuid = toGuid;
+                }
+            }
             else if (st is SelectionStep sel)
             {
                 if (sel.correctNextGuid == fromGuid) sel.correctNextGuid = toGuid;
@@ -750,6 +772,14 @@ public class ScenarioGraphWindow : EditorWindow
                         if (o != null) o.nextGuid = "";
                 }
             }
+            else if (st is ConditionsStep cnd)
+            {
+                if (cnd.outcomes != null)
+                {
+                    foreach (var b in cnd.outcomes)
+                        if (b != null) b.nextGuid = "";
+                }
+            }
 
             if (st is SelectionStep sl)
             {
@@ -827,6 +857,17 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 var o = omq.outcomes[outMeta.choiceIndex];
                 if (o.nextGuid != dstGuid) { o.nextGuid = dstGuid; changed = true; }
+            }
+        }
+        else if (outMeta.owner is ConditionsStep ocnd)
+        {
+            if (outMeta.choiceIndex >= 0 &&
+                     ocnd.outcomes != null &&
+                     outMeta.choiceIndex < ocnd.outcomes.Count &&
+                     ocnd.outcomes[outMeta.choiceIndex] != null)
+            {
+                var b = ocnd.outcomes[outMeta.choiceIndex];
+                if (b.nextGuid != dstGuid) { b.nextGuid = dstGuid; changed = true; }
             }
         }
         else if (outMeta.owner is SelectionStep osl)
@@ -929,6 +970,17 @@ public class ScenarioGraphWindow : EditorWindow
                 {
                     var o = omq.outcomes[outMeta.choiceIndex];
                     if (!string.IsNullOrEmpty(o.nextGuid)) { o.nextGuid = ""; changed = true; }
+                }
+            }
+                else if (outMeta.owner is ConditionsStep ocnd)
+                {
+                    if (outMeta.choiceIndex >= 0 &&
+                         ocnd.outcomes != null &&
+                         outMeta.choiceIndex < ocnd.outcomes.Count &&
+                         ocnd.outcomes[outMeta.choiceIndex] != null)
+                {
+                    var b = ocnd.outcomes[outMeta.choiceIndex];
+                    if (!string.IsNullOrEmpty(b.nextGuid)) { b.nextGuid = ""; changed = true; }
                 }
             }
             else if (outMeta.owner is SelectionStep osl)
@@ -1039,6 +1091,15 @@ public class ScenarioGraphWindow : EditorWindow
                     foreach (var o in mq.outcomes)
                         if (o != null && !string.IsNullOrEmpty(o.nextGuid))
                             AddEdge(from, o.nextGuid);
+                }
+            }
+            if (st is ConditionsStep cnd)
+            {
+                if (cnd.outcomes != null)
+                {
+                    foreach (var b in cnd.outcomes)
+                        if (b != null && !string.IsNullOrEmpty(b.nextGuid))
+                            AddEdge(from, b.nextGuid);
                 }
             }
 
@@ -1282,6 +1343,15 @@ public class ScenarioGraphWindow : EditorWindow
                     foreach (var o in mq.outcomes)
                         if (o != null && o.nextGuid == removedGuid)
                             o.nextGuid = "";
+                }
+            }
+            else if (st is ConditionsStep cnd)
+            {
+                if (cnd.outcomes != null)
+                {
+                    foreach (var b in cnd.outcomes)
+                        if (b != null && b.nextGuid == removedGuid)
+                            b.nextGuid = "";
                 }
             }
             else if (st is SelectionStep sel)
@@ -1659,6 +1729,7 @@ public class ScenarioGraphWindow : EditorWindow
         evt.menu.AppendAction("Add/Insert", _ => CreateStep(typeof(InsertStep)));
         evt.menu.AppendAction("Add/Event", _ => CreateStep(typeof(EventStep)));
         evt.menu.AppendAction("Add/Group", _ => CreateStep(typeof(GroupStep)));
+        evt.menu.AppendAction("Add/Conditions", _ => CreateStep(typeof(ConditionsStep)));
         evt.menu.AppendSeparator();
         evt.menu.AppendAction("Add/Note", _ => CreateNote());
     }
@@ -2104,6 +2175,13 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 tbox.style.backgroundColor = new Color(0.55f, 0.55f, 0.60f);
             }
+            if (s is ConditionsStep)
+            {
+                // Darker amber for better contrast with black text
+                tbox.style.backgroundColor = new Color(0.70f, 0.38f, 0.08f);
+                if (titleLabel != null)
+                    titleLabel.style.color = Color.black;
+            }
 
             // In (nested steps do not participate in routing inside the main graph)
             if (!IsNested)
@@ -2126,6 +2204,7 @@ public class ScenarioGraphWindow : EditorWindow
                 else if (step is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);
                 else if (step is EventStep ev) StepEditWindow.OpenEvent(scenario, ev);
                 else if (step is GroupStep g) StepEditWindow.OpenGroup(scenario, g);
+                else if (step is ConditionsStep) { /* inline editing in foldout */ }
             }
 
             var editBtn = new UIEButton(OpenEditor) { text = "Edit…" };
@@ -2145,8 +2224,11 @@ public class ScenarioGraphWindow : EditorWindow
                 UpdateGroupSummaryLabel(gs);
             }
 
+            // ConditionsStep: start expanded so user immediately sees branches editor
+            bool foldStartOpen = s is ConditionsStep;
+
             // quick inline fields foldout (kept for speed)
-            var fold = new Foldout { text = "Settings", value = false };
+            var fold = new Foldout { text = "Settings", value = foldStartOpen };
             _foldout = fold;
             mainContainer.Add(fold);
 
@@ -2562,6 +2644,57 @@ public class ScenarioGraphWindow : EditorWindow
                 // Normal Next output like the other linear steps
                 outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
                 outputContainer.Add(outNext);
+            }
+            else if (s is ConditionsStep cnd)
+            {
+                var so = new SerializedObject(scenario);
+                var self = this;
+                fold.contentContainer.Add(new IMGUIContainer(() =>
+                {
+                    so.Update();
+                    var stepProp = StepEditWindow.FindStepPropertyRecursive(so, cnd.guid);
+                    if (stepProp == null) return;
+
+                    var outcomesProp = stepProp.FindPropertyRelative("outcomes");
+                    int beforeOutcomes = outcomesProp != null && outcomesProp.isArray ? outcomesProp.arraySize : -1;
+
+                    EditorGUI.BeginChangeCheck();
+
+                    var labelStyle = new GUIStyle(EditorStyles.label) { normal = { textColor = new Color(0.9f, 0.9f, 0.9f) } };
+                    var boldLabel = new GUIStyle(EditorStyles.boldLabel) { normal = { textColor = new Color(0.95f, 0.95f, 0.95f) } };
+
+                    EditorGUILayout.Space(4);
+                    EditorGUILayout.LabelField("Check (one value)", boldLabel);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("valueSource"), new GUIContent("Value Source"), true);
+                    var vs = stepProp.FindPropertyRelative("valueSource");
+                    if (vs != null && vs.enumValueIndex == 0)
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("statKey"), new GUIContent("Stat Key"), true);
+                    else
+                    {
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("source"), new GUIContent("Component"), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("memberName"), new GUIContent("Member"), true);
+                    }
+                    EditorGUILayout.Space(8);
+                    EditorGUILayout.LabelField("Outcomes (add routes)", boldLabel);
+                    if (outcomesProp != null)
+                        EditorGUILayout.PropertyField(outcomesProp, new GUIContent(""), includeChildren: true);
+                    EditorGUILayout.Space(12);
+
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        Dirty(scenario, "Edit Conditions");
+                        so.ApplyModifiedProperties();
+
+                        int afterOutcomes = outcomesProp != null && outcomesProp.isArray ? outcomesProp.arraySize : -1;
+                        if (beforeOutcomes != afterOutcomes)
+                            RecreateConditionOutcomePorts();
+                        else
+                            UpdateConditionOutcomePortLabels();
+                        self?.QueueResizeToFitDetails();
+                    }
+                }));
+
+                RecreateConditionOutcomePorts();
             }
             else if (s is QuizStep qz)
             {
@@ -3090,6 +3223,19 @@ public class ScenarioGraphWindow : EditorWindow
                     skipRow.Add(b);
                 }
             }
+            else if (step is ConditionsStep cnd)
+            {
+                var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip (Default) ▶" };
+                skipRow.Add(btn);
+                int count = cnd.outcomes != null ? cnd.outcomes.Count : 0;
+                for (int i = 0; i < Mathf.Min(count, 4); i++)
+                {
+                    int idx = i;
+                    var b = new UIEButton(() => skipRequest?.Invoke(step, idx)) { text = $"Branch {idx} ▶" };
+                    b.style.marginLeft = 2;
+                    skipRow.Add(b);
+                }
+            }
             else if (step is MiniQuizStep mq)
             {
                 // Provide a simple Skip for playmode testing (routes via Default).
@@ -3232,6 +3378,76 @@ public class ScenarioGraphWindow : EditorWindow
             return $"{min}-{max} Correct";
         }
 
+        void RecreateConditionOutcomePorts()
+        {
+            if (step is not ConditionsStep cnd) return;
+
+            if (outChoices != null)
+                foreach (var p in outChoices) outputContainer.Remove(p);
+            outChoices = new List<Port>();
+
+            if (outNext != null)
+                outputContainer.Remove(outNext);
+            outNext = null;
+
+            int count = cnd.outcomes != null ? cnd.outcomes.Count : 0;
+            if (count == 0)
+            {
+                outputContainer.Add(new Label("No outcomes (add in Settings)"));
+            }
+            else
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var b = cnd.outcomes[i];
+                    string label = b != null && !string.IsNullOrWhiteSpace(b.label) ? b.label : ConditionOutcomeLabel(b, i);
+                    var p = MakePort(Direction.Output, Port.Capacity.Single, label, i);
+                    outChoices.Add(p);
+                    outputContainer.Add(p);
+                }
+            }
+
+            RefreshPorts();
+            rebuild?.Invoke();
+        }
+
+        void UpdateConditionOutcomePortLabels()
+        {
+            if (step is not ConditionsStep cnd) return;
+
+            if (outChoices == null || outChoices.Count == 0) return;
+
+            int count = cnd.outcomes != null ? cnd.outcomes.Count : 0;
+            for (int i = 0; i < outChoices.Count; i++)
+            {
+                if (outChoices[i] == null) continue;
+                if (i >= count) break;
+                var b = cnd.outcomes[i];
+                string label = b != null && !string.IsNullOrWhiteSpace(b.label) ? b.label : ConditionOutcomeLabel(b, i);
+                outChoices[i].portName = label;
+            }
+
+            RefreshPorts();
+        }
+
+        static string ConditionOutcomeLabel(ConditionOutcome o, int index)
+        {
+            if (o == null) return $"Outcome {index}";
+            if (o.compareOp == CompareOp.IsTrue) return "True";
+            if (o.compareOp == CompareOp.IsFalse) return "False";
+            string op = o.compareOp switch
+            {
+                CompareOp.Less => "<",
+                CompareOp.LessOrEqual => "<=",
+                CompareOp.Greater => ">",
+                CompareOp.GreaterOrEqual => ">=",
+                CompareOp.Equal => "==",
+                CompareOp.NotEqual => "!=",
+                _ => "?"
+            };
+            return $"{op} {o.compareValue}";
+        }
+
         VisualElement BuildNestedTile(GroupStep group, Step sub, int ordinalIndex)
         {
             var tile = new VisualElement();
@@ -3343,6 +3559,7 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is InsertStep) return new Color(0.90f, 0.75f, 0.25f);
             if (s is EventStep) return new Color(0.25f, 0.70f, 0.70f);
             if (s is GroupStep) return new Color(0.55f, 0.55f, 0.60f);
+            if (s is ConditionsStep) return new Color(0.70f, 0.38f, 0.08f);
             return new Color(0.6f, 0.6f, 0.6f);
         }
 
@@ -3426,6 +3643,11 @@ public class ScenarioGraphWindow : EditorWindow
             {
                 int count = mq.outcomes?.Count ?? 0;
                 // Default port + outcome ports
+                return Mathf.Max(medium, 140f + 18f * Mathf.Clamp(count + 1, 0, 8));
+            }
+            if (step is ConditionsStep cnd)
+            {
+                int count = cnd.outcomes?.Count ?? 0;
                 return Mathf.Max(medium, 140f + 18f * Mathf.Clamp(count + 1, 0, 8));
             }
 
