@@ -70,7 +70,7 @@ namespace Pitech.XR.Scenario.Editor
                 EditorGUILayout.LabelField("• Question: set Panel Root, Animator and Buttons then add Effects", Styles.Small);
                 EditorGUILayout.LabelField("• Selection: set SelectionLists, choose list (Key or Index), rule & completion.", Styles.Small);
                 EditorGUILayout.LabelField("• Insert: set item, target trigger and optional attach behaviour.", Styles.Small);
-                EditorGUILayout.LabelField("• Conditions: assign component (or use Stat), pick member, set compare + next step per branch.", Styles.Small);
+                EditorGUILayout.LabelField("• Conditions: Stat, Component member, or List by label (list field + match); outcomes route per branch.", Styles.Small);
             }
 
             // STEPS SECTION

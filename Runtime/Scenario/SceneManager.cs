@@ -1041,6 +1041,14 @@ namespace Pitech.XR.Scenario
                 var key = string.IsNullOrEmpty(step.statKey) ? step.memberName : step.statKey;
                 return runtime.TryGet(key, out var v) ? v : 0f;
             }
+            if (step.valueSource == ConditionValueSource.ListByLabel)
+            {
+                if (step.source == null || string.IsNullOrEmpty(step.listFieldName) || string.IsNullOrEmpty(step.listEntryLabel))
+                    return 0f;
+                var labelField = string.IsNullOrEmpty(step.listLabelFieldName) ? "label" : step.listLabelFieldName;
+                var valueField = string.IsNullOrEmpty(step.listValueFieldName) ? "count" : step.listValueFieldName;
+                return GetValueFromLabeledList(step.source, step.listFieldName, step.listEntryLabel, labelField, valueField);
+            }
             if (step.source == null || string.IsNullOrEmpty(step.memberName))
                 return 0f;
             return GetValueFromComponent(step.source, step.memberName);
@@ -1069,6 +1077,74 @@ namespace Pitech.XR.Scenario
                 if (val is bool bv) return bv ? 1f : 0f;
                 return 0f;
             }
+            return 0f;
+        }
+
+        /// <summary>
+        /// Reads a numeric value from a component field/property that holds an enumerable of rows:
+        /// finds the row whose <paramref name="labelFieldName"/> string equals <paramref name="entryLabel"/>,
+        /// then reads <paramref name="valueFieldName"/> from that row.
+        /// </summary>
+        static float GetValueFromLabeledList(Component comp, string listFieldName, string entryLabel, string labelFieldName, string valueFieldName)
+        {
+            if (comp == null || string.IsNullOrEmpty(listFieldName) || string.IsNullOrEmpty(entryLabel)) return 0f;
+            var listObj = GetFieldOrPropertyValue(comp, listFieldName);
+            if (listObj == null) return 0f;
+            if (listObj is string || listObj is not IEnumerable enumerable) return 0f;
+
+            foreach (var item in enumerable)
+            {
+                if (item == null) continue;
+                var lab = ReadStringMember(item, labelFieldName);
+                if (lab != entryLabel) continue;
+                return ReadNumericMember(item, valueFieldName);
+            }
+            return 0f;
+        }
+
+        static object GetFieldOrPropertyValue(object target, string name)
+        {
+            if (target == null || string.IsNullOrEmpty(name)) return null;
+            var t = target.GetType();
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            var f = t.GetField(name, flags);
+            if (f != null) return f.GetValue(target);
+            var p = t.GetProperty(name, flags);
+            if (p != null) return p.GetValue(target);
+            return null;
+        }
+
+        static string ReadStringMember(object item, string memberName)
+        {
+            if (item == null || string.IsNullOrEmpty(memberName)) return null;
+            var t = item.GetType();
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            var f = t.GetField(memberName, flags);
+            if (f != null && f.GetValue(item) is string s1) return s1;
+            var p = t.GetProperty(memberName, flags);
+            if (p != null && p.GetValue(item) is string s2) return s2;
+            return null;
+        }
+
+        static float ReadNumericMember(object item, string memberName)
+        {
+            if (item == null || string.IsNullOrEmpty(memberName)) return 0f;
+            var t = item.GetType();
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            var f = t.GetField(memberName, flags);
+            if (f != null) return ConvertToConditionFloat(f.GetValue(item));
+            var p = t.GetProperty(memberName, flags);
+            if (p != null) return ConvertToConditionFloat(p.GetValue(item));
+            return 0f;
+        }
+
+        static float ConvertToConditionFloat(object val)
+        {
+            if (val == null) return 0f;
+            if (val is float fv) return fv;
+            if (val is int iv) return iv;
+            if (val is bool bv) return bv ? 1f : 0f;
+            if (val is double dv) return (float)dv;
             return 0f;
         }
 

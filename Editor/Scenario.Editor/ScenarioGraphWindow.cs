@@ -2665,14 +2665,34 @@ public class ScenarioGraphWindow : EditorWindow
 
                     EditorGUILayout.Space(4);
                     EditorGUILayout.LabelField("Check (one value)", boldLabel);
-                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("valueSource"), new GUIContent("Value Source"), true);
+                    EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("valueSource"), new GUIContent("Value Source",
+                        "Where we read one number to compare.\n\n" +
+                        "• Stat — scenario stats; set Stat Key.\n" +
+                        "• Component — one public field on a script (e.g. score).\n" +
+                        "• List by label — find a row in a list by name, then read a number from that row."), true);
                     var vs = stepProp.FindPropertyRelative("valueSource");
                     if (vs != null && vs.enumValueIndex == 0)
-                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("statKey"), new GUIContent("Stat Key"), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("statKey"), new GUIContent("Stat Key",
+                            "Only for Stat. The stat name to read (same spelling as elsewhere), e.g. Health or Money."), true);
+                    else if (vs != null && vs.enumValueIndex == 2)
+                    {
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("source"), new GUIContent("Component",
+                            "Required. The script that has the list — drag the object and pick the component (e.g. your counters script)."), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listFieldName"), new GUIContent("List Field",
+                            "Required. Exact name of the public field or property on that script that is the list or array (e.g. counters)."), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listEntryLabel"), new GUIContent("Match Label",
+                            "Required. The text we search for. We pick the row whose label text equals this exactly (e.g. EmergencyCount)."), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listLabelFieldName"), new GUIContent("Row Label Field",
+                            "Usually leave as label. On each row, the name of the text field we compare to Match Label. Change only if your row uses another field name."), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("listValueFieldName"), new GUIContent("Row Value Field",
+                            "Usually leave as count. On each row, the name of the number we read for the condition. Change only if your row uses another field name."), true);
+                    }
                     else
                     {
-                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("source"), new GUIContent("Component"), true);
-                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("memberName"), new GUIContent("Member"), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("source"), new GUIContent("Component",
+                            "The script with the value — drag the object and pick the component."), true);
+                        EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("memberName"), new GUIContent("Member",
+                            "Required for Component. Exact name of one public field or property (e.g. score). Must be a single number, not a list."), true);
                     }
                     EditorGUILayout.Space(8);
                     EditorGUILayout.LabelField("Outcomes (add routes)", boldLabel);
