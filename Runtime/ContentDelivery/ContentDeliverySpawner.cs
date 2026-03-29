@@ -107,6 +107,8 @@ namespace Pitech.XR.ContentDelivery
 
         private GameObject spawnedInstance;
         private bool isSpawning;
+        private bool subscribedToContextChanges;
+        private bool hasCompletedInitialSpawn;
 
 #if PITECH_ADDR
         private string loadedCatalogUrl = string.Empty;
@@ -137,6 +139,8 @@ namespace Pitech.XR.ContentDelivery
             {
                 TrySetAutoStart(sceneManager, false);
             }
+
+            SubscribeToContextChanges();
         }
 
         private void OnDestroy()
@@ -150,10 +154,18 @@ namespace Pitech.XR.ContentDelivery
             hasLoadedCatalogHandle = false;
             loadedCatalogUrl = string.Empty;
 #endif
+
+            if (subscribedToContextChanges &&
+                XRServices.TryGet<IContentDeliveryService>(out IContentDeliveryService svc))
+            {
+                svc.OnLaunchContextResolved -= HandleLaunchContextChanged;
+            }
         }
 
         private void Start()
         {
+            SubscribeToContextChanges();
+
             if (loadOnSceneStart)
             {
                 SpawnNow();
@@ -194,6 +206,41 @@ namespace Pitech.XR.ContentDelivery
             {
                 ClearChildren(spawnParent);
             }
+        }
+
+        private void SubscribeToContextChanges()
+        {
+            if (subscribedToContextChanges)
+            {
+                return;
+            }
+
+            if (!XRServices.TryGet<IContentDeliveryService>(out IContentDeliveryService service))
+            {
+                return;
+            }
+
+            service.OnLaunchContextResolved += HandleLaunchContextChanged;
+            subscribedToContextChanges = true;
+        }
+
+        private void HandleLaunchContextChanged(LaunchContext context)
+        {
+            // Skip the initial context set by AddressablesBootstrapper.Start().
+            // Only react to subsequent (re-launch) contexts.
+            if (!hasCompletedInitialSpawn)
+            {
+                return;
+            }
+
+            if (isSpawning)
+            {
+                Debug.LogWarning("[ContentDelivery] Re-launch requested while spawn is in progress. Ignoring.");
+                return;
+            }
+
+            ClearSpawnedContent();
+            SpawnNow();
         }
 
         private IEnumerator SpawnRoutine()
@@ -258,6 +305,7 @@ namespace Pitech.XR.ContentDelivery
                             launchValidationError);
                     }
 
+                    hasCompletedInitialSpawn = true;
                     isSpawning = false;
                     yield break;
                 }
@@ -532,6 +580,7 @@ namespace Pitech.XR.ContentDelivery
                     overlay.Hide();
                 }
 
+                hasCompletedInitialSpawn = true;
                 isSpawning = false;
                 yield break;
             }
@@ -551,6 +600,7 @@ namespace Pitech.XR.ContentDelivery
                     }
                 }
 
+                hasCompletedInitialSpawn = true;
                 isSpawning = false;
                 yield break;
             }
@@ -577,6 +627,7 @@ namespace Pitech.XR.ContentDelivery
                 TryRestart(sceneManager);
             }
 
+            hasCompletedInitialSpawn = true;
             isSpawning = false;
         }
 

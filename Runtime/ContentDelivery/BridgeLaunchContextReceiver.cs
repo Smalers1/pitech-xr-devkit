@@ -1,4 +1,5 @@
 ﻿using System;
+using Pitech.XR.Core;
 using UnityEngine;
 
 namespace Pitech.XR.ContentDelivery
@@ -98,7 +99,34 @@ namespace Pitech.XR.ContentDelivery
                 }
             }
 
+            // If service already has a context (re-launch), dispatch directly
+            // to fire OnLaunchContextResolved. On first launch the service has
+            // no context yet, so we fall through to the registry for the
+            // bootstrapper to consume during Start().
+            if (TryDispatchDirectly(context))
+            {
+                return;
+            }
+
             LaunchContextRegistry.SetExternalContext(context);
+        }
+
+        private static bool TryDispatchDirectly(LaunchContext context)
+        {
+            if (!XRServices.TryGet<IContentDeliveryService>(out IContentDeliveryService service))
+            {
+                return false;
+            }
+
+            // No current context means bootstrapper hasn't run Start() yet —
+            // let the registry path handle the first launch normally.
+            if (!service.TryGetCurrentContext(out _))
+            {
+                return false;
+            }
+
+            service.SetLaunchContext(context);
+            return true;
         }
 
         private static string FirstNonEmpty(params string[] values)
