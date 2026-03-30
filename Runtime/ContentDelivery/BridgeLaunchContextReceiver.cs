@@ -79,6 +79,8 @@ namespace Pitech.XR.ContentDelivery
                 context.requestedAt = Timestamp.UtcNowIso8601();
             }
 
+            Debug.Log($"[BridgeReceiver] Received payload — labId={context.labId}, addressKey={context.addressKey}, runtimeUrl={(string.IsNullOrWhiteSpace(context.runtimeUrl) ? "EMPTY" : context.runtimeUrl.Substring(0, System.Math.Min(60, context.runtimeUrl.Length)))}, resolvedVersionId={context.resolvedVersionId}");
+
             // Ensure attempt lineage exists even when payload is partial.
             if (string.IsNullOrWhiteSpace(context.launchRequestId) ||
                 string.IsNullOrWhiteSpace(context.attemptId) ||
@@ -105,9 +107,11 @@ namespace Pitech.XR.ContentDelivery
             // bootstrapper to consume during Start().
             if (TryDispatchDirectly(context))
             {
+                Debug.Log("[BridgeReceiver] Dispatched directly (re-launch path).");
                 return;
             }
 
+            Debug.Log("[BridgeReceiver] Stored in registry (first-launch path).");
             LaunchContextRegistry.SetExternalContext(context);
         }
 

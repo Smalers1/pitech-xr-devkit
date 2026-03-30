@@ -50,8 +50,11 @@ namespace Pitech.XR.ContentDelivery
         {
             if (context == null)
             {
+                Debug.LogWarning("[ContentDelivery] SetLaunchContext called with null.");
                 return;
             }
+
+            Debug.Log($"[ContentDelivery] SetLaunchContext — source={context.source}, labId={context.labId}, addressKey={(string.IsNullOrWhiteSpace(context.addressKey) ? "EMPTY" : context.addressKey)}");
 
             if (string.IsNullOrWhiteSpace(context.requestedAt))
             {
@@ -67,11 +70,12 @@ namespace Pitech.XR.ContentDelivery
 
             if (!LaunchContextValidation.TryValidateRuntimeLaunchContext(context, out string validationError))
             {
-                Debug.LogError($"[ContentDelivery] Launch context rejected: {validationError}");
+                Debug.LogError($"[ContentDelivery] Launch context REJECTED: {validationError}");
                 return;
             }
 
             currentContext = context;
+            Debug.Log($"[ContentDelivery] Context accepted. Firing OnLaunchContextResolved (subscribers={OnLaunchContextResolved?.GetInvocationList()?.Length ?? 0}).");
             OnLaunchContextResolved?.Invoke(context);
         }
 

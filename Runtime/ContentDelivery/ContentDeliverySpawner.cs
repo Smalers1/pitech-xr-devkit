@@ -226,10 +226,13 @@ namespace Pitech.XR.ContentDelivery
 
         private void HandleLaunchContextChanged(LaunchContext context)
         {
+            Debug.Log($"[ContentDelivery] HandleLaunchContextChanged — hasCompletedInitialSpawn={hasCompletedInitialSpawn}, isSpawning={isSpawning}, labId={context?.labId}");
+
             // Skip the initial context set by AddressablesBootstrapper.Start().
             // Only react to subsequent (re-launch) contexts.
             if (!hasCompletedInitialSpawn)
             {
+                Debug.Log("[ContentDelivery] Skipping — initial spawn not yet complete.");
                 return;
             }
 
@@ -239,6 +242,7 @@ namespace Pitech.XR.ContentDelivery
                 return;
             }
 
+            Debug.Log("[ContentDelivery] Re-launch: clearing old content and spawning new.");
             ClearSpawnedContent();
             SpawnNow();
         }
@@ -246,6 +250,7 @@ namespace Pitech.XR.ContentDelivery
         private IEnumerator SpawnRoutine()
         {
             isSpawning = true;
+            Debug.Log("[ContentDelivery] SpawnRoutine started.");
 
             ContentDeliveryStatusOverlay overlay = ResolveOverlay();
             if (overlay != null)
@@ -276,6 +281,7 @@ namespace Pitech.XR.ContentDelivery
 
             string effectiveLabId = FirstNonEmpty(context != null ? context.labId : null, labId, "default");
             string effectiveAddressKey = ResolveEffectiveAddressKey(context);
+            Debug.Log($"[ContentDelivery] SpawnRoutine — labId={effectiveLabId}, addressKey={(string.IsNullOrWhiteSpace(effectiveAddressKey) ? "EMPTY" : effectiveAddressKey)}, source={context?.source}");
             bool hasInternalMetadata = TryResolveInternalMetadata(
                 effectiveLabId,
                 out string internalResolvedVersionId,
@@ -295,6 +301,7 @@ namespace Pitech.XR.ContentDelivery
             if (externalLaunchDriven)
             {
                 string launchValidationError = ValidateExternalLaunchMetadata(context, effectiveVersionId, effectiveCatalogUrl);
+                Debug.Log($"[ContentDelivery] Validation — versionId={(string.IsNullOrWhiteSpace(effectiveVersionId) ? "EMPTY" : effectiveVersionId)}, catalogUrl={(string.IsNullOrWhiteSpace(effectiveCatalogUrl) ? "EMPTY" : effectiveCatalogUrl.Substring(0, System.Math.Min(60, effectiveCatalogUrl.Length)))}, error={(launchValidationError ?? "NONE")}");
                 if (!string.IsNullOrWhiteSpace(launchValidationError))
                 {
                     analyticsAdapter?.TrackError("launch_metadata_invalid", launchValidationError, true);
@@ -606,9 +613,11 @@ namespace Pitech.XR.ContentDelivery
             }
 
             Transform parent = spawnParent != null ? spawnParent : transform;
+            Debug.Log($"[ContentDelivery] Instantiating prefab '{prefabToSpawn.name}' under '{parent.name}' (parent active={parent.gameObject.activeInHierarchy})");
             spawnedInstance = Instantiate(prefabToSpawn, parent);
             spawnedInstance.transform.localPosition = Vector3.zero;
             spawnedInstance.transform.localRotation = Quaternion.identity;
+            Debug.Log("[ContentDelivery] Content spawned successfully.");
 
             if (overlay != null)
             {

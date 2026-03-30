@@ -54,10 +54,12 @@ namespace Pitech.XR.ContentDelivery
         {
             if (service == null)
             {
+                Debug.LogWarning("[Bootstrapper] Service is null in Start — skipping.");
                 return;
             }
 
             LaunchContext context = ResolveLaunchContext();
+            Debug.Log($"[Bootstrapper] Resolved context — source={context.source}, labId={context.labId}, addressKey={(string.IsNullOrWhiteSpace(context.addressKey) ? "EMPTY" : context.addressKey)}");
             service.SetLaunchContext(context);
 
             if (sceneManager != null && restartSceneManagerAfterContext)
