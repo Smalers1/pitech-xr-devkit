@@ -191,7 +191,8 @@ namespace Pitech.XR.ContentDelivery.Editor
                 : report.transactionId;
             string assetPath = $"{ReportsAssetFolder}/PublishTransaction_{safeId}.asset";
 
-            string jsonFolder = ResolveReportJsonFolder(config);
+            string labId = report.lab != null ? Safe(report.lab.labId) : string.Empty;
+            string jsonFolder = ResolveReportJsonFolder(config, labId);
             string jsonAbsoluteFolder = ToAbsolutePath(jsonFolder);
             Directory.CreateDirectory(jsonAbsoluteFolder);
             string readableBaseName = BuildReportBaseName(report);
@@ -283,20 +284,33 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
         }
 
-        private static string ResolveReportJsonFolder(AddressablesModuleConfig config)
+        private static string ResolveReportJsonFolder(AddressablesModuleConfig config, string labId = null)
         {
+            string baseFolder;
             if (config != null && !string.IsNullOrWhiteSpace(config.localReportsFolder))
             {
-                return NormalizeProjectRelativePath(config.localReportsFolder, $"{DefaultWorkspaceRoot}/Reports");
+                baseFolder = NormalizeProjectRelativePath(config.localReportsFolder, $"{DefaultWorkspaceRoot}/Reports");
             }
-
-            if (config != null && !string.IsNullOrWhiteSpace(config.localWorkspaceRoot))
+            else if (config != null && !string.IsNullOrWhiteSpace(config.localWorkspaceRoot))
             {
                 string root = NormalizeProjectRelativePath(config.localWorkspaceRoot, DefaultWorkspaceRoot);
-                return $"{root}/Reports";
+                baseFolder = $"{root}/Reports";
+            }
+            else
+            {
+                baseFolder = $"{DefaultWorkspaceRoot}/Reports";
             }
 
-            return $"{DefaultWorkspaceRoot}/Reports";
+            if (!string.IsNullOrWhiteSpace(labId))
+            {
+                string safeLab = System.Text.RegularExpressions.Regex.Replace(labId.Trim(), "[^a-zA-Z0-9-_]+", "-").Trim('-');
+                if (!string.IsNullOrWhiteSpace(safeLab))
+                {
+                    return $"{baseFolder}/{safeLab}";
+                }
+            }
+
+            return baseFolder;
         }
 
         private static string NormalizeProjectRelativePath(string value, string fallback)

@@ -88,6 +88,7 @@ namespace Pitech.XR.ContentDelivery.Editor
 
             ValidateProfile(settings, config, result);
             ValidateRemoteTemplate(config, result);
+            ValidateCcdBucketUrl(settings, config, result);
             ValidateExpectedGroup(settings, groupName, result);
             ValidateRemoteSchema(settings, groupName, result);
             ValidateEmptyGroups(settings, result);
@@ -243,6 +244,55 @@ namespace Pitech.XR.ContentDelivery.Editor
             {
                 result.Add(Pass("REMOTE_TEMPLATE_OK", "Remote catalog template includes recommended placeholders.", "config"));
             }
+        }
+
+        private static void ValidateCcdBucketUrl(
+            AddressableAssetSettings settings,
+            AddressablesModuleConfig config,
+            AddressablesValidationResult result)
+        {
+            if (config.catalogMode == CatalogMode.Local || config.provider != ContentDeliveryProvider.CCD)
+            {
+                return;
+            }
+
+            string profileName = string.IsNullOrWhiteSpace(config.profileName) ? "Default" : config.profileName.Trim();
+            string profileId = settings.profileSettings.GetProfileId(profileName);
+            if (string.IsNullOrEmpty(profileId))
+            {
+                return;
+            }
+
+            string loadPath = settings.profileSettings.GetValueByName(profileId, AddressableAssetSettings.kRemoteLoadPath);
+            if (string.IsNullOrWhiteSpace(loadPath))
+            {
+                return;
+            }
+
+            if (loadPath.IndexOf("cdn.example.invalid", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                result.Add(Fail(
+                    "CCD_BUCKET_URL_PLACEHOLDER",
+                    PublishCheckSeverity.Error,
+                    "Remote load path still uses the placeholder URL (cdn.example.invalid). Set the CCD Bucket URL for this lab.",
+                    "config",
+                    "Provide a real CCD bucket URL in the Addressables Builder's 'CCD Bucket URL (per-lab)' field, then re-run Setup."));
+                return;
+            }
+
+            if (loadPath.IndexOf("/buckets/", StringComparison.OrdinalIgnoreCase) < 0 &&
+                loadPath.IndexOf("unity3dusercontent.com", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                result.Add(Fail(
+                    "CCD_BUCKET_URL_MISSING_BUCKET",
+                    PublishCheckSeverity.Warning,
+                    "Remote load path points to CCD but does not contain a /buckets/ segment. Verify the URL includes the correct bucket ID.",
+                    "config",
+                    "Use the full CCD bucket URL including the bucket ID."));
+                return;
+            }
+
+            result.Add(Pass("CCD_BUCKET_URL_OK", "Remote load path contains a CCD bucket URL.", "config"));
         }
 
         private static void ValidateRemoteSchema(

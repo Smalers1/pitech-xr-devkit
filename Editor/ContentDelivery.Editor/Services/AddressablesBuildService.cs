@@ -32,7 +32,7 @@ namespace Pitech.XR.ContentDelivery.Editor
 
     public sealed class AddressablesBuildService
     {
-        public AddressablesBuildResult Build(AddressablesModuleConfig config, bool dryRun)
+        public AddressablesBuildResult Build(AddressablesModuleConfig config, bool dryRun, string labId = null)
         {
             AddressablesBuildResult result = new AddressablesBuildResult
             {

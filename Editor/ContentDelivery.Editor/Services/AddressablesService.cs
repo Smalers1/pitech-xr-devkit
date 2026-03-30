@@ -62,7 +62,7 @@ namespace Pitech.XR.ContentDelivery.Editor
         private const string DefaultRemoteBaseUrl = "https://cdn.example.invalid/content";
         private const string DefaultRemoteLoadPathTemplate = "{baseUrl}/{environment}/[BuildTarget]";
 
-        public AddressablesSetupResult EnsureInitialized(string labIdHint)
+        public AddressablesSetupResult EnsureInitialized(string labIdHint, string ccdBucketUrlOverride = null)
         {
             AddressablesSetupResult result = new AddressablesSetupResult
             {
@@ -94,7 +94,8 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
 
             EnsureDefineSymbol("PITECH_ADDR");
-            string selectedProfile = EnsureProfile(settings, config, out bool createdProfile);
+            string resolvedLabIdForProfile = string.IsNullOrWhiteSpace(labIdHint) ? "default" : labIdHint.Trim();
+            string selectedProfile = EnsureProfile(settings, config, out bool createdProfile, ccdBucketUrlOverride, resolvedLabIdForProfile);
             result.profileName = selectedProfile;
             result.createdProfile = createdProfile;
 
@@ -486,6 +487,29 @@ namespace Pitech.XR.ContentDelivery.Editor
             return ComputeAddressKey(labId);
         }
 
+        public int CleanOtherLabGroups(AddressablesModuleConfig config, string labIdHint)
+        {
+            if (!ContentDeliveryCapability.HasAddressablesPackage)
+            {
+                return 0;
+            }
+
+#if PITECH_ADDR
+            AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.Settings;
+            if (settings == null)
+            {
+                return 0;
+            }
+
+            IAddressablesConventionAdapter adapter = AddressablesAdapterResolver.Resolve(config);
+            string resolvedLabId = string.IsNullOrWhiteSpace(labIdHint) ? "default" : labIdHint.Trim();
+            string keepGroup = adapter.BuildGroupName(config, resolvedLabId);
+            return RemoveOtherLabGroups(settings, adapter, keepGroup);
+#else
+            return 0;
+#endif
+        }
+
         private static string NormalizeKeySegment(string value, string fallback)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -523,7 +547,9 @@ namespace Pitech.XR.ContentDelivery.Editor
         private static string EnsureProfile(
             AddressableAssetSettings settings,
             AddressablesModuleConfig config,
-            out bool created)
+            out bool created,
+            string ccdBucketUrlOverride = null,
+            string labId = null)
         {
             created = false;
             string profileName = string.IsNullOrWhiteSpace(config.profileName) ? "Default" : config.profileName.Trim();
@@ -536,8 +562,10 @@ namespace Pitech.XR.ContentDelivery.Editor
                 created = true;
             }
 
-            string remoteBuildPath = BuildRemoteBuildPath(config, profileName);
-            string remoteLoadPath = BuildRemoteLoadPath(config);
+            string remoteBuildPath = BuildRemoteBuildPath(config, profileName, labId);
+            string remoteLoadPath = !string.IsNullOrWhiteSpace(ccdBucketUrlOverride)
+                ? ccdBucketUrlOverride.Trim().TrimEnd('/')
+                : BuildRemoteLoadPath(config);
             settings.profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteBuildPath, remoteBuildPath);
             settings.profileSettings.SetValue(profileId, AddressableAssetSettings.kRemoteLoadPath, remoteLoadPath);
 
@@ -565,7 +593,7 @@ namespace Pitech.XR.ContentDelivery.Editor
                 .Replace("{environment}", env);
         }
 
-        private static string BuildRemoteBuildPath(AddressablesModuleConfig config, string profileName)
+        private static string BuildRemoteBuildPath(AddressablesModuleConfig config, string profileName, string labId = null)
         {
             string workspaceRoot = "Build/ContentDelivery";
             if (config != null && !string.IsNullOrWhiteSpace(config.localWorkspaceRoot))
@@ -574,7 +602,8 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
 
             string safeProfile = string.IsNullOrWhiteSpace(profileName) ? "Default" : profileName.Trim();
-            return $"{workspaceRoot}/Addressables/{safeProfile}/[BuildTarget]";
+            string labSegment = string.IsNullOrWhiteSpace(labId) ? string.Empty : $"/{NormalizeKeySegment(labId, "default")}";
+            return $"{workspaceRoot}/Addressables/{safeProfile}{labSegment}/[BuildTarget]";
         }
 
         private static string NormalizeProjectRelativePath(string path, string fallback)
@@ -587,6 +616,50 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
 
             return normalized;
+        }
+
+        internal static int RemoveOtherLabGroups(
+            AddressableAssetSettings settings,
+            IAddressablesConventionAdapter adapter,
+            string keepGroupName)
+        {
+            if (settings == null || adapter == null)
+            {
+                return 0;
+            }
+
+            List<AddressableAssetGroup> toRemove = new List<AddressableAssetGroup>();
+            foreach (AddressableAssetGroup group in settings.groups)
+            {
+                if (group == null || group.ReadOnly)
+                {
+                    continue;
+                }
+
+                if (!adapter.TryParseLabId(group.Name, out _))
+                {
+                    continue;
+                }
+
+                if (string.Equals(group.Name, keepGroupName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                toRemove.Add(group);
+            }
+
+            for (int i = 0; i < toRemove.Count; i++)
+            {
+                settings.RemoveGroup(toRemove[i]);
+            }
+
+            if (toRemove.Count > 0)
+            {
+                EditorUtility.SetDirty(settings);
+            }
+
+            return toRemove.Count;
         }
 
         private static bool EnsureRemoteGroup(AddressableAssetSettings settings, string groupName)

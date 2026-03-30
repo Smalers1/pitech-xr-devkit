@@ -22,6 +22,7 @@ namespace Pitech.XR.Core.Editor
         private ObjectField configField;
         private TextField labIdField;
         private TextField labVersionField;
+        private TextField ccdBucketUrlField;
         private ObjectField prefabField;
         private Label groupPreviewValueLabel;
         private Label keyPreviewValueLabel;
@@ -113,6 +114,14 @@ private void OnEnable()
             labVersionField = new TextField("Lab version id") { value = string.Empty };
             section.Add(labVersionField);
 
+            ccdBucketUrlField = new TextField("CCD Bucket URL (per-lab)")
+            {
+                value = string.Empty,
+                tooltip = "Full CCD bucket URL for this lab's content. Each lab has its own CCD bucket. " +
+                          "Example: https://...client-api.unity3dusercontent.com/.../buckets/{bucketId}/release_by_badge/latest/entry_by_path/content/?path="
+            };
+            section.Add(ccdBucketUrlField);
+
             prefabField = new ObjectField("Prefab to include")
             {
                 objectType = typeof(GameObject),
@@ -157,6 +166,7 @@ private void OnEnable()
             scroll.Add(section);
 
             EnsureConfigFieldValue();
+            PrePopulateCcdBucketUrl();
             RegisterFieldCallbacks();
         }
 
@@ -179,6 +189,10 @@ private void OnEnable()
                 validationPassed = false;
                 mappingIsValid = false;
                 RefreshMappingPreview();
+            });
+            ccdBucketUrlField.RegisterValueChangedCallback(_ =>
+            {
+                validationPassed = false;
             });
             validationGateToggle.RegisterValueChangedCallback(_ => RefreshStepState());
         }
@@ -208,6 +222,33 @@ private void OnEnable()
             return string.IsNullOrWhiteSpace(labIdField != null ? labIdField.value : null)
                 ? "default"
                 : labIdField.value.Trim();
+        }
+
+        private string ResolveCcdBucketUrl()
+        {
+            string value = ccdBucketUrlField != null ? ccdBucketUrlField.value : null;
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private void PrePopulateCcdBucketUrl()
+        {
+            if (ccdBucketUrlField == null || !string.IsNullOrWhiteSpace(ccdBucketUrlField.value))
+            {
+                return;
+            }
+
+            var config = configField != null ? configField.value as AddressablesModuleConfig : null;
+            if (config == null)
+            {
+                return;
+            }
+
+            string template = config.remoteLoadPathTemplate;
+            if (!string.IsNullOrWhiteSpace(template) &&
+                template.IndexOf("unity3dusercontent.com", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                ccdBucketUrlField.SetValueWithoutNotify(template.Trim());
+            }
         }
 
         private void RefreshMappingPreview()
@@ -326,11 +367,14 @@ private void OnEnable()
 
         private void RunSetup()
         {
-            var setup = setupService.EnsureInitialized(ResolveLabId());
+            var setup = setupService.EnsureInitialized(ResolveLabId(), ResolveCcdBucketUrl());
             validationPassed = false;
             EnsureConfigFieldValue();
             RefreshMappingPreview();
-            feedbackLabel.text = BuildSetupSummary(setup);
+            string bucketNote = ResolveCcdBucketUrl() != null
+                ? $"\nCCD Bucket URL override: applied"
+                : string.Empty;
+            feedbackLabel.text = BuildSetupSummary(setup) + bucketNote;
             DevkitHubWindow.TryRefresh();
         }
 
@@ -407,6 +451,8 @@ private void OnEnable()
                 return;
             }
 
+            setupService.EnsureInitialized(ResolveLabId(), ResolveCcdBucketUrl());
+
             AddressablesValidationResult validation = null;
             PublishTransactionReportData report = reportService.CreateDraft(
                 config,
@@ -432,8 +478,9 @@ private void OnEnable()
                 }
             }
 
+            int removedGroups = setupService.CleanOtherLabGroups(config, ResolveLabId());
             reportService.ApplyBuildStart(report, "addressables_builder_build");
-            AddressablesBuildResult build = buildService.Build(config, dryRun: false);
+            AddressablesBuildResult build = buildService.Build(config, dryRun: false, ResolveLabId());
             lastUploadFolder = build != null
                 ? (string.IsNullOrWhiteSpace(build.uploadPath) ? (build.outputPath ?? string.Empty) : build.uploadPath)
                 : string.Empty;
@@ -443,8 +490,12 @@ private void OnEnable()
             string validationLine = validation != null
                 ? BuildValidationSummary(validation) + "\n"
                 : string.Empty;
+            string cleanupLine = removedGroups > 0
+                ? $"Cleaned {removedGroups} stale lab group(s).\n"
+                : string.Empty;
             feedbackLabel.text =
                 validationLine +
+                cleanupLine +
                 $"{BuildBuildSummary(build)}\n" +
                 $"State: {report.state}\n" +
                 $"Report: {saved.jsonPath}";
@@ -460,7 +511,7 @@ private void OnEnable()
                 return;
             }
 
-            AddressablesSetupResult setup = setupService.EnsureInitialized(ResolveLabId());
+            AddressablesSetupResult setup = setupService.EnsureInitialized(ResolveLabId(), ResolveCcdBucketUrl());
             if (!setup.success)
             {
                 feedbackLabel.text = BuildSetupSummary(setup);
@@ -475,6 +526,7 @@ private void OnEnable()
                 return;
             }
 
+            int removedGroups = setupService.CleanOtherLabGroups(config, ResolveLabId());
             AddressablesValidationResult validation = validationService.Validate(config, ResolveLabId());
             validationPassed = validation.success;
             PublishTransactionReportData report = reportService.CreateDraft(
@@ -497,16 +549,20 @@ private void OnEnable()
             }
 
             reportService.ApplyBuildStart(report, "addressables_builder_one_minute");
-            AddressablesBuildResult build = buildService.Build(config, dryRun: false);
+            AddressablesBuildResult build = buildService.Build(config, dryRun: false, ResolveLabId());
             lastUploadFolder = build != null
                 ? (string.IsNullOrWhiteSpace(build.uploadPath) ? (build.outputPath ?? string.Empty) : build.uploadPath)
                 : string.Empty;
             reportService.ApplyBuildResult(report, build, "addressables_builder_one_minute");
             PublishReportWriteResult saved = reportService.Save(report, config);
 
+            string cleanupLine = removedGroups > 0
+                ? $"Cleaned {removedGroups} stale lab group(s).\n"
+                : string.Empty;
             feedbackLabel.text =
                 $"{BuildSetupSummary(setup)}\n" +
                 $"Mapped: {map.addressKey}\n" +
+                cleanupLine +
                 $"{BuildValidationSummary(validation)}\n" +
                 $"{BuildBuildSummary(build)}\n" +
                 $"State: {report.state}\n" +
