@@ -350,20 +350,60 @@ namespace Pitech.XR.ContentDelivery.Editor
 
         private static string ReadDevkitVersion()
         {
-            string packagePath = Path.GetFullPath("Packages/pitech-xr-devkit/package.json");
-            if (!File.Exists(packagePath))
+            try
             {
-                packagePath = Path.GetFullPath("Packages/com.pitech.xr.devkit/package.json");
+                UnityEditor.PackageManager.PackageInfo info =
+                    UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PublishReportService).Assembly);
+                if (info != null)
+                {
+                    if (!string.IsNullOrWhiteSpace(info.resolvedPath))
+                    {
+                        string packageJson = Path.Combine(info.resolvedPath, "package.json");
+                        if (File.Exists(packageJson))
+                        {
+                            string json = File.ReadAllText(packageJson);
+                            Match match = Regex.Match(json, "\"version\"\\s*:\\s*\"(?<value>[^\"]+)\"");
+                            if (match.Success)
+                            {
+                                return match.Groups["value"].Value.Trim();
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(info.version))
+                    {
+                        return info.version.Trim();
+                    }
+                }
+            }
+            catch
+            {
+                // Fall through to package.json on disk.
             }
 
-            if (!File.Exists(packagePath))
+            string[] candidates =
             {
-                return "unknown";
+                Path.GetFullPath("Packages/com.pitech.xr.devkit/package.json"),
+                Path.GetFullPath("Packages/pitech-xr-devkit/package.json"),
+                Path.GetFullPath("Packages/xr.devkit/package.json"),
+            };
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                if (!File.Exists(candidates[i]))
+                {
+                    continue;
+                }
+
+                string json = File.ReadAllText(candidates[i]);
+                Match match = Regex.Match(json, "\"version\"\\s*:\\s*\"(?<value>[^\"]+)\"");
+                if (match.Success)
+                {
+                    return match.Groups["value"].Value.Trim();
+                }
             }
 
-            string json = File.ReadAllText(packagePath);
-            Match match = Regex.Match(json, "\"version\"\\s*:\\s*\"(?<value>[^\"]+)\"");
-            return match.Success ? match.Groups["value"].Value : "unknown";
+            return "unknown";
         }
 
         private static string Safe(string value)

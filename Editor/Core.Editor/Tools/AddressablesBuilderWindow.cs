@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using Pitech.XR.ContentDelivery;
 using Pitech.XR.ContentDelivery.Editor;
@@ -94,6 +95,7 @@ private void OnEnable()
             header.Add(DevkitTheme.Secondary("Refresh", () =>
             {
                 EnsureConfigFieldValue();
+                ReloadModuleConfigAssetFromDisk();
                 RefreshMappingPreview();
             }));
             scroll.Add(header);
@@ -133,7 +135,7 @@ private void OnEnable()
             presetRow.style.alignItems = Align.Stretch;
             presetPopupHost = new VisualElement { style = { flexGrow = 1, minWidth = 200 } };
             presetRow.Add(presetPopupHost);
-            savePresetButton = DevkitTheme.Secondary("Save preset", SaveCurrentToSelectedPreset);
+            savePresetButton = DevkitTheme.Secondary("Save selection", SaveCurrentToSelectedPreset);
             savePresetButton.style.marginLeft = 8;
             savePresetButton.SetEnabled(false);
             presetRow.Add(savePresetButton);
@@ -148,7 +150,7 @@ private void OnEnable()
             ccdBucketIdField = new TextField("CCD Bucket ID")
             {
                 value = string.Empty,
-                tooltip = "Unity Cloud Content Delivery bucket ID for this lab. Set ccdRemoteLoadPathTemplate on Module Config (Settings) to the full URL pattern with {bucketId} and {environment}."
+                tooltip = "Unity Cloud Content Delivery bucket ID for this lab. Configure the CCD URL template on Module Config (ccdRemoteLoadPathTemplate or Remote Load Path Template with {bucketId})."
             };
             section.Add(ccdBucketIdField);
 
@@ -217,6 +219,7 @@ private void OnEnable()
             {
                 validationPassed = false;
                 mappingIsValid = false;
+                ReloadModuleConfigAssetFromDisk();
                 RefreshMappingPreview();
             });
             catalogField.RegisterValueChangedCallback(_ =>
@@ -277,6 +280,92 @@ private void OnEnable()
             return configField != null ? configField.value as AddressablesModuleConfig : null;
         }
 
+        /// <summary>
+        /// Re-imports the Module Config asset so values saved in the DevKit Settings (or Inspector) match what the Builder reads.
+        /// </summary>
+        private void ReloadModuleConfigAssetFromDisk()
+        {
+            var cfg = configField != null ? configField.value as AddressablesModuleConfig : null;
+            if (cfg == null)
+            {
+                return;
+            }
+
+            string path = AssetDatabase.GetAssetPath(cfg);
+            if (string.IsNullOrEmpty(path))
+            {
+                return;
+            }
+
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            AddressablesModuleConfig fresh = AssetDatabase.LoadAssetAtPath<AddressablesModuleConfig>(path);
+            if (fresh != null)
+            {
+                configField.SetValueWithoutNotify(fresh);
+            }
+        }
+
+        /// <summary>
+        /// Reads the effective CCD template via SerializedObject: <c>ccdRemoteLoadPathTemplate</c> first,
+        /// then <c>remoteLoadPathTemplate</c> when it contains <c>{bucketId}</c> (matches <see cref="AddressablesService.ResolveCcdRemoteLoadPathTemplate"/>).
+        /// </summary>
+        private static string ReadCcdRemoteLoadPathTemplateSerialized(AddressablesModuleConfig cfg)
+        {
+            if (cfg == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                var serializedObject = new SerializedObject(cfg);
+                serializedObject.Update();
+                SerializedProperty ccdProp = serializedObject.FindProperty("ccdRemoteLoadPathTemplate");
+                if (ccdProp != null && ccdProp.propertyType == SerializedPropertyType.String &&
+                    !string.IsNullOrWhiteSpace(ccdProp.stringValue))
+                {
+                    return ccdProp.stringValue.Trim();
+                }
+
+                SerializedProperty remoteProp = serializedObject.FindProperty("remoteLoadPathTemplate");
+                if (remoteProp != null && remoteProp.propertyType == SerializedPropertyType.String &&
+                    !string.IsNullOrWhiteSpace(remoteProp.stringValue))
+                {
+                    string remote = remoteProp.stringValue.Trim();
+                    if (remote.IndexOf("{bucketId}", StringComparison.Ordinal) >= 0)
+                    {
+                        return remote;
+                    }
+                }
+            }
+            catch
+            {
+                // Use field fallback below.
+            }
+
+            return AddressablesService.ResolveCcdRemoteLoadPathTemplate(cfg);
+        }
+
+        private static string FormatPresetChoiceLabel(AddressablesBuildPreset p, int index)
+        {
+            if (p == null)
+            {
+                return $"(invalid {index + 1})";
+            }
+
+            if (!string.IsNullOrWhiteSpace(p.labId))
+            {
+                return p.labId.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(p.displayName))
+            {
+                return p.displayName.Trim();
+            }
+
+            return $"(unnamed {index + 1})";
+        }
+
         private string ResolveLabId()
         {
             return string.IsNullOrWhiteSpace(labIdField != null ? labIdField.value : null)
@@ -290,9 +379,10 @@ private void OnEnable()
         private string ResolveCcdRemoteLoadPathForSetup()
         {
             var config = EnsureSelectedConfig();
+            string template = ReadCcdRemoteLoadPathTemplateSerialized(config);
             string bucketId = ccdBucketIdField != null ? ccdBucketIdField.value : null;
             string fullOverride = ccdFullUrlOverrideField != null ? ccdFullUrlOverrideField.value : null;
-            return AddressablesService.BuildCcdRemoteLoadPath(config, bucketId, fullOverride);
+            return AddressablesService.BuildCcdRemoteLoadPath(config, bucketId, fullOverride, template);
         }
 
         private void RestoreBuilderEditorPrefs()
@@ -356,23 +446,24 @@ private void OnEnable()
                 for (int i = 0; i < catalog.presets.Count; i++)
                 {
                     AddressablesBuildPreset p = catalog.presets[i];
-                    choices.Add(string.IsNullOrWhiteSpace(p.displayName) ? $"(unnamed {i + 1})" : p.displayName.Trim());
+                    choices.Add(FormatPresetChoiceLabel(p, i));
                 }
             }
 
             choices.Add("Add new…");
             int defaultIndex = 0;
+            int choiceCount = choices.Count;
             if (selectPopupIndex.HasValue)
             {
-                defaultIndex = Mathf.Clamp(selectPopupIndex.Value, 0, count - 1);
+                defaultIndex = Mathf.Clamp(selectPopupIndex.Value, 0, choiceCount - 1);
             }
             else
             {
                 int saved = EditorPrefs.GetInt(PrefKeyPresetPopupIndex, 0);
-                defaultIndex = Mathf.Clamp(saved, 0, count - 1);
+                defaultIndex = Mathf.Clamp(saved, 0, choiceCount - 1);
             }
 
-            presetPopup = new PopupField<string>("Build preset", choices, defaultIndex);
+            presetPopup = new PopupField<string>("Addressables Selection", choices, defaultIndex);
             presetPopup.style.flexGrow = 1;
             presetPopup.RegisterValueChangedCallback(evt =>
             {
@@ -506,10 +597,11 @@ private void OnEnable()
                 catalog.presets = new List<AddressablesBuildPreset>();
             }
 
+            string lab = ResolveLabId();
             var preset = new AddressablesBuildPreset
             {
-                displayName = $"Preset {catalog.presets.Count + 1}",
-                labId = ResolveLabId(),
+                displayName = lab,
+                labId = lab,
                 labVersionId = labVersionField != null ? labVersionField.value : string.Empty,
                 ccdBucketId = ccdBucketIdField != null ? ccdBucketIdField.value : string.Empty,
                 prefab = prefabField != null ? prefabField.value as GameObject : null,
@@ -531,19 +623,22 @@ private void OnEnable()
             {
                 EditorUtility.DisplayDialog(
                     "Addressables Builder",
-                    "Select an existing preset in the dropdown (not None or Add new).",
+                    "Select an existing entry in Addressables Selection (not None or Add new).",
                     "OK");
                 return;
             }
 
             AddressablesBuildPreset p = catalog.presets[selectedPresetIndex];
-            p.labId = ResolveLabId();
+            string lab = ResolveLabId();
+            p.labId = lab;
+            p.displayName = lab;
             p.labVersionId = labVersionField != null ? labVersionField.value : string.Empty;
             p.ccdBucketId = ccdBucketIdField != null ? ccdBucketIdField.value : string.Empty;
             p.prefab = prefabField != null ? prefabField.value as GameObject : null;
             EditorUtility.SetDirty(catalog);
             AssetDatabase.SaveAssets();
-            feedbackLabel.text = $"Saved preset: {p.displayName}";
+            feedbackLabel.text = $"Saved selection: {lab}";
+            RebuildPresetPopup(selectPopupIndex: selectedPresetIndex + 1);
         }
 
         private void UpdateSavePresetButtonState()
@@ -567,6 +662,7 @@ private void OnEnable()
             }
 
             var config = EnsureSelectedConfig();
+            string template = ReadCcdRemoteLoadPathTemplateSerialized(config);
             string bucketId = ccdBucketIdField != null ? ccdBucketIdField.value : null;
             string fullOverride = ccdFullUrlOverrideField != null ? ccdFullUrlOverrideField.value : null;
 
@@ -582,14 +678,14 @@ private void OnEnable()
                 return;
             }
 
-            if (config == null || string.IsNullOrWhiteSpace(config.ccdRemoteLoadPathTemplate))
+            if (config == null || string.IsNullOrWhiteSpace(template))
             {
                 ccdPreviewValueLabel.text =
-                    "(set ccdRemoteLoadPathTemplate on Module Config in Settings — must include {bucketId})";
+                    "(set CCD Remote Load Path Template, or Remote Load Path Template with {bucketId}, on Module Config — then Save Config or press Refresh)";
                 return;
             }
 
-            string composed = AddressablesService.BuildCcdRemoteLoadPath(config, bucketId, null);
+            string composed = AddressablesService.BuildCcdRemoteLoadPath(config, bucketId, null, template);
             ccdPreviewValueLabel.text = string.IsNullOrEmpty(composed)
                 ? "(could not compose CCD path)"
                 : composed;

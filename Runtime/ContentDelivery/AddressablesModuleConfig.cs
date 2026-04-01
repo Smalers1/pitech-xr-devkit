@@ -40,7 +40,7 @@ namespace Pitech.XR.ContentDelivery
         [Tooltip("Optional base URL for remote catalog content.")]
         public string remoteCatalogBaseUrl = string.Empty;
 
-        [Tooltip("Template used by Setup to populate Addressables profile Remote.LoadPath. Supports {baseUrl}, {environment}, and [BuildTarget].")]
+        [Tooltip("Template used by Setup to populate Addressables profile Remote.LoadPath. Supports {baseUrl}, {environment}, and [BuildTarget]. For CCD, you may use the full client_api URL with {bucketId} here if you leave CCD Remote Load Path Template empty.")]
         public string remoteLoadPathTemplate = "{baseUrl}/{environment}/[BuildTarget]";
 
         [Tooltip("Template supports {baseUrl}, {environment}, {labId}, {resolvedVersionId}.")]
@@ -52,7 +52,7 @@ namespace Pitech.XR.ContentDelivery
             "Full Unity CCD remote load path template used when the Builder supplies a bucket ID. " +
             "Must include {bucketId}. Supports {environment} (from Environment above, lowercased). " +
             "Example: https://YOUR-PROJECT-ID.client-api.unity3dusercontent.com/client_api/v1/environments/{environment}/buckets/{bucketId}/release_by_badge/latest/entry_by_path/content/?path= " +
-            "Leave empty to fall back to Remote Load Path Template (non-CCD) until configured.")]
+            "Leave empty to use Remote Load Path Template above when it contains {bucketId} (same URL in either field).")]
         public string ccdRemoteLoadPathTemplate = string.Empty;
 
         [Header("Conventions")]

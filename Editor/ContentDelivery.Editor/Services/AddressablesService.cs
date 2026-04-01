@@ -63,15 +63,48 @@ namespace Pitech.XR.ContentDelivery.Editor
         private const string DefaultRemoteLoadPathTemplate = "{baseUrl}/{environment}/[BuildTarget]";
 
         /// <summary>
+        /// Effective CCD URL template for composition: <see cref="AddressablesModuleConfig.ccdRemoteLoadPathTemplate"/>
+        /// when set; otherwise <see cref="AddressablesModuleConfig.remoteLoadPathTemplate"/> when it contains
+        /// <c>{bucketId}</c> (single-field workflow when the CCD-specific field was left empty).
+        /// </summary>
+        /// <returns>Trimmed template, or null if neither source provides a CCD-style template.</returns>
+        public static string ResolveCcdRemoteLoadPathTemplate(AddressablesModuleConfig config)
+        {
+            if (config == null)
+            {
+                return null;
+            }
+
+            string ccd = (config.ccdRemoteLoadPathTemplate ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(ccd))
+            {
+                return ccd;
+            }
+
+            string remote = (config.remoteLoadPathTemplate ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(remote) && remote.IndexOf("{bucketId}", StringComparison.Ordinal) >= 0)
+            {
+                return remote;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Builds the CCD remote load path written to the Addressables profile (Remote Load Path).
         /// <paramref name="fullUrlOverride"/> wins when non-empty; otherwise composes from
-        /// <paramref name="config"/>.ccdRemoteLoadPathTemplate and <paramref name="bucketId"/>.
+        /// <see cref="ResolveCcdRemoteLoadPathTemplate"/> and <paramref name="bucketId"/>.
         /// Returns null to fall back to <see cref="BuildRemoteLoadPath"/> (non-CCD / not configured).
         /// </summary>
+        /// <param name="ccdTemplateOverride">
+        /// Optional template string (e.g. from SerializedObject). When null or empty, uses
+        /// <see cref="ResolveCcdRemoteLoadPathTemplate"/>.
+        /// </param>
         public static string BuildCcdRemoteLoadPath(
             AddressablesModuleConfig config,
             string bucketId,
-            string fullUrlOverride)
+            string fullUrlOverride,
+            string ccdTemplateOverride = null)
         {
             if (!string.IsNullOrWhiteSpace(fullUrlOverride))
             {
@@ -83,13 +116,22 @@ namespace Pitech.XR.ContentDelivery.Editor
                 return null;
             }
 
-            if (config == null || string.IsNullOrWhiteSpace(config.ccdRemoteLoadPathTemplate))
+            if (config == null)
+            {
+                return null;
+            }
+
+            string template = !string.IsNullOrWhiteSpace(ccdTemplateOverride)
+                ? ccdTemplateOverride.Trim()
+                : (ResolveCcdRemoteLoadPathTemplate(config) ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(template))
             {
                 return null;
             }
 
             string env = config.environment.ToString().ToLowerInvariant();
-            string result = config.ccdRemoteLoadPathTemplate.Trim()
+            string result = template
                 .Replace("{bucketId}", bucketId.Trim())
                 .Replace("{environment}", env);
             return result.Trim();

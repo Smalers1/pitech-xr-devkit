@@ -276,7 +276,7 @@ namespace Pitech.XR.ContentDelivery.Editor
                     PublishCheckSeverity.Error,
                     "Remote load path still uses the placeholder URL (cdn.example.invalid). Configure CCD for this lab.",
                     "config",
-                    "Set ccdRemoteLoadPathTemplate on Addressables Module Config (Settings), enter CCD Bucket ID (or Advanced full URL) in Addressables Builder, then run Setup."));
+                    "Set ccdRemoteLoadPathTemplate or Remote Load Path Template ({bucketId}) on Addressables Module Config (Settings), enter CCD Bucket ID (or Advanced full URL) in Addressables Builder, then run Setup."));
                 return;
             }
 
@@ -288,7 +288,7 @@ namespace Pitech.XR.ContentDelivery.Editor
                     PublishCheckSeverity.Warning,
                     "Remote load path points to CCD but does not contain a /buckets/ segment. Verify the bucket ID or URL template.",
                     "config",
-                    "Check ccdRemoteLoadPathTemplate includes /buckets/{bucketId}/ and Builder CCD Bucket ID is correct, or use Advanced full URL override."));
+                    "Check the CCD template (ccdRemoteLoadPathTemplate or Remote Load Path with {bucketId}) includes /buckets/{bucketId}/ and Builder CCD Bucket ID is correct, or use Advanced full URL override."));
                 return;
             }
 

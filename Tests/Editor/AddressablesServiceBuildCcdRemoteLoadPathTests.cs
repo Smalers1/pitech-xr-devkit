@@ -53,5 +53,22 @@ namespace Pitech.XR.ContentDelivery.Editor.Tests
                 "https://host/client_api/v1/environments/staging/buckets/my-bucket-id/release_by_badge/latest/entry_by_path/content/?path=",
                 result);
         }
+
+        [Test]
+        public void BuildCcdRemoteLoadPath_FallsBackToRemoteLoadPathTemplate_WhenCcdFieldEmpty()
+        {
+            var config = ScriptableObject.CreateInstance<AddressablesModuleConfig>();
+            config.ccdRemoteLoadPathTemplate = string.Empty;
+            config.environment = ContentDeliveryEnvironment.Development;
+            // Typical "always production" CCD URL in Remote Load Path only (CCD field left empty).
+            config.remoteLoadPathTemplate =
+                "https://proj.client-api.unity3dusercontent.com/client_api/v1/environments/production/buckets/{bucketId}/release_by_badge/latest/entry_by_path/content/?path=";
+
+            string result = AddressablesService.BuildCcdRemoteLoadPath(config, "bucket-uuid", null);
+
+            Assert.AreEqual(
+                "https://proj.client-api.unity3dusercontent.com/client_api/v1/environments/production/buckets/bucket-uuid/release_by_badge/latest/entry_by_path/content/?path=",
+                result);
+        }
     }
 }
