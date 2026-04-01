@@ -548,7 +548,9 @@ private void OnEnable()
             suppressPresetPopupCallback = true;
             if (labIdField != null)
             {
-                labIdField.SetValueWithoutNotify(string.IsNullOrWhiteSpace(p.labId) ? "default" : p.labId.Trim());
+                // Preserve empty lab id for new/unsaved rows; only fall back to "default" when null (legacy assets).
+                string lab = p.labId != null ? p.labId.Trim() : string.Empty;
+                labIdField.SetValueWithoutNotify(lab);
             }
 
             if (labVersionField != null)
@@ -571,6 +573,45 @@ private void OnEnable()
             mappingIsValid = false;
             RefreshMappingPreview();
             UpdateSavePresetButtonState();
+        }
+
+        /// <summary>
+        /// Clears lab/CCD/prefab fields so "Add new…" starts from a blank row instead of duplicating the previous preset.
+        /// </summary>
+        private void ClearBuilderFieldsForNewPreset()
+        {
+            suppressPresetPopupCallback = true;
+            if (labIdField != null)
+            {
+                labIdField.SetValueWithoutNotify(string.Empty);
+            }
+
+            if (labVersionField != null)
+            {
+                labVersionField.SetValueWithoutNotify(string.Empty);
+            }
+
+            if (ccdBucketIdField != null)
+            {
+                ccdBucketIdField.SetValueWithoutNotify(string.Empty);
+            }
+
+            EditorPrefs.SetString(PrefKeyBucketId, string.Empty);
+            if (ccdFullUrlOverrideField != null)
+            {
+                ccdFullUrlOverrideField.SetValueWithoutNotify(string.Empty);
+            }
+
+            if (prefabField != null)
+            {
+                prefabField.SetValueWithoutNotify(null);
+            }
+
+            suppressPresetPopupCallback = false;
+            validationPassed = false;
+            mappingIsValid = false;
+            RefreshCcdPreview();
+            RefreshMappingPreview();
         }
 
         private void AddNewPreset()
@@ -597,14 +638,15 @@ private void OnEnable()
                 catalog.presets = new List<AddressablesBuildPreset>();
             }
 
-            string lab = ResolveLabId();
+            ClearBuilderFieldsForNewPreset();
+
             var preset = new AddressablesBuildPreset
             {
-                displayName = lab,
-                labId = lab,
-                labVersionId = labVersionField != null ? labVersionField.value : string.Empty,
-                ccdBucketId = ccdBucketIdField != null ? ccdBucketIdField.value : string.Empty,
-                prefab = prefabField != null ? prefabField.value as GameObject : null,
+                displayName = "New preset",
+                labId = string.Empty,
+                labVersionId = string.Empty,
+                ccdBucketId = string.Empty,
+                prefab = null,
             };
             catalog.presets.Add(preset);
             EditorUtility.SetDirty(catalog);
