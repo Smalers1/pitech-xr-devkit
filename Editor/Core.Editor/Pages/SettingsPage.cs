@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using Pitech.XR.ContentDelivery;
 using Pitech.XR.ContentDelivery.Editor;
 using UnityEditor;
@@ -106,6 +106,7 @@ namespace Pitech.XR.Core.Editor
             AddAddressablesProperty("groupNameTemplate");
             AddAddressablesProperty("remoteCatalogBaseUrl");
             AddAddressablesProperty("remoteLoadPathTemplate");
+            AddAddressablesProperty("ccdRemoteLoadPathTemplate");
             AddAddressablesProperty("remoteCatalogUrlTemplate");
             AddAddressablesProperty("localWorkspaceRoot");
             AddAddressablesProperty("localReportsFolder");

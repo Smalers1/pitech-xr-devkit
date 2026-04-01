@@ -62,6 +62,39 @@ namespace Pitech.XR.ContentDelivery.Editor
         private const string DefaultRemoteBaseUrl = "https://cdn.example.invalid/content";
         private const string DefaultRemoteLoadPathTemplate = "{baseUrl}/{environment}/[BuildTarget]";
 
+        /// <summary>
+        /// Builds the CCD remote load path written to the Addressables profile (Remote Load Path).
+        /// <paramref name="fullUrlOverride"/> wins when non-empty; otherwise composes from
+        /// <paramref name="config"/>.ccdRemoteLoadPathTemplate and <paramref name="bucketId"/>.
+        /// Returns null to fall back to <see cref="BuildRemoteLoadPath"/> (non-CCD / not configured).
+        /// </summary>
+        public static string BuildCcdRemoteLoadPath(
+            AddressablesModuleConfig config,
+            string bucketId,
+            string fullUrlOverride)
+        {
+            if (!string.IsNullOrWhiteSpace(fullUrlOverride))
+            {
+                return fullUrlOverride.Trim().TrimEnd('/');
+            }
+
+            if (string.IsNullOrWhiteSpace(bucketId))
+            {
+                return null;
+            }
+
+            if (config == null || string.IsNullOrWhiteSpace(config.ccdRemoteLoadPathTemplate))
+            {
+                return null;
+            }
+
+            string env = config.environment.ToString().ToLowerInvariant();
+            string result = config.ccdRemoteLoadPathTemplate.Trim()
+                .Replace("{bucketId}", bucketId.Trim())
+                .Replace("{environment}", env);
+            return result.Trim();
+        }
+
         public AddressablesSetupResult EnsureInitialized(string labIdHint, string ccdBucketUrlOverride = null)
         {
             AddressablesSetupResult result = new AddressablesSetupResult

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace Pitech.XR.ContentDelivery
 {
@@ -46,6 +46,14 @@ namespace Pitech.XR.ContentDelivery
         [Tooltip("Template supports {baseUrl}, {environment}, {labId}, {resolvedVersionId}.")]
         public string remoteCatalogUrlTemplate =
             "{baseUrl}/{environment}/{labId}/{resolvedVersionId}/catalog.json";
+
+        [Header("CCD (Addressables Builder)")]
+        [Tooltip(
+            "Full Unity CCD remote load path template used when the Builder supplies a bucket ID. " +
+            "Must include {bucketId}. Supports {environment} (from Environment above, lowercased). " +
+            "Example: https://YOUR-PROJECT-ID.client-api.unity3dusercontent.com/client_api/v1/environments/{environment}/buckets/{bucketId}/release_by_badge/latest/entry_by_path/content/?path= " +
+            "Leave empty to fall back to Remote Load Path Template (non-CCD) until configured.")]
+        public string ccdRemoteLoadPathTemplate = string.Empty;
 
         [Header("Conventions")]
         [Tooltip("Template supports {labId}. Used when creating remote group names.")]
