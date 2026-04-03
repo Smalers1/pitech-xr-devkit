@@ -492,6 +492,7 @@ namespace Pitech.XR.Scenario
 
     // ---------- Holder on the scene ----------
     [DisallowMultipleComponent]
+    [AddComponentMenu("Pi tech XR/Scenario/Scenario")]
     public class Scenario : MonoBehaviour
     {
         // human–friendly name for this scenario (used in inspectors, logs, dashboards)

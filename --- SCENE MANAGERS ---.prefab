@@ -1,0 +1,562 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &2190596865971577547
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7327649812824915967}
+  - component: {fileID: 5273562183570915465}
+  m_Layer: 0
+  m_Name: Content Delivery
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7327649812824915967
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2190596865971577547}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4568410803279086300}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &5273562183570915465
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2190596865971577547}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6499dc156b641dc42bf665f590ebc41a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  contentSource: 1
+  onlineMetadataSource: 1
+  internalMetadataProvider: {fileID: 0}
+  fallbackToManualInternalMetadata: 1
+  labId: default
+  addressKey: lab/default/prefab/cube
+  resolvedVersionId: 
+  runtimeCatalogUrl: 
+  prefabAsset: {fileID: 128045004380725851, guid: ba46d133df289cd4695bfb5a09bf4aa6, type: 3}
+  spawnParent: {fileID: 0}
+  loadOnSceneStart: 1
+  replaceExistingChildren: 1
+  showRuntimeDialogs: 0
+  statusOverlay: {fileID: 0}
+  autoCreateOverlayIfMissing: 0
+  promptBeforeDownload: 1
+  maxRetryAttempts: 1
+  hideStatusOverlayAfterSpawn: 1
+  analyticsAdapter: {fileID: 0}
+  sceneManager: {fileID: 7496876124545722198}
+  deferSceneManagerUntilSpawn: 1
+  restartSceneManagerAfterSpawn: 1
+--- !u!1 &3231193393641979706
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6241484471153084971}
+  - component: {fileID: 6268770995179877451}
+  m_Layer: 0
+  m_Name: StatsUIController
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6241484471153084971
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3231193393641979706}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4568410803279086300}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &6268770995179877451
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3231193393641979706}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42aac299eefb5f7469897989c2a7f1da, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  editorConfig: {fileID: 0}
+  bindings: []
+--- !u!1 &3850794147203746365
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4568410803279086300}
+  m_Layer: 0
+  m_Name: --- SCENE MANAGERS ---
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4568410803279086300
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3850794147203746365}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 8137386391538066988}
+  - {fileID: 2662371372820998775}
+  - {fileID: 6241484471153084971}
+  - {fileID: 7327649812824915967}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &7402402901408746693
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2662371372820998775}
+  - component: {fileID: 6004199027144503743}
+  m_Layer: 0
+  m_Name: Main Scenario
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2662371372820998775
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7402402901408746693}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4568410803279086300}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &6004199027144503743
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7402402901408746693}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3ac8609ffa1765b4487f1b8ec195e70c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  title: Main Scenario
+  steps:
+  - rid: 3171492323914940423
+  - rid: 3171492323914940419
+  - rid: 3171492323914940416
+  - rid: 3171492323914940417
+  - rid: 3171492323914940418
+  - rid: 3171492323914940420
+  - rid: 3171492323914940421
+  - rid: 3171492323914940422
+  - rid: 3171492323914940424
+  - rid: 3171492323914940425
+  - rid: 3171492323914940426
+  - rid: 3171492323914940427
+  - rid: 6469217833931243520
+  graphNotes: []
+  references:
+    version: 2
+    RefIds:
+    - rid: 3171492323914940416
+      type: {class: QuizStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 73fde519-d767-4e01-a733-57c8fab9fd2c
+        graphPos: {x: 80, y: 356}
+        quiz: {fileID: 11400000, guid: fbd4d92a98021cc43b160979b4987cbb, type: 2}
+        questionId: 3591bbdf-66e5-45db-963d-c9b88c211bef
+        questionIndex: 0
+        submitMode: 1
+        feedback: 0
+        feedbackSeconds: 2
+        completion: 0
+        nextGuid: cb572e00-23e5-4a64-8799-ec0ccc7352b6
+        correctNextGuid: 
+        wrongNextGuid: 
+    - rid: 3171492323914940417
+      type: {class: QuizStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: cb572e00-23e5-4a64-8799-ec0ccc7352b6
+        graphPos: {x: 570, y: 120}
+        quiz: {fileID: 11400000, guid: fbd4d92a98021cc43b160979b4987cbb, type: 2}
+        questionId: 58c7e9ae-3e1e-479f-94a6-d2c1a92d2d71
+        questionIndex: 1
+        submitMode: 0
+        feedback: 0
+        feedbackSeconds: 2
+        completion: 0
+        nextGuid: baaf1959-54b4-44db-ba71-47da8dd4800d
+        correctNextGuid: 
+        wrongNextGuid: 
+    - rid: 3171492323914940418
+      type: {class: QuizResultsStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: baaf1959-54b4-44db-ba71-47da8dd4800d
+        graphPos: {x: 1000, y: 120}
+        quiz: {fileID: 11400000, guid: fbd4d92a98021cc43b160979b4987cbb, type: 2}
+        whenComplete: 0
+        completeAfterSeconds: 2
+        completion: 0
+        nextGuid: 
+        passedNextGuid: 
+        failedNextGuid: 
+    - rid: 3171492323914940419
+      type: {class: QuestionStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 74446410-fad1-4f4f-a251-cd7f1969f32e
+        graphPos: {x: -5, y: -653}
+        panelRoot: {fileID: 0}
+        panelAnimator: {fileID: 0}
+        showTrigger: Show
+        hideTrigger: Hide
+        fallbackHideSeconds: 50
+        choices:
+        - button: {fileID: 0}
+          onSelected:
+            m_PersistentCalls:
+              m_Calls: []
+          effects: []
+          nextGuid: 
+        - button: {fileID: 0}
+          onSelected:
+            m_PersistentCalls:
+              m_Calls: []
+          effects: []
+          nextGuid: 
+    - rid: 3171492323914940420
+      type: {class: EventStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 309c621b-676d-4731-9c14-abdac943807c
+        graphPos: {x: 80, y: 546}
+        onEnter:
+          m_PersistentCalls:
+            m_Calls:
+            - m_Target: {fileID: 0}
+              m_TargetAssemblyTypeName: UnityEngine.CanvasGroup, UnityEngine
+              m_MethodName: set_alpha
+              m_Mode: 4
+              m_Arguments:
+                m_ObjectArgument: {fileID: 0}
+                m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+                m_IntArgument: 0
+                m_FloatArgument: 0
+                m_StringArgument: 
+                m_BoolArgument: 0
+              m_CallState: 2
+        waitSeconds: 0
+        nextGuid: 
+    - rid: 3171492323914940421
+      type: {class: GroupStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 34ed2a38-5f89-49be-bbe8-e46636ff8cf8
+        graphPos: {x: 80, y: 736}
+        steps: []
+        completeWhen: 0
+        requiredCount: 1
+        specificStepGuid: 
+        stopOthersOnComplete: 1
+        childRequirements: []
+        nextGuid: 
+    - rid: 3171492323914940422
+      type: {class: SelectionStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 4499cae6-1601-4272-b53f-2cc98036f19b
+        graphPos: {x: -233, y: 1065}
+        lists: {fileID: 0}
+        listKey: asfaf
+        listIndex: -1
+        resetOnEnter: 1
+        completion: 0
+        submitButton: {fileID: 0}
+        requiredSelections: 1
+        requireExactCount: 0
+        allowedWrong: 0
+        timeoutSeconds: 0
+        correctNextGuid: 
+        wrongNextGuid: 
+        panelRoot: {fileID: 0}
+        panelAnimator: {fileID: 0}
+        showTrigger: Show
+        hideTrigger: Hide
+        hint: {fileID: 0}
+        onCorrect:
+          m_PersistentCalls:
+            m_Calls: []
+        onWrong:
+          m_PersistentCalls:
+            m_Calls: []
+        onCorrectEffects: []
+        onWrongEffects: []
+    - rid: 3171492323914940423
+      type: {class: MiniQuizStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 0a14fc46-f950-40d2-a065-c9479c57cfd5
+        graphPos: {x: 80, y: 1308}
+        panelRoot: {fileID: 0}
+        panelAnimator: {fileID: 0}
+        showTrigger: Show
+        hideTrigger: Hide
+        questions:
+        - label: 1
+          choices:
+          - button: {fileID: 0}
+            isCorrect: 1
+            onSelected:
+              m_PersistentCalls:
+                m_Calls: []
+            effects: []
+          - button: {fileID: 0}
+            isCorrect: 0
+            onSelected:
+              m_PersistentCalls:
+                m_Calls: []
+            effects: []
+        - label: 2
+          choices:
+          - button: {fileID: 0}
+            isCorrect: 1
+            onSelected:
+              m_PersistentCalls:
+                m_Calls: []
+            effects: []
+          - button: {fileID: 0}
+            isCorrect: 0
+            onSelected:
+              m_PersistentCalls:
+                m_Calls: []
+            effects: []
+        completion: 0
+        submitButton: {fileID: 0}
+        lockQuestionAfterAnswer: 1
+        outcomes:
+        - label: "\u039D\u0391\u0399"
+          minCorrect: 1
+          maxCorrect: 2
+          nextGuid: 004e0782-5a05-4174-969b-98fb0ef0a3ad
+        - label: "\u039F\u03A7\u0399f"
+          minCorrect: 0
+          maxCorrect: 0
+          nextGuid: 1831a611-ac7e-4f9f-b940-fb102e3530c1
+        defaultNextGuid: 
+    - rid: 3171492323914940424
+      type: {class: EventStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 004e0782-5a05-4174-969b-98fb0ef0a3ad
+        graphPos: {x: 645, y: 1320}
+        onEnter:
+          m_PersistentCalls:
+            m_Calls:
+            - m_Target: {fileID: 0}
+              m_TargetAssemblyTypeName: UnityEngine.GameObject, UnityEngine
+              m_MethodName: SetActive
+              m_Mode: 6
+              m_Arguments:
+                m_ObjectArgument: {fileID: 0}
+                m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+                m_IntArgument: 0
+                m_FloatArgument: 0
+                m_StringArgument: 
+                m_BoolArgument: 1
+              m_CallState: 2
+        waitSeconds: 0
+        nextGuid: 4d76ba85-af7b-460d-bb5f-cc14315254f7
+    - rid: 3171492323914940425
+      type: {class: EventStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 1831a611-ac7e-4f9f-b940-fb102e3530c1
+        graphPos: {x: 678, y: 1428}
+        onEnter:
+          m_PersistentCalls:
+            m_Calls:
+            - m_Target: {fileID: 0}
+              m_TargetAssemblyTypeName: UnityEngine.GameObject, UnityEngine
+              m_MethodName: SetActive
+              m_Mode: 6
+              m_Arguments:
+                m_ObjectArgument: {fileID: 0}
+                m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+                m_IntArgument: 0
+                m_FloatArgument: 0
+                m_StringArgument: 
+                m_BoolArgument: 1
+              m_CallState: 2
+        waitSeconds: 0
+        nextGuid: 
+    - rid: 3171492323914940426
+      type: {class: CueCardsStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 59bdc503-35ed-4f3f-9e1c-fd12665e835e
+        graphPos: {x: 1083, y: 436}
+        director: {fileID: 0}
+        cards:
+        - {fileID: 0}
+        - {fileID: 0}
+        cueTimes: []
+        autoShowFirst: 1
+        tapHint: {fileID: 0}
+        advanceMode: 0
+        nextButton: {fileID: 0}
+        extraObject: {fileID: 0}
+        extraShowAtIndex: 1
+        hideExtraWithFinalTap: 1
+        useRenderersForExtra: 1
+        fadeDuration: 0.25
+        popScale: 1.06
+        popDuration: 0.18
+        fadeCurve:
+          serializedVersion: 2
+          m_Curve: []
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        scaleCurve:
+          serializedVersion: 2
+          m_Curve: []
+          m_PreInfinity: 2
+          m_PostInfinity: 2
+          m_RotationOrder: 4
+        nextGuid: 
+    - rid: 3171492323914940427
+      type: {class: QuestionStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 4d76ba85-af7b-460d-bb5f-cc14315254f7
+        graphPos: {x: 1087, y: 1320}
+        panelRoot: {fileID: 0}
+        panelAnimator: {fileID: 0}
+        showTrigger: Show
+        hideTrigger: Hide
+        fallbackHideSeconds: 50
+        choices: []
+    - rid: 6469217833931243520
+      type: {class: ConditionsStep, ns: Pitech.XR.Scenario, asm: Pitech.XR.Scenario}
+      data:
+        guid: 742f68b9-ef64-4e34-bc4c-e93d368af35d
+        graphPos: {x: 521, y: 569}
+        valueSource: 2
+        statKey: Health
+        source: {fileID: 5273562183570915465}
+        memberName: 
+        listFieldName: 
+        listEntryLabel: 
+        listLabelFieldName: label
+        listValueFieldName: count
+        outcomes:
+        - label: test
+          compareOp: 2
+          compareValue: 0
+          nextGuid: 59bdc503-35ed-4f3f-9e1c-fd12665e835e
+        - label: 
+          compareOp: 0
+          compareValue: 0
+          nextGuid: 59bdc503-35ed-4f3f-9e1c-fd12665e835e
+        - label: 
+          compareOp: 4
+          compareValue: 0
+          nextGuid: baaf1959-54b4-44db-ba71-47da8dd4800d
+--- !u!1 &9107599576286475804
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8137386391538066988}
+  - component: {fileID: 7496876124545722198}
+  m_Layer: 0
+  m_Name: Scene Manager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8137386391538066988
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9107599576286475804}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 4568410803279086300}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &7496876124545722198
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 9107599576286475804}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2d431a49d183e9c428369f7f758f75cd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  scenario: {fileID: 6004199027144503743}
+  autoStart: 1
+  statsUI: {fileID: 6268770995179877451}
+  statsConfig: {fileID: 0}
+  defaultQuiz: {fileID: 11400000, guid: fbd4d92a98021cc43b160979b4987cbb, type: 2}
+  quizPanel: {fileID: 0}
+  quizResultsPanel: {fileID: 0}
+  selectables: {fileID: 0}
+  selectionLists: {fileID: 0}
+  contentDelivery: {fileID: 5273562183570915465}
+  labContentRoot: {fileID: 0}
