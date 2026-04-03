@@ -144,9 +144,15 @@ namespace Pitech.XR.Scenario.Editor
                     if (GUILayout.Button("Ping", Styles.Mid, GUILayout.Height(22)))
                         EditorGUIUtility.PingObject(sc);
 
-                    if (GUILayout.Button("Clear Nulls", Styles.Mid, GUILayout.Height(22)))
+                    if (GUILayout.Button("Remove null step slots", Styles.Mid, GUILayout.Height(22)))
                     {
-                        if (sc?.steps != null)
+                        if (sc?.steps != null &&
+                            EditorUtility.DisplayDialog(
+                                "Remove null slots",
+                                "This permanently deletes list entries where the SerializeReference failed to load. " +
+                                "Only use this after you are sure those slots are not going to deserialize (e.g. orphaned after a type rename).",
+                                "Remove nulls",
+                                "Cancel"))
                         {
                             for (int i = sc.steps.Count - 1; i >= 0; i--)
                                 if (sc.steps[i] == null) sc.steps.RemoveAt(i);

@@ -517,10 +517,17 @@ namespace Pitech.XR.Scenario
 
         void OnValidate()
         {
+#if UNITY_EDITOR
+            // Avoid touching SerializeReference data while scripts recompile; partial loads are unsafe.
+            if (UnityEditor.EditorApplication.isCompiling)
+                return;
+#endif
             if (steps == null) return;
 
-            for (int i = steps.Count - 1; i >= 0; i--)
-                if (steps[i] == null) steps.RemoveAt(i);
+            // Never strip null entries from SerializeReference lists here. Unity can report null slots
+            // transiently during prefab import, Apply, or domain reload before managed references
+            // deserialize — removing them marks the asset dirty and permanently deletes the step graph.
+            // Use the Scenario inspector "Clear Nulls" only when you intentionally discard broken refs.
 
             EnsureGuidsRecursive(steps);
 
@@ -542,9 +549,7 @@ namespace Pitech.XR.Scenario
 
                 if (s is GroupStep g && g.steps != null)
                 {
-                    // Clean nulls in nested list as well
-                    for (int k = g.steps.Count - 1; k >= 0; k--)
-                        if (g.steps[k] == null) g.steps.RemoveAt(k);
+                    // Same as root steps: do not RemoveAt nulls — preserves prefab / import safety.
 
                     EnsureGuidsRecursive(g.steps);
                     g.EnsureChildRequirements();
