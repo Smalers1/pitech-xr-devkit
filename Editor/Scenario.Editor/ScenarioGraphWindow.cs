@@ -59,6 +59,51 @@ public class ScenarioGraphWindow : EditorWindow
     static float ExpandedWidthFor(Step s)
         => (s is MiniQuizStep || s is ConditionsStep) ? StepNodeWidthExpandedWide : StepNodeWidthExpanded;
 
+    /// <summary>
+    /// Nested step when the group shows proxy branch ports (Specific Child Completes + Question or Conditions).
+    /// </summary>
+    public static Step TryGetGroupProxyBranchChild(GroupStep g)
+    {
+        if (g == null || g.completeWhen != GroupStep.CompleteWhen.SpecificChildCompletes)
+            return null;
+        if (string.IsNullOrEmpty(g.specificStepGuid) || g.steps == null)
+            return null;
+        foreach (var st in g.steps)
+        {
+            if (st == null || st.guid != g.specificStepGuid)
+                continue;
+            if (st is QuestionStep || st is ConditionsStep)
+                return st;
+            return null;
+        }
+        return null;
+    }
+
+    public static bool GroupUsesProxyBranchPorts(GroupStep g) => TryGetGroupProxyBranchChild(g) != null;
+
+    static void AddEdgesFromGroupForLayout(GroupStep g, System.Action<string, string> addEdge)
+    {
+        if (g == null || string.IsNullOrEmpty(g.guid)) return;
+        var from = g.guid;
+        var child = TryGetGroupProxyBranchChild(g);
+        if (child is QuestionStep q && q.choices != null)
+        {
+            foreach (var ch in q.choices)
+                if (ch != null && !string.IsNullOrEmpty(ch.nextGuid))
+                    addEdge(from, ch.nextGuid);
+            return;
+        }
+        if (child is ConditionsStep cnd && cnd.outcomes != null)
+        {
+            foreach (var b in cnd.outcomes)
+                if (b != null && !string.IsNullOrEmpty(b.nextGuid))
+                    addEdge(from, b.nextGuid);
+            return;
+        }
+        if (!string.IsNullOrEmpty(g.nextGuid))
+            addEdge(from, g.nextGuid);
+    }
+
     string _activeGuid;
     string _prevGuid;
 
@@ -146,7 +191,7 @@ public class ScenarioGraphWindow : EditorWindow
         // If we lost the object reference across playmode/domain reload, try to resolve authoring scenario.
         if (!scenario) TryResolveAuthoringScenario();
 
-        view = new ScenarioGraphView();
+        view = new ScenarioGraphView(this);
         view.OnContextAdd += ShowCreateMenu;
         view.OnMouseWorld += p => mouseWorld = p;
         view.OnEdgeDropped += ScheduleFullRouteSync;
@@ -337,8 +382,33 @@ public class ScenarioGraphWindow : EditorWindow
             if (s is EventStep ev && !string.IsNullOrEmpty(ev.nextGuid) && nodes.TryGetValue(ev.guid, out var evNode))
                 Connect(evNode.outNext, ev.nextGuid);
 
-            if (s is GroupStep grp && !string.IsNullOrEmpty(grp.nextGuid) && nodes.TryGetValue(grp.guid, out var grpNode))
-                Connect(grpNode.outNext, grp.nextGuid);
+            if (s is GroupStep grp && nodes.TryGetValue(grp.guid, out var grpNode))
+            {
+                if (GroupUsesProxyBranchPorts(grp))
+                {
+                    var ch = TryGetGroupProxyBranchChild(grp);
+                    if (ch is QuestionStep nq && nq.choices != null && grpNode.outChoices != null)
+                    {
+                        for (int c = 0; c < nq.choices.Count; c++)
+                        {
+                            var next = nq.choices[c]?.nextGuid;
+                            if (!string.IsNullOrEmpty(next) && c < grpNode.outChoices.Count)
+                                Connect(grpNode.outChoices[c], next);
+                        }
+                    }
+                    else if (ch is ConditionsStep ncnd && ncnd.outcomes != null && grpNode.outChoices != null)
+                    {
+                        for (int b = 0; b < ncnd.outcomes.Count; b++)
+                        {
+                            var next = ncnd.outcomes[b]?.nextGuid;
+                            if (!string.IsNullOrEmpty(next) && b < grpNode.outChoices.Count)
+                                Connect(grpNode.outChoices[b], next);
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(grp.nextGuid) && grpNode.outNext != null)
+                    Connect(grpNode.outNext, grp.nextGuid);
+            }
 
             if (s is ConditionsStep cnd && nodes.TryGetValue(cnd.guid, out var cndNode))
             {
@@ -745,7 +815,27 @@ public class ScenarioGraphWindow : EditorWindow
             else if (st is CueCardsStep cc) cc.nextGuid = "";
             else if (st is InsertStep ins) ins.nextGuid = "";
             else if (st is EventStep ev) ev.nextGuid = "";
-            else if (st is GroupStep g) g.nextGuid = "";
+            else if (st is GroupStep g)
+            {
+                g.nextGuid = "";
+                if (g.steps != null)
+                {
+                    foreach (var nested in g.steps)
+                    {
+                        if (nested == null) continue;
+                        if (nested is QuestionStep nq && nq.choices != null)
+                        {
+                            foreach (var ch in nq.choices)
+                                if (ch != null) ch.nextGuid = "";
+                        }
+                        else if (nested is ConditionsStep ncnd && ncnd.outcomes != null)
+                        {
+                            foreach (var b in ncnd.outcomes)
+                                if (b != null) b.nextGuid = "";
+                        }
+                    }
+                }
+            }
             else if (st is QuizStep qz)
             {
                 qz.nextGuid = "";
@@ -1069,8 +1159,8 @@ public class ScenarioGraphWindow : EditorWindow
                 AddEdge(from, ins.nextGuid);
             else if (st is EventStep ev && !string.IsNullOrEmpty(ev.nextGuid))
                 AddEdge(from, ev.nextGuid);
-            else if (st is GroupStep g && !string.IsNullOrEmpty(g.nextGuid))
-                AddEdge(from, g.nextGuid);
+            else if (st is GroupStep g)
+                AddEdgesFromGroupForLayout(g, (a, b) => AddEdge(a, b));
             else if (st is QuizStep qz && !string.IsNullOrEmpty(qz.nextGuid))
                 AddEdge(from, qz.nextGuid);
             else if (st is QuizResultsStep qrs && !string.IsNullOrEmpty(qrs.nextGuid))
@@ -1282,41 +1372,18 @@ public class ScenarioGraphWindow : EditorWindow
     // We now defer and do a safe full sync.
     void RebuildLinksFromGraph() => ScheduleFullRouteSync();
 
-    void DeleteStep(Step step)
+    static void ClearReferencesToRemovedStepGuid(Scenario sc, string removedGuid)
     {
-        if (!scenario || scenario.steps == null || step == null)
+        if (sc?.steps == null || string.IsNullOrEmpty(removedGuid))
             return;
 
-        // Find the exact object in the list (same instance we built the node from)
-        int index = scenario.steps.IndexOf(step);
-        if (index < 0)
-        {
-            Debug.LogWarning($"[ScenarioGraph] DeleteStep: step not found in list (guid={step.guid})");
-            return;
-        }
-
-        var s = scenario.steps[index];
-
-        if (!EditorUtility.DisplayDialog(
-                "Delete Step",
-                $"Delete “{s.Kind}” step ({index:00})?",
-                "Delete",
-                "Cancel"))
-            return;
-
-        // This is the ONLY place we mutate the list: same pattern as CreateStep.
-        Undo.RecordObject(scenario, "Delete Step");
-
-        scenario.steps.RemoveAt(index);
-
-        // Optional: clear any dangling routing that pointed to this guid
-        string removedGuid = s.guid;
-        foreach (var st in scenario.steps)
+        foreach (var st in sc.steps)
         {
             if (st is TimelineStep tl && tl.nextGuid == removedGuid) tl.nextGuid = "";
             else if (st is CueCardsStep cc && cc.nextGuid == removedGuid) cc.nextGuid = "";
             else if (st is InsertStep ins && ins.nextGuid == removedGuid) ins.nextGuid = "";
             else if (st is EventStep ev && ev.nextGuid == removedGuid) ev.nextGuid = "";
+            else if (st is GroupStep grp && grp.nextGuid == removedGuid) grp.nextGuid = "";
             else if (st is QuizStep qz)
             {
                 if (qz.nextGuid == removedGuid) qz.nextGuid = "";
@@ -1360,6 +1427,92 @@ public class ScenarioGraphWindow : EditorWindow
                 if (sel.wrongNextGuid == removedGuid) sel.wrongNextGuid = "";
             }
         }
+    }
+
+    void RemoveStepAtScenarioListIndex(int index)
+    {
+        if (!scenario || scenario.steps == null || index < 0 || index >= scenario.steps.Count)
+            return;
+
+        var s = scenario.steps[index];
+        Undo.RecordObject(scenario, "Delete Step");
+        scenario.steps.RemoveAt(index);
+        ClearReferencesToRemovedStepGuid(scenario, s.guid);
+    }
+
+    void ScheduleGraphReloadAfterScenarioMutation()
+    {
+        if (!scenario)
+            return;
+
+        EditorUtility.SetDirty(scenario);
+        EditorSceneManager.MarkSceneDirty(scenario.gameObject.scene);
+
+        EditorApplication.delayCall += () =>
+        {
+            if (this != null && scenario != null)
+                Load(scenario);
+        };
+    }
+
+    /// <summary>
+    /// Delete key / GraphView deleteSelection: confirm then remove data + reload (no pseudo-delete).
+    /// </summary>
+    void RequestDeleteSelectedStepNodes(List<StepNode> stepNodes)
+    {
+        if (!scenario || scenario.steps == null || stepNodes == null || stepNodes.Count == 0)
+            return;
+
+        if (stepNodes.Count == 1)
+        {
+            DeleteStep(stepNodes[0].step);
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "Delete Steps",
+                $"Delete {stepNodes.Count} selected steps?",
+                "Delete",
+                "Cancel"))
+            return;
+
+        foreach (var sn in stepNodes)
+        {
+            if (sn?.step == null)
+                continue;
+            int idx = scenario.steps.IndexOf(sn.step);
+            if (idx < 0)
+                continue;
+            RemoveStepAtScenarioListIndex(idx);
+        }
+
+        ScheduleGraphReloadAfterScenarioMutation();
+    }
+
+    void DeleteStep(Step step)
+    {
+        if (!scenario || scenario.steps == null || step == null)
+            return;
+
+        // Find the exact object in the list (same instance we built the node from)
+        int index = scenario.steps.IndexOf(step);
+        if (index < 0)
+        {
+            Debug.LogWarning($"[ScenarioGraph] DeleteStep: step not found in list (guid={step.guid})");
+            return;
+        }
+
+        var s = scenario.steps[index];
+
+        if (!EditorUtility.DisplayDialog(
+                "Delete Step",
+                $"Delete “{s.Kind}” step ({index:00})?",
+                "Delete",
+                "Cancel"))
+            return;
+
+        RemoveStepAtScenarioListIndex(index);
+        ScheduleGraphReloadAfterScenarioMutation();
     }
 
     void DuplicateStep(Step src)
@@ -1865,6 +2018,8 @@ public class ScenarioGraphWindow : EditorWindow
     // ================= GraphView =================
     class ScenarioGraphView : GraphView
     {
+        readonly ScenarioGraphWindow _graphWindow;
+
         public Action<ContextualMenuPopulateEvent> OnContextAdd;
         public Action<Vector2> OnMouseWorld;
         public Action OnEdgeDropped;
@@ -1872,8 +2027,10 @@ public class ScenarioGraphWindow : EditorWindow
         public Action OnMouseDown;
         public Action OnViewTransformChanged;
 
-        public ScenarioGraphView()
+        public ScenarioGraphView(ScenarioGraphWindow graphWindow)
         {
+            _graphWindow = graphWindow;
+
             style.flexGrow = 1;
             SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
             this.AddManipulator(new ContentDragger());
@@ -1894,6 +2051,21 @@ public class ScenarioGraphWindow : EditorWindow
             // Fire when user pans/zooms so we can persist view transform.
             RegisterCallback<WheelEvent>(_ => OnViewTransformChanged?.Invoke(), TrickleDown.TrickleDown);
             RegisterCallback<MouseMoveEvent>(_ => OnViewTransformChanged?.Invoke(), TrickleDown.TrickleDown);
+
+            // Keyboard Delete / Edit → Delete must remove scenario data + confirm — not GraphView-only removal.
+            deleteSelection = HandleGraphDeleteSelection;
+        }
+
+        void HandleGraphDeleteSelection(string operationName, AskUser askUser)
+        {
+            var stepNodes = selection.OfType<StepNode>().Where(n => n != null).ToList();
+            if (stepNodes.Count > 0)
+            {
+                _graphWindow?.RequestDeleteSelectedStepNodes(stepNodes);
+                return;
+            }
+
+            DeleteSelectionOperation(operationName, askUser);
         }
 
         public void ClearGraph()
@@ -2974,6 +3146,10 @@ public class ScenarioGraphWindow : EditorWindow
 
                 fold.contentContainer.Add(new IMGUIContainer(() =>
                 {
+                    int beforeCompleteWhen = (int)g.completeWhen;
+                    string beforeSpecific = g.specificStepGuid ?? "";
+                    bool beforeProxy = GroupUsesProxyBranchPorts(g);
+
                     EditorGUI.BeginChangeCheck();
                     g.completeWhen = (GroupStep.CompleteWhen)EditorGUILayout.EnumPopup("Complete When", g.completeWhen);
 
@@ -3060,6 +3236,19 @@ public class ScenarioGraphWindow : EditorWindow
                         Dirty(scenario, "Edit Group");
                         UpdateGroupSummaryLabel(g);
                         owner?.ScheduleResizeGroup(g.guid);
+                        bool afterProxy = GroupUsesProxyBranchPorts(g);
+                        bool topologyChanged =
+                            beforeCompleteWhen != (int)g.completeWhen ||
+                            beforeSpecific != (g.specificStepGuid ?? "") ||
+                            beforeProxy != afterProxy;
+                        if (topologyChanged)
+                        {
+                            EditorApplication.delayCall += () =>
+                            {
+                                if (owner != null && owner.scenario != null)
+                                    owner.Load(owner.scenario);
+                            };
+                        }
                     }
                 }));
 
@@ -3133,8 +3322,7 @@ public class ScenarioGraphWindow : EditorWindow
                 // Put the drop zone into the extension area so it appears as part of the node body
                 extensionContainer.Add(dropZone);
 
-                outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
-                outputContainer.Add(outNext);
+                RebuildGroupProxyOutputPorts();
             }
 
 
@@ -3214,10 +3402,44 @@ public class ScenarioGraphWindow : EditorWindow
                 };
                 skipRow.Add(btn);
             }
-            else if (step is GroupStep)
+            else if (step is GroupStep grp)
             {
-                var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip ▶" };
-                skipRow.Add(btn);
+                if (GroupUsesProxyBranchPorts(grp))
+                {
+                    var ch = TryGetGroupProxyBranchChild(grp);
+                    if (ch is QuestionStep qq)
+                    {
+                        int qCount = qq.choices != null ? qq.choices.Count : 0;
+                        for (int i = 0; i < qCount; i++)
+                        {
+                            int idx = i;
+                            var b = new UIEButton(() => skipRequest?.Invoke(step, idx))
+                            {
+                                text = $"Choice {idx} ▶"
+                            };
+                            if (i > 0) b.style.marginLeft = 2;
+                            skipRow.Add(b);
+                        }
+                    }
+                    else if (ch is ConditionsStep cnd)
+                    {
+                        var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip (Default) ▶" };
+                        skipRow.Add(btn);
+                        int cCount = cnd.outcomes != null ? cnd.outcomes.Count : 0;
+                        for (int i = 0; i < Mathf.Min(cCount, 16); i++)
+                        {
+                            int idx = i;
+                            var b = new UIEButton(() => skipRequest?.Invoke(step, idx)) { text = $"Branch {idx} ▶" };
+                            b.style.marginLeft = 2;
+                            skipRow.Add(b);
+                        }
+                    }
+                }
+                else
+                {
+                    var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip ▶" };
+                    skipRow.Add(btn);
+                }
             }
             else if (step is SelectionStep)
             {
@@ -3300,6 +3522,79 @@ public class ScenarioGraphWindow : EditorWindow
             p.AddManipulator(connector);
 
             return p;
+        }
+
+        Port MakeProxyPort(Step owner, Direction dir, Port.Capacity cap, string label, int choiceIndex)
+        {
+            var p = InstantiatePort(Orientation.Horizontal, dir, cap, typeof(bool));
+            p.portName = label;
+            PortMeta.Set(p, owner, choiceIndex);
+            var connector = new EdgeConnector<FlowEdge>(new ECListener());
+            p.AddManipulator(connector);
+            return p;
+        }
+
+        void RebuildGroupProxyOutputPorts()
+        {
+            if (step is not GroupStep g) return;
+
+            if (outChoices != null)
+            {
+                foreach (var p in outChoices)
+                    if (p != null && p.parent == outputContainer)
+                        outputContainer.Remove(p);
+            }
+            outChoices = null;
+
+            if (outNext != null)
+            {
+                if (outNext.parent == outputContainer)
+                    outputContainer.Remove(outNext);
+                outNext = null;
+            }
+
+            var branchChild = TryGetGroupProxyBranchChild(g);
+            if (branchChild is QuestionStep nq)
+            {
+                outChoices = new List<Port>();
+                int n = nq.choices != null ? nq.choices.Count : 0;
+                if (n == 0)
+                    outputContainer.Add(new Label("No choices (edit nested Question)"));
+                else
+                {
+                    for (int c = 0; c < n; c++)
+                    {
+                        var p = MakeProxyPort(nq, Direction.Output, Port.Capacity.Single, $"Choice {c}", c);
+                        outChoices.Add(p);
+                        outputContainer.Add(p);
+                    }
+                }
+            }
+            else if (branchChild is ConditionsStep ncnd)
+            {
+                outChoices = new List<Port>();
+                int n = ncnd.outcomes != null ? ncnd.outcomes.Count : 0;
+                if (n == 0)
+                    outputContainer.Add(new Label("No outcomes (edit nested Conditions)"));
+                else
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        var b = ncnd.outcomes[i];
+                        string label = b != null && !string.IsNullOrWhiteSpace(b.label) ? b.label : ConditionOutcomeLabel(b, i);
+                        var p = MakeProxyPort(ncnd, Direction.Output, Port.Capacity.Single, label, i);
+                        outChoices.Add(p);
+                        outputContainer.Add(p);
+                    }
+                }
+            }
+            else
+            {
+                outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                outputContainer.Add(outNext);
+            }
+
+            RefreshPorts();
         }
 
         void RecreateChoicePorts()
@@ -3516,7 +3811,11 @@ public class ScenarioGraphWindow : EditorWindow
                 // Edit nested step in focused modal
                 if (sub is TimelineStep tl) StepEditWindow.OpenTimeline(scenario, tl);
                 else if (sub is CueCardsStep cc) StepEditWindow.OpenCueCards(scenario, cc);
-                else if (sub is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, rebuild);
+                else if (sub is QuestionStep q) StepEditWindow.OpenQuestion(scenario, q, () =>
+                {
+                    if (owner != null && owner.scenario != null)
+                        owner.Load(owner.scenario);
+                });
                 else if (sub is MiniQuizStep mq) StepEditWindow.OpenMiniQuiz(scenario, mq, () => owner?.Load(owner.scenario));
                 else if (sub is SelectionStep se) StepEditWindow.OpenSelection(scenario, se);
                 else if (sub is InsertStep ins) StepEditWindow.OpenInsert(scenario, ins);

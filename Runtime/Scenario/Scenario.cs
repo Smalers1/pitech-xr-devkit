@@ -309,7 +309,7 @@ namespace Pitech.XR.Scenario
         public UnityEngine.Events.UnityEvent onEnter = new UnityEngine.Events.UnityEvent();
 
         [Header("Flow")]
-        [Tooltip("Optional delay before we advance to the next step (seconds). 0 = advance immediately")]
+        [Tooltip("Delay after On Enter fires before the scenario advances (real-time seconds, ignores Time.timeScale). 0 = advance immediately after events.")]
         public float waitSeconds = 0f;
 
         [Tooltip("Next step (GUID). Empty = next item in list")]
@@ -398,7 +398,11 @@ namespace Pitech.XR.Scenario
     // -------- GroupStep --------
     /// <summary>
     /// Runs multiple nested steps concurrently (optional advanced authoring).
-    /// Group has a single input and output (nextGuid).
+    /// Default routing uses <see cref="nextGuid"/> as the single exit.
+    /// With <see cref="CompleteWhen.SpecificChildCompletes"/> and a branching nested
+    /// <see cref="QuestionStep"/> or <see cref="ConditionsStep"/>, the scenario graph exposes
+    /// that child’s branch targets; runtime follows those per-choice / per-outcome nextGuids
+    /// (see DevKit Scenario Graph), and <see cref="nextGuid"/> is only used when not in that mode.
     /// </summary>
     [Serializable]
     public sealed class GroupStep : Step
@@ -413,7 +417,7 @@ namespace Pitech.XR.Scenario
         }
 
         [Header("Group Steps")]
-        [Tooltip("Nested steps that run together. Their routing fields are ignored; the Group controls routing via nextGuid.")]
+        [Tooltip("Nested steps that run together. For most completion modes routing uses the Group’s nextGuid. With Specific Child Completes + a Question or Conditions child, branch nextGuids on that child drive exits from the group (see Scenario Graph).")]
         [SerializeReference] public List<Step> steps = new();
 
         [Header("Completion")]
@@ -439,7 +443,7 @@ namespace Pitech.XR.Scenario
         public List<ChildRequirement> childRequirements = new();
 
         [Header("Routing")]
-        [Tooltip("Next step (GUID). Empty = next item in list")]
+        [Tooltip("Next step (GUID) when not using proxy branch ports. Empty = next item in list. With Specific Child Completes + Question/Conditions, branch links are stored on that child; this field is the fallback if no branch exit was resolved.")]
         public string nextGuid = "";
 
         public override string Kind => "Group";

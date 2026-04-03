@@ -74,7 +74,10 @@ namespace Pitech.XR.ContentDelivery
         [Tooltip("Project-relative root for local output (Addressables bundles + report JSON). Recommended outside Assets.")]
         public string localWorkspaceRoot = "Build/ContentDelivery";
 
-        [Tooltip("Optional project-relative JSON report folder. If empty, uses {localWorkspaceRoot}/Reports.")]
+        [Tooltip(
+            "Optional project-relative JSON report folder when lab version id is not available (legacy). " +
+            "When the Addressables Builder saves reports with both lab id and lab version id, JSON is written next to the build output " +
+            "under {localWorkspaceRoot}/Addressables/{profile}/{labId}/{version}/reports/ instead — this field is ignored in that case.")]
         public string localReportsFolder = string.Empty;
 
         [Header("Advanced")]

@@ -18,15 +18,31 @@ This guide covers the optional Addressables/CCD workflow in the Pi tech XR DevKi
 
 Open `Pi tech -> Addressables Builder`.
 
+**Lab version id is required** before Setup, Validate, Build, or Fast One Minute Build. Use a stable id per content drop (for example `1.13`, `2.0.1`). It controls local output folders so rebuilding another version does not overwrite the previous bundle folder.
+
+### Local folder layout (after Setup + Build)
+
+Under `AddressablesModuleConfig.localWorkspaceRoot` (default `Build/ContentDelivery`):
+
+```text
+{workspace}/Addressables/{profile}/{labId}/{labVersion}/[BuildTarget]/   ← Addressables bundles + catalog
+{workspace}/Addressables/{profile}/{labId}/{labVersion}/reports/         ← publish transaction JSON from Validate/Build
+```
+
+The `.asset` publish report objects remain under `Assets/Settings/ContentDelivery/Reports` (Unity assets). Only the **JSON** mirror is co-located with the build tree when both lab id and lab version id are set on the report.
+
+If `localReportsFolder` is set on the module config, it applies only to the **legacy** path when lab version id is missing; versioned Builder runs ignore it for JSON output.
+
 Use buttons in order:
 
-1. `1) Setup`
-2. choose `Prefab to include`
-3. `2) Map Prefab`
-4. `3) Validate`
-5. `4) Build`
+1. Enter **Lab version id**
+2. `1) Setup`
+3. choose `Prefab to include`
+4. `2) Map Prefab`
+5. `3) Validate`
+6. `4) Build`
 
-Fast option: `Fast: One Minute Build`.
+Fast option: `Fast: One Minute Build` (also requires Lab version id).
 
 Setup is idempotent and ensures:
 

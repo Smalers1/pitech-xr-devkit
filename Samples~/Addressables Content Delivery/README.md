@@ -16,6 +16,7 @@ Add to your scene:
 
 1. Open DevKit Hub -> Guided Setup.
 2. Open `Pi tech -> Addressables Builder`:
+   - Enter **Lab version id** (required; e.g. `1.13` — each version gets its own output folder under your lab id).
    - Setup
    - assign `Prefab to include`
    - Map Prefab

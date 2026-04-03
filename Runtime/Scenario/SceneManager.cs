@@ -77,6 +77,9 @@ namespace Pitech.XR.Scenario
         bool _editorSkip;
         int _editorSkipBranchIndex;
 
+        bool _groupExitBranchResolved;
+        string _groupExitNextGuid;
+
         void Awake()
         {
             // Only set up stats if the feature is present (UI or config).
@@ -186,7 +189,9 @@ namespace Pitech.XR.Scenario
                 else if (step is GroupStep g)
                 {
                     yield return RunGroup(g);
-                    branchGuid = g.nextGuid;
+                    branchGuid = _groupExitBranchResolved ? _groupExitNextGuid : g.nextGuid;
+                    _groupExitBranchResolved = false;
+                    _groupExitNextGuid = null;
                 }
                 else if (step is QuizStep qz)
                 {
@@ -1324,8 +1329,8 @@ namespace Pitech.XR.Scenario
                 Debug.LogException(ex, this);
             }
 
-            // Optional wait
-            float wait = ev.waitSeconds;
+            // Optional wait after onEnter (real-time seconds; not affected by Time.timeScale)
+            float wait = Mathf.Max(0f, ev.waitSeconds);
             if (wait > 0f)
             {
                 float t = 0f;
@@ -1334,7 +1339,7 @@ namespace Pitech.XR.Scenario
                     if (_editorSkip)
                         break; // skip cancels waiting
 
-                    t += Time.deltaTime;
+                    t += Time.unscaledDeltaTime;
                     yield return null;
                 }
             }
@@ -1614,6 +1619,9 @@ namespace Pitech.XR.Scenario
 
         IEnumerator RunGroupInternal(GroupStep g, GroupCancelToken token)
         {
+            _groupExitBranchResolved = false;
+            _groupExitNextGuid = null;
+
             if (g == null || g.steps == null || g.steps.Count == 0)
                 yield break;
 
@@ -1626,7 +1634,7 @@ namespace Pitech.XR.Scenario
             {
                 if (st == null) continue;
                 if (string.IsNullOrEmpty(st.guid)) st.guid = System.Guid.NewGuid().ToString();
-                handles.Add(StartGroupChild(st, localToken));
+                handles.Add(StartGroupChild(st, localToken, g));
             }
 
             bool ShouldComplete()
@@ -1687,17 +1695,72 @@ namespace Pitech.XR.Scenario
                 }
             }
 
+            if (_editorSkip &&
+                g.completeWhen == GroupStep.CompleteWhen.SpecificChildCompletes &&
+                !string.IsNullOrEmpty(g.specificStepGuid) &&
+                g.steps != null)
+            {
+                Step sub = null;
+                for (int si = 0; si < g.steps.Count; si++)
+                {
+                    var st = g.steps[si];
+                    if (st != null && st.guid == g.specificStepGuid)
+                    {
+                        sub = st;
+                        break;
+                    }
+                }
+                if (sub is QuestionStep qq &&
+                    _editorSkipBranchIndex >= 0 &&
+                    qq.choices != null &&
+                    _editorSkipBranchIndex < qq.choices.Count)
+                {
+                    var choice = qq.choices[_editorSkipBranchIndex];
+                    if (choice != null)
+                    {
+                        _groupExitBranchResolved = true;
+                        _groupExitNextGuid = FallbackGuid(choice.nextGuid);
+                    }
+                }
+                else if (sub is ConditionsStep cnd &&
+                         _editorSkipBranchIndex >= 0 &&
+                         cnd.outcomes != null &&
+                         _editorSkipBranchIndex < cnd.outcomes.Count)
+                {
+                    var o = cnd.outcomes[_editorSkipBranchIndex];
+                    if (o != null)
+                    {
+                        _groupExitBranchResolved = true;
+                        _groupExitNextGuid = FallbackGuid(o.nextGuid);
+                    }
+                }
+            }
+
             // Reset skip flag after group ends (like any other step).
             _editorSkip = false;
             _editorSkipBranchIndex = 0;
         }
 
-        GroupChildHandle StartGroupChild(Step st, GroupCancelToken token)
+        GroupChildHandle StartGroupChild(Step st, GroupCancelToken token, GroupStep parentGroup)
         {
             var h = new GroupChildHandle { step = st, guid = st.guid };
 
             IEnumerator routine = null;
             Action cleanup = null;
+
+            System.Action<string> onBranchExit = null;
+            if (parentGroup != null &&
+                parentGroup.completeWhen == GroupStep.CompleteWhen.SpecificChildCompletes &&
+                !string.IsNullOrEmpty(parentGroup.specificStepGuid) &&
+                st != null &&
+                st.guid == parentGroup.specificStepGuid)
+            {
+                onBranchExit = next =>
+                {
+                    _groupExitBranchResolved = true;
+                    _groupExitNextGuid = next ?? "";
+                };
+            }
 
             if (st is TimelineStep tl)
             {
@@ -1716,8 +1779,12 @@ namespace Pitech.XR.Scenario
             }
             else if (st is QuestionStep q)
             {
-                routine = RunQuestionGroup(q, token);
+                routine = RunQuestionGroup(q, token, onBranchExit);
                 cleanup = () => { if (q.panelRoot) HidePanelRoot(q.panelRoot); };
+            }
+            else if (st is ConditionsStep cnd)
+            {
+                routine = RunConditionsGroup(cnd, token, onBranchExit);
             }
             else if (st is SelectionStep sel)
             {
@@ -1743,9 +1810,9 @@ namespace Pitech.XR.Scenario
             {
                 routine = RunEventGroup(ev, token);
             }
-            else if (st is GroupStep g)
+            else if (st is GroupStep innerG)
             {
-                routine = RunGroupInternal(g, token);
+                routine = RunGroupInternal(innerG, token);
             }
 
             h.cancel = () => cleanup?.Invoke();
@@ -1975,28 +2042,29 @@ namespace Pitech.XR.Scenario
                 cc.nextButton.onClick.RemoveListener(nextCb);
         }
 
-        IEnumerator RunQuestionGroup(QuestionStep q, GroupCancelToken token)
+        IEnumerator RunQuestionGroup(QuestionStep q, GroupCancelToken token, System.Action<string> onBranchExit)
         {
             if (q.panelRoot) q.panelRoot.gameObject.SetActive(true);
             if (q.panelAnimator && !string.IsNullOrEmpty(q.showTrigger))
                 q.panelAnimator.SetTrigger(q.showTrigger);
 
             var wired = new List<(Button btn, UnityAction fn)>();
-            bool answered = false;
+            string nextGuid = null;
 
             if (q.choices != null)
             {
                 for (int i = 0; i < q.choices.Count; i++)
                 {
-                    var choice = q.choices[i];
+                    int idx = i;
+                    var choice = q.choices[idx];
                     if (choice == null || choice.button == null) continue;
 
                     UnityAction fn = () =>
                     {
-                        if (answered) return;
+                        if (nextGuid != null) return;
                         choice.onSelected?.Invoke();
                         ApplyEffects(choice.effects);
-                        answered = true;
+                        nextGuid = FallbackGuid(choice.nextGuid);
                         if (q.panelAnimator && !string.IsNullOrEmpty(q.hideTrigger))
                             q.panelAnimator.SetTrigger(q.hideTrigger);
                         else if (q.panelRoot)
@@ -2008,7 +2076,7 @@ namespace Pitech.XR.Scenario
                 }
             }
 
-            while (!answered && !token.Cancelled)
+            while (nextGuid == null && !token.Cancelled)
                 yield return null;
 
             foreach (var (btn, fn) in wired)
@@ -2016,8 +2084,66 @@ namespace Pitech.XR.Scenario
 
             if (q.panelRoot) q.panelRoot.gameObject.SetActive(false);
 
-            if (!token.Cancelled)
+            if (nextGuid != null)
+                onBranchExit?.Invoke(nextGuid);
+
+            if (!token.Cancelled && nextGuid != null)
                 yield return WaitForPointerRelease();
+        }
+
+        IEnumerator RunConditionsGroup(ConditionsStep cnd, GroupCancelToken token, System.Action<string> onBranchExit)
+        {
+            if (token.Cancelled)
+                yield break;
+
+            string nextGuid = null;
+
+#if UNITY_EDITOR
+            if (_editorSkip)
+            {
+                var outcomes = cnd?.outcomes;
+                if (_editorSkipBranchIndex >= 0 &&
+                    outcomes != null &&
+                    _editorSkipBranchIndex < outcomes.Count)
+                {
+                    var o = outcomes[_editorSkipBranchIndex];
+                    if (o != null)
+                        nextGuid = o.nextGuid;
+                }
+                if (nextGuid == null)
+                    nextGuid = "";
+                onBranchExit?.Invoke(FallbackGuid(nextGuid));
+                yield break;
+            }
+#endif
+
+            if (cnd == null)
+            {
+                onBranchExit?.Invoke(FallbackGuid(""));
+                yield break;
+            }
+
+            var oc = cnd.outcomes;
+            if (oc == null || oc.Count == 0)
+            {
+                onBranchExit?.Invoke(FallbackGuid(""));
+                yield break;
+            }
+
+            float value = GetConditionValue(cnd);
+            nextGuid = null;
+            foreach (var o in oc)
+            {
+                if (o == null) continue;
+                if (ConditionsEvaluator.EvalCompare(value, o.compareOp, o.compareValue))
+                {
+                    nextGuid = o.nextGuid;
+                    break;
+                }
+            }
+            if (nextGuid == null)
+                nextGuid = "";
+            onBranchExit?.Invoke(FallbackGuid(nextGuid));
         }
 
         IEnumerator RunSelectionGroup(SelectionStep s, GroupCancelToken token)
@@ -2239,13 +2365,17 @@ namespace Pitech.XR.Scenario
                 Debug.LogException(ex, this);
             }
 
-            float wait = ev.waitSeconds;
+            float wait = Mathf.Max(0f, ev.waitSeconds);
             if (wait > 0f)
             {
                 float t = 0f;
                 while (t < wait && !token.Cancelled)
                 {
-                    t += Time.deltaTime;
+#if UNITY_EDITOR
+                    if (_editorSkip)
+                        break;
+#endif
+                    t += Time.unscaledDeltaTime;
                     yield return null;
                 }
             }

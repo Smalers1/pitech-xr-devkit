@@ -137,7 +137,10 @@ namespace Pitech.XR.ContentDelivery.Editor
             return result.Trim();
         }
 
-        public AddressablesSetupResult EnsureInitialized(string labIdHint, string ccdBucketUrlOverride = null)
+        public AddressablesSetupResult EnsureInitialized(
+            string labIdHint,
+            string ccdBucketUrlOverride = null,
+            string labVersionId = null)
         {
             AddressablesSetupResult result = new AddressablesSetupResult
             {
@@ -170,7 +173,13 @@ namespace Pitech.XR.ContentDelivery.Editor
 
             EnsureDefineSymbol("PITECH_ADDR");
             string resolvedLabIdForProfile = string.IsNullOrWhiteSpace(labIdHint) ? "default" : labIdHint.Trim();
-            string selectedProfile = EnsureProfile(settings, config, out bool createdProfile, ccdBucketUrlOverride, resolvedLabIdForProfile);
+            string selectedProfile = EnsureProfile(
+                settings,
+                config,
+                out bool createdProfile,
+                ccdBucketUrlOverride,
+                resolvedLabIdForProfile,
+                labVersionId);
             result.profileName = selectedProfile;
             result.createdProfile = createdProfile;
 
@@ -551,6 +560,65 @@ namespace Pitech.XR.ContentDelivery.Editor
         /// Returns the canonical Addressables address key for a lab's main prefab.
         /// Public so that report services can include it in build reports.
         /// </summary>
+        /// <summary>
+        /// Project-relative folder for a lab + version under the local Addressables workspace (no <c>[BuildTarget]</c> suffix).
+        /// Used for co-located publish JSON reports. Empty when lab id or version id is missing/invalid.
+        /// </summary>
+        public static string BuildLocalLabVersionRoot(
+            AddressablesModuleConfig config,
+            string profileName,
+            string labId,
+            string labVersionId)
+        {
+            if (string.IsNullOrWhiteSpace(labId) || string.IsNullOrWhiteSpace(labVersionId))
+            {
+                return string.Empty;
+            }
+
+            string workspaceRoot = "Build/ContentDelivery";
+            if (config != null && !string.IsNullOrWhiteSpace(config.localWorkspaceRoot))
+            {
+                workspaceRoot = NormalizeProjectRelativePath(config.localWorkspaceRoot, "Build/ContentDelivery");
+            }
+
+            string safeProfile = string.IsNullOrWhiteSpace(profileName) ? "Default" : profileName.Trim();
+            string labSeg = NormalizeKeySegment(labId.Trim(), "default");
+            string verSeg = NormalizeVersionSegment(labVersionId.Trim());
+            if (string.IsNullOrWhiteSpace(verSeg))
+            {
+                return string.Empty;
+            }
+
+            return $"{workspaceRoot}/Addressables/{safeProfile}/{labSeg}/{verSeg}";
+        }
+
+        /// <summary>
+        /// Path segment sanitizer for lab version ids (allows semver dots).
+        /// </summary>
+        public static string NormalizeVersionSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            string trimmed = value.Trim();
+            char[] chars = new char[trimmed.Length];
+            for (int i = 0; i < trimmed.Length; i++)
+            {
+                char c = trimmed[i];
+                chars[i] = char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.' ? c : '-';
+            }
+
+            string normalized = new string(chars).Trim('-', '.');
+            while (normalized.Contains("..", StringComparison.Ordinal))
+            {
+                normalized = normalized.Replace("..", ".", StringComparison.Ordinal);
+            }
+
+            return string.IsNullOrWhiteSpace(normalized) ? string.Empty : normalized;
+        }
+
         public static string ComputeAddressKey(string labId)
         {
             string normalizedLabId = NormalizeKeySegment(labId, "default");
@@ -624,7 +692,8 @@ namespace Pitech.XR.ContentDelivery.Editor
             AddressablesModuleConfig config,
             out bool created,
             string ccdBucketUrlOverride = null,
-            string labId = null)
+            string labId = null,
+            string labVersionId = null)
         {
             created = false;
             string profileName = string.IsNullOrWhiteSpace(config.profileName) ? "Default" : config.profileName.Trim();
@@ -637,7 +706,7 @@ namespace Pitech.XR.ContentDelivery.Editor
                 created = true;
             }
 
-            string remoteBuildPath = BuildRemoteBuildPath(config, profileName, labId);
+            string remoteBuildPath = BuildRemoteBuildPath(config, profileName, labId, labVersionId);
             string remoteLoadPath = !string.IsNullOrWhiteSpace(ccdBucketUrlOverride)
                 ? ccdBucketUrlOverride.Trim().TrimEnd('/')
                 : BuildRemoteLoadPath(config);
@@ -668,7 +737,11 @@ namespace Pitech.XR.ContentDelivery.Editor
                 .Replace("{environment}", env);
         }
 
-        private static string BuildRemoteBuildPath(AddressablesModuleConfig config, string profileName, string labId = null)
+        private static string BuildRemoteBuildPath(
+            AddressablesModuleConfig config,
+            string profileName,
+            string labId = null,
+            string labVersionId = null)
         {
             string workspaceRoot = "Build/ContentDelivery";
             if (config != null && !string.IsNullOrWhiteSpace(config.localWorkspaceRoot))
@@ -678,7 +751,17 @@ namespace Pitech.XR.ContentDelivery.Editor
 
             string safeProfile = string.IsNullOrWhiteSpace(profileName) ? "Default" : profileName.Trim();
             string labSegment = string.IsNullOrWhiteSpace(labId) ? string.Empty : $"/{NormalizeKeySegment(labId, "default")}";
-            return $"{workspaceRoot}/Addressables/{safeProfile}{labSegment}/[BuildTarget]";
+            string versionSegment = string.Empty;
+            if (!string.IsNullOrWhiteSpace(labVersionId))
+            {
+                string ver = NormalizeVersionSegment(labVersionId.Trim());
+                if (!string.IsNullOrWhiteSpace(ver))
+                {
+                    versionSegment = $"/{ver}";
+                }
+            }
+
+            return $"{workspaceRoot}/Addressables/{safeProfile}{labSegment}{versionSegment}/[BuildTarget]";
         }
 
         private static string NormalizeProjectRelativePath(string path, string fallback)

@@ -192,7 +192,8 @@ namespace Pitech.XR.ContentDelivery.Editor
             string assetPath = $"{ReportsAssetFolder}/PublishTransaction_{safeId}.asset";
 
             string labId = report.lab != null ? Safe(report.lab.labId) : string.Empty;
-            string jsonFolder = ResolveReportJsonFolder(config, labId);
+            string labVersionId = report.lab != null ? Safe(report.lab.labVersionId) : string.Empty;
+            string jsonFolder = ResolveReportJsonFolder(config, labId, labVersionId);
             string jsonAbsoluteFolder = ToAbsolutePath(jsonFolder);
             Directory.CreateDirectory(jsonAbsoluteFolder);
             string readableBaseName = BuildReportBaseName(report);
@@ -284,8 +285,24 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
         }
 
-        private static string ResolveReportJsonFolder(AddressablesModuleConfig config, string labId = null)
+        private static string ResolveReportJsonFolder(
+            AddressablesModuleConfig config,
+            string labId = null,
+            string labVersionId = null)
         {
+            string profileName = config != null && !string.IsNullOrWhiteSpace(config.profileName)
+                ? config.profileName.Trim()
+                : "Default";
+
+            if (!string.IsNullOrWhiteSpace(labId) && !string.IsNullOrWhiteSpace(labVersionId))
+            {
+                string coLocated = AddressablesService.BuildLocalLabVersionRoot(config, profileName, labId, labVersionId);
+                if (!string.IsNullOrWhiteSpace(coLocated))
+                {
+                    return $"{coLocated}/reports";
+                }
+            }
+
             string baseFolder;
             if (config != null && !string.IsNullOrWhiteSpace(config.localReportsFolder))
             {
@@ -303,7 +320,7 @@ namespace Pitech.XR.ContentDelivery.Editor
 
             if (!string.IsNullOrWhiteSpace(labId))
             {
-                string safeLab = System.Text.RegularExpressions.Regex.Replace(labId.Trim(), "[^a-zA-Z0-9-_]+", "-").Trim('-');
+                string safeLab = Regex.Replace(labId.Trim(), "[^a-zA-Z0-9-_]+", "-").Trim('-');
                 if (!string.IsNullOrWhiteSpace(safeLab))
                 {
                     return $"{baseFolder}/{safeLab}";

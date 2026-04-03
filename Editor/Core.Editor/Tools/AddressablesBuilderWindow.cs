@@ -144,7 +144,13 @@ private void OnEnable()
             labIdField = new TextField("Lab Id (group key)") { value = "default" };
             section.Add(labIdField);
 
-            labVersionField = new TextField("Lab version id") { value = string.Empty };
+            labVersionField = new TextField("Lab version id")
+            {
+                value = string.Empty,
+                tooltip =
+                    "Required. Each build outputs under {localWorkspace}/Addressables/{profile}/{labId}/{this version}/[BuildTarget], " +
+                    "and publish JSON reports go to .../{version}/reports/. Example: 1.13"
+            };
             section.Add(labVersionField);
 
             ccdBucketIdField = new TextField("CCD Bucket ID")
@@ -239,6 +245,7 @@ private void OnEnable()
             labVersionField.RegisterValueChangedCallback(_ =>
             {
                 validationPassed = false;
+                RefreshStepState();
             });
             prefabField.RegisterValueChangedCallback(_ =>
             {
@@ -371,6 +378,47 @@ private void OnEnable()
             return string.IsNullOrWhiteSpace(labIdField != null ? labIdField.value : null)
                 ? "default"
                 : labIdField.value.Trim();
+        }
+
+        /// <summary>Non-empty lab version suitable for paths; shows a dialog if missing or invalid.</summary>
+        private bool TryRequireLabVersionId(out string labVersionId)
+        {
+            string raw = labVersionField != null ? labVersionField.value : null;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                EditorUtility.DisplayDialog(
+                    "Addressables Builder",
+                    "Lab version id is required. Enter a version (for example 1.13) so each build writes to a separate folder " +
+                    "under your lab id and publish reports stay next to that build output.",
+                    "OK");
+                labVersionId = string.Empty;
+                return false;
+            }
+
+            string normalized = AddressablesService.NormalizeVersionSegment(raw);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                EditorUtility.DisplayDialog(
+                    "Addressables Builder",
+                    "Lab version id is invalid. Use letters, digits, dots, dashes, or underscores (for example 1.13).",
+                    "OK");
+                labVersionId = string.Empty;
+                return false;
+            }
+
+            labVersionId = raw.Trim();
+            return true;
+        }
+
+        private bool HasLabVersionId()
+        {
+            string raw = labVersionField != null ? labVersionField.value : null;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(AddressablesService.NormalizeVersionSegment(raw));
         }
 
         /// <summary>
@@ -787,9 +835,11 @@ private void OnEnable()
             bool hasPrefab = prefabField != null && prefabField.value is GameObject;
             bool requireValidationGate = validationGateToggle != null && validationGateToggle.value;
 
+            bool hasLabVersion = HasLabVersionId();
+
             if (setupButton != null)
             {
-                setupButton.SetEnabled(true);
+                setupButton.SetEnabled(hasLabVersion);
             }
 
             if (mapPrefabButton != null)
@@ -799,18 +849,19 @@ private void OnEnable()
 
             if (validateButton != null)
             {
-                validateButton.SetEnabled(hasSetup && mappingIsValid);
+                validateButton.SetEnabled(hasSetup && mappingIsValid && hasLabVersion);
             }
 
             if (buildButton != null)
             {
-                bool canBuild = hasSetup && mappingIsValid && (!requireValidationGate || validationPassed);
+                bool canBuild = hasSetup && mappingIsValid && hasLabVersion &&
+                                (!requireValidationGate || validationPassed);
                 buildButton.SetEnabled(canBuild);
             }
 
             if (oneMinuteBuildButton != null)
             {
-                oneMinuteBuildButton.SetEnabled(hasPrefab);
+                oneMinuteBuildButton.SetEnabled(hasPrefab && hasLabVersion);
             }
 
             if (openUploadFolderButton != null)
@@ -820,6 +871,12 @@ private void OnEnable()
 
             if (nextStepLabel == null)
             {
+                return;
+            }
+
+            if (!hasLabVersion)
+            {
+                nextStepLabel.text = "Next step: enter Lab version id (required for versioned build folders).";
                 return;
             }
 
@@ -852,8 +909,13 @@ private void OnEnable()
 
         private void RunSetup()
         {
+            if (!TryRequireLabVersionId(out string labVersionId))
+            {
+                return;
+            }
+
             string ccdPath = ResolveCcdRemoteLoadPathForSetup();
-            var setup = setupService.EnsureInitialized(ResolveLabId(), ccdPath);
+            var setup = setupService.EnsureInitialized(ResolveLabId(), ccdPath, labVersionId);
             validationPassed = false;
             EnsureConfigFieldValue();
             RefreshMappingPreview();
@@ -918,6 +980,11 @@ private void OnEnable()
 
         private void RunValidate()
         {
+            if (!TryRequireLabVersionId(out _))
+            {
+                return;
+            }
+
             var config = EnsureSelectedConfig();
             AddressablesValidationResult validation = RunValidateInternal("addressables_builder_validate", out PublishTransactionReportData report);
             validationPassed = validation != null && validation.success;
@@ -931,6 +998,11 @@ private void OnEnable()
 
         private void RunBuild()
         {
+            if (!TryRequireLabVersionId(out string labVersionId))
+            {
+                return;
+            }
+
             var config = EnsureSelectedConfig();
             if (config == null)
             {
@@ -938,7 +1010,7 @@ private void OnEnable()
                 return;
             }
 
-            setupService.EnsureInitialized(ResolveLabId(), ResolveCcdRemoteLoadPathForSetup());
+            setupService.EnsureInitialized(ResolveLabId(), ResolveCcdRemoteLoadPathForSetup(), labVersionId);
 
             AddressablesValidationResult validation = null;
             PublishTransactionReportData report = reportService.CreateDraft(
@@ -991,6 +1063,11 @@ private void OnEnable()
 
         private void RunOneMinuteBuild()
         {
+            if (!TryRequireLabVersionId(out string labVersionId))
+            {
+                return;
+            }
+
             var config = EnsureSelectedConfig();
             if (config == null)
             {
@@ -998,7 +1075,10 @@ private void OnEnable()
                 return;
             }
 
-            AddressablesSetupResult setup = setupService.EnsureInitialized(ResolveLabId(), ResolveCcdRemoteLoadPathForSetup());
+            AddressablesSetupResult setup = setupService.EnsureInitialized(
+                ResolveLabId(),
+                ResolveCcdRemoteLoadPathForSetup(),
+                labVersionId);
             if (!setup.success)
             {
                 feedbackLabel.text = BuildSetupSummary(setup);
