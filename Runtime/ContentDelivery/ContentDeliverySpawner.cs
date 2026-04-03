@@ -96,7 +96,9 @@ namespace Pitech.XR.ContentDelivery
         public RuntimeTelemetryAdapter analyticsAdapter;
 
         [Header("SceneManager Coordination (optional)")]
-        [Tooltip("Optional SceneManager reference. If set, autoStart can be deferred until spawn completes.")]
+        [Tooltip(
+            "Optional SceneManager reference. If unset, resolves under spawn parent (before spawn) then under spawned lab root. " +
+            "Does not scan the whole loaded world — avoids binding a shell SceneManager by mistake.")]
         public MonoBehaviour sceneManager;
 
         [Tooltip("Disable SceneManager autoStart until content has spawned.")]
@@ -127,7 +129,8 @@ namespace Pitech.XR.ContentDelivery
 
             if (sceneManager == null)
             {
-                sceneManager = FindSceneManagerLike();
+                Transform scope = spawnParent != null ? spawnParent : transform;
+                sceneManager = FindFirstSceneManagerUnderTransform(scope);
             }
 
             if (analyticsAdapter == null)
@@ -619,6 +622,18 @@ namespace Pitech.XR.ContentDelivery
             spawnedInstance.transform.localRotation = Quaternion.identity;
             Debug.Log("[ContentDelivery] Content spawned successfully.");
 
+            MonoBehaviour labSceneManager = sceneManager;
+            if (labSceneManager == null)
+            {
+                labSceneManager = FindFirstSceneManagerUnderTransform(spawnedInstance.transform);
+                sceneManager = labSceneManager;
+            }
+
+            if (deferSceneManagerUntilSpawn && labSceneManager != null)
+            {
+                TrySetAutoStart(labSceneManager, false);
+            }
+
             if (overlay != null)
             {
                 overlay.ShowStatus(
@@ -631,9 +646,9 @@ namespace Pitech.XR.ContentDelivery
                 }
             }
 
-            if (sceneManager != null && restartSceneManagerAfterSpawn)
+            if (labSceneManager != null && restartSceneManagerAfterSpawn)
             {
-                TryRestart(sceneManager);
+                TryRestart(labSceneManager);
             }
 
             hasCompletedInitialSpawn = true;
@@ -1101,12 +1116,21 @@ namespace Pitech.XR.ContentDelivery
         }
 #endif
 
-        private static MonoBehaviour FindSceneManagerLike()
+        /// <summary>
+        /// Resolves <c>Pitech.XR.Scenario.SceneManager</c> only under <paramref name="root"/> (no global scan),
+        /// so host/shell scenes with decoy managers do not steal Addressable lab instances.
+        /// </summary>
+        private static MonoBehaviour FindFirstSceneManagerUnderTransform(Transform root)
         {
-            MonoBehaviour[] all = FindObjectsOfType<MonoBehaviour>(true);
-            for (int i = 0; i < all.Length; i++)
+            if (root == null)
             {
-                MonoBehaviour behaviour = all[i];
+                return null;
+            }
+
+            MonoBehaviour[] behaviours = root.GetComponentsInChildren<MonoBehaviour>(true);
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                MonoBehaviour behaviour = behaviours[i];
                 if (behaviour != null && behaviour.GetType().FullName == "Pitech.XR.Scenario.SceneManager")
                 {
                     return behaviour;

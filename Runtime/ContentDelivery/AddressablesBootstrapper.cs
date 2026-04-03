@@ -17,7 +17,9 @@ namespace Pitech.XR.ContentDelivery
         public string internalRuntimeUrl = string.Empty;
 
         [Header("Scene Manager Integration (optional)")]
-        [Tooltip("Optional SceneManager reference. If null, bootstrapper tries to auto-detect one.")]
+        [Tooltip(
+            "Optional SceneManager reference. If null, auto-detect searches only under this GameObject (not the whole loaded world). " +
+            "For shell + Addressable lab, leave null or assign the lab instance explicitly.")]
         public MonoBehaviour sceneManager;
 
         [Tooltip("Disable SceneManager autoStart until launch context resolves.")]
@@ -41,7 +43,7 @@ namespace Pitech.XR.ContentDelivery
 
             if (sceneManager == null)
             {
-                sceneManager = FindSceneManagerLike();
+                sceneManager = FindSceneManagerUnderThisHierarchy();
             }
 
             if (deferSceneManagerAutoStart && sceneManager != null)
@@ -98,12 +100,12 @@ namespace Pitech.XR.ContentDelivery
             return LaunchContextFactory.CreateDirectContext(config);
         }
 
-        private static MonoBehaviour FindSceneManagerLike()
+        private MonoBehaviour FindSceneManagerUnderThisHierarchy()
         {
-            MonoBehaviour[] all = FindObjectsOfType<MonoBehaviour>(true);
-            for (int i = 0; i < all.Length; i++)
+            MonoBehaviour[] behaviours = GetComponentsInChildren<MonoBehaviour>(true);
+            for (int i = 0; i < behaviours.Length; i++)
             {
-                MonoBehaviour behaviour = all[i];
+                MonoBehaviour behaviour = behaviours[i];
                 if (behaviour == null)
                 {
                     continue;

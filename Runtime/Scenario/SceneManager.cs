@@ -21,7 +21,9 @@ namespace Pitech.XR.Scenario
     public class SceneManager : MonoBehaviour
     {
         [Header("Scenario")]
+        [Tooltip("Required for step flow. For Addressable lab prefabs, assign on the prefab asset (CCD bundle), not only in a scene instance.")]
         public Scenario scenario;
+        [Tooltip("If true, Restart() runs from Start(). When using ContentDeliverySpawner with defer SceneManager, autoStart is turned off until after spawn.")]
         public bool autoStart = true;
 
         public StatsUIController statsUI;
@@ -49,6 +51,11 @@ namespace Pitech.XR.Scenario
         [Header("Content Delivery (optional)")]
         [Tooltip("Optional reference to ContentDeliverySpawner (or compatible component).")]
         public MonoBehaviour contentDelivery;
+
+        [Header("Prefab / Addressables lab")]
+        [Tooltip(
+            "Optional root for auto-finding Quiz UI controllers. If null, uses transform.root so discovery stays within this lab prefab instance (never binds shell UI).")]
+        public Transform labContentRoot;
 
         /// Current step index while running. -1 when idle or finished
         public int StepIndex { get; private set; } = -1;
@@ -97,11 +104,16 @@ namespace Pitech.XR.Scenario
 
             DeactivateAllVisuals();
 
-            // Optional: auto-wire quiz UI controllers if present in scene.
+            Transform quizDiscoveryRoot = labContentRoot != null ? labContentRoot : transform.root;
             if (quizPanel == null)
-                quizPanel = UnityEngine.Object.FindObjectOfType<QuizUIController>(true);
+            {
+                quizPanel = quizDiscoveryRoot.GetComponentInChildren<QuizUIController>(true);
+            }
+
             if (quizResultsPanel == null)
-                quizResultsPanel = UnityEngine.Object.FindObjectOfType<QuizResultsUIController>(true);
+            {
+                quizResultsPanel = quizDiscoveryRoot.GetComponentInChildren<QuizResultsUIController>(true);
+            }
 
             // Hide (without disabling, if CanvasGroup is present)
             if (quizPanel != null) quizPanel.Hide();
@@ -2253,7 +2265,23 @@ namespace Pitech.XR.Scenario
             );
         }
 
+#if UNITY_EDITOR
+        private void OnValidate()
+        {
+            if (scenario != null)
+            {
+                return;
+            }
 
+            if (UnityEditor.SceneManagement.PrefabStageUtility.GetPrefabStage(gameObject) == null)
+            {
+                return;
+            }
 
+            Debug.LogWarning(
+                "[Scenario] SceneManager has no Scenario assigned. For Addressable lab prefabs, assign a Scenario on the prefab and wire Selectables / Selection Lists / Quiz as needed.",
+                this);
+        }
+#endif
     }
 }
