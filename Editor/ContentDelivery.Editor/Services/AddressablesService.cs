@@ -672,6 +672,18 @@ namespace Pitech.XR.ContentDelivery.Editor
             return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
         }
 
+        private static string NormalizeProjectRelativePath(string path, string fallback)
+        {
+            string raw = string.IsNullOrWhiteSpace(path) ? fallback : path.Trim();
+            string normalized = raw.Replace("\\", "/").Trim('/');
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return fallback;
+            }
+
+            return normalized;
+        }
+
 #if PITECH_ADDR
         private static AddressableAssetSettings EnsureAddressablesSettings(out bool created)
         {
@@ -762,18 +774,6 @@ namespace Pitech.XR.ContentDelivery.Editor
             }
 
             return $"{workspaceRoot}/Addressables/{safeProfile}{labSegment}{versionSegment}/[BuildTarget]";
-        }
-
-        private static string NormalizeProjectRelativePath(string path, string fallback)
-        {
-            string raw = string.IsNullOrWhiteSpace(path) ? fallback : path.Trim();
-            string normalized = raw.Replace("\\", "/").Trim('/');
-            if (string.IsNullOrWhiteSpace(normalized))
-            {
-                return fallback;
-            }
-
-            return normalized;
         }
 
         internal static int RemoveOtherLabGroups(
