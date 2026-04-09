@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 using Pitech.XR.Interactables;
@@ -8,49 +9,51 @@ namespace Pitech.XR.Interactables.Editor
 {
     /// <summary>
     /// Right-click context menu "Pi tech > Make Grabbable".
-    /// Adds Grabbable + Rigidbody + Collider and optionally wires Meta Interaction SDK
-    /// and Photon Fusion components — all via reflection so the DevKit compiles
-    /// without those SDKs installed.
+    /// Adds the correct parent components (Collider, Rigidbody, Meta Grabbable,
+    /// Fusion networking, multiplayer shared-grab bridge) then invokes Meta's own
+    /// Grab Wizard ("Add Grab Interaction") to create the ISDK_HandGrabInteraction
+    /// child with proper interactors.
+    ///
+    /// Everything is reflection-based — the DevKit compiles without Meta or Fusion.
     /// </summary>
     public static class MakeGrabbableWizard
     {
-        // ───────── Context Menu ─────────
-
         [MenuItem("GameObject/Pi tech/Make Grabbable", false, 10)]
         static void MakeGrabbable(MenuCommand cmd)
         {
             var go = cmd.context as GameObject;
             if (!go) return;
 
-            // Prevent running once per selected object in multi-select (Unity quirk)
             if (Selection.gameObjects.Length > 1 && cmd.context != Selection.activeGameObject)
                 return;
 
-            // Apply to all selected objects
-            foreach (var selected in Selection.gameObjects)
-                MakeGrabbableWindow.Open(selected);
+            MakeGrabbableWindow.Open(go);
         }
 
         [MenuItem("GameObject/Pi tech/Make Grabbable", true)]
         static bool MakeGrabbableValidate() => Selection.activeGameObject != null;
     }
 
-    /// <summary>Compact wizard window for configuring the grabbable setup.</summary>
     public class MakeGrabbableWindow : EditorWindow
     {
         // ───────── SDK Detection (cached) ─────────
         static bool s_Probed;
-        static bool s_HasMetaInteraction;   // Meta Interaction SDK (Oculus.Interaction)
-        static bool s_HasFusion;            // Photon Fusion 2
+        static bool s_HasMetaInteraction;
+        static bool s_HasFusion;
 
-        static Type s_GrabbableType;             // Oculus.Interaction.Grabbable
-        static Type s_GrabInteractableType;      // Oculus.Interaction.GrabInteractable
-        static Type s_RigidbodyKinematicRefType; // Oculus.Interaction.Rigidbody.RigidbodyKinematicRef — optional
-        static Type s_HandGrabInteractableType;  // Oculus.Interaction.HandGrab.HandGrabInteractable — optional
+        // Meta Interaction SDK — parent-level only
+        static Type s_MetaGrabbableType;          // Oculus.Interaction.Grabbable
 
-        static Type s_NetworkObjectType;         // Fusion.NetworkObject
-        static Type s_NetworkRigidbody3DType;    // Fusion.Addons.Physics.NetworkRigidbody3D or Fusion.NetworkRigidbody3D
-        static Type s_NetworkTransformType;      // Fusion.NetworkTransform
+        // Meta + Fusion multiplayer bridge
+        static Type s_SharedGrabbableType;        // Meta XR Shared Grabbable
+        static Type s_TransferOwnershipType;      // Transfer Ownership Fusion
+
+        // Photon Fusion
+        static Type s_NetworkObjectType;          // Fusion.NetworkObject
+        static Type s_NetworkTransformType;       // Fusion.NetworkTransform
+
+        // Meta Grab Wizard menu path
+        const string META_GRAB_WIZARD_MENU = "GameObject/Interaction SDK/Add Grab Interaction";
 
         static void ProbeSDKs()
         {
@@ -59,22 +62,24 @@ namespace Pitech.XR.Interactables.Editor
 
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
 
-            // Meta Interaction SDK
-            s_GrabbableType = FindType(assemblies, "Oculus.Interaction.Grabbable");
-            s_GrabInteractableType = FindType(assemblies, "Oculus.Interaction.GrabInteractable");
-            s_HandGrabInteractableType = FindType(assemblies, "Oculus.Interaction.HandGrab.HandGrabInteractable");
-            s_RigidbodyKinematicRefType = FindType(assemblies, "Oculus.Interaction.Rigidbody.RigidbodyKinematicRef");
-            s_HasMetaInteraction = s_GrabbableType != null;
+            // Meta Interaction SDK — only the parent Grabbable
+            s_MetaGrabbableType = FindType(assemblies, "Oculus.Interaction.Grabbable");
+            s_HasMetaInteraction = s_MetaGrabbableType != null;
+
+            // Meta + Fusion multiplayer bridge components
+            // These live in Meta's multiplayer building blocks
+            s_SharedGrabbableType = FindType(assemblies, "Meta.XR.MultiplayerBlocks.Shared.SharedGrabbable")
+                                 ?? FindTypeByName(assemblies, "MetaXRSharedGrabbable")
+                                 ?? FindTypeByName(assemblies, "SharedGrabbable");
+            s_TransferOwnershipType = FindTypeByName(assemblies, "TransferOwnershipFusion");
 
             // Photon Fusion
             s_NetworkObjectType = FindType(assemblies, "Fusion.NetworkObject");
-            s_NetworkRigidbody3DType = FindType(assemblies, "Fusion.Addons.Physics.NetworkRigidbody3D")
-                                   ?? FindType(assemblies, "Fusion.NetworkRigidbody3D");
             s_NetworkTransformType = FindType(assemblies, "Fusion.NetworkTransform");
             s_HasFusion = s_NetworkObjectType != null;
         }
 
-        static Type FindType(System.Reflection.Assembly[] assemblies, string fullName)
+        static Type FindType(Assembly[] assemblies, string fullName)
         {
             foreach (var asm in assemblies)
             {
@@ -84,13 +89,30 @@ namespace Pitech.XR.Interactables.Editor
             return null;
         }
 
+        /// <summary>Fallback: find by short class name across all assemblies.</summary>
+        static Type FindTypeByName(Assembly[] assemblies, string shortName)
+        {
+            foreach (var asm in assemblies)
+            {
+                try
+                {
+                    foreach (var t in asm.GetTypes())
+                    {
+                        if (t.Name == shortName && !t.IsAbstract)
+                            return t;
+                    }
+                }
+                catch { /* ReflectionTypeLoadException — skip */ }
+            }
+            return null;
+        }
+
         // ───────── Instance State ─────────
         GameObject _target;
         bool _addMeta = true;
-        bool _addHandGrab = true;
         bool _addFusion;
-        bool _kinematicWhileGrabbed = true;
         bool _useGravity = true;
+        bool _kinematicWhileGrabbed = true;
         bool _snapBack;
         bool _addColliderIfMissing = true;
 
@@ -101,8 +123,8 @@ namespace Pitech.XR.Interactables.Editor
             win._target = target;
             win._addMeta = s_HasMetaInteraction;
             win._addFusion = false; // opt-in
-            win.minSize = new Vector2(380, 340);
-            win.maxSize = new Vector2(420, 500);
+            win.minSize = new Vector2(380, 300);
+            win.maxSize = new Vector2(420, 480);
             win.ShowUtility();
         }
 
@@ -139,10 +161,14 @@ namespace Pitech.XR.Interactables.Editor
 
                 if (s_HasMetaInteraction)
                 {
-                    _addMeta = EditorGUILayout.Toggle("Add Meta Grab Components", _addMeta);
-                    using (new EditorGUI.DisabledScope(!_addMeta))
+                    _addMeta = EditorGUILayout.Toggle("Add Meta Grabbable + Open Grab Wizard", _addMeta);
+                    if (_addMeta)
                     {
-                        _addHandGrab = EditorGUILayout.Toggle("  + Hand Grab (pinch/palm)", _addHandGrab);
+                        EditorGUILayout.HelpBox(
+                            "Adds Meta's Grabbable on the parent, then opens Meta's\n" +
+                            "Grab Wizard to create the ISDK_HandGrabInteraction child.\n" +
+                            "Click \"Create\" in that wizard to finish.",
+                            MessageType.None);
                     }
                 }
                 else
@@ -166,17 +192,22 @@ namespace Pitech.XR.Interactables.Editor
                     _addFusion = EditorGUILayout.Toggle("Add Network Components", _addFusion);
                     if (_addFusion)
                     {
-                        EditorGUILayout.HelpBox(
-                            "Adds NetworkObject + NetworkRigidbody3D (or NetworkTransform).\n" +
-                            "You may need to set State Authority after adding.",
-                            MessageType.None);
+                        string fusionInfo = "Adds: NetworkObject, NetworkTransform";
+                        if (s_HasMetaInteraction && _addMeta)
+                        {
+                            if (s_SharedGrabbableType != null)
+                                fusionInfo += ", Meta XR Shared Grabbable";
+                            if (s_TransferOwnershipType != null)
+                                fusionInfo += ", Transfer Ownership Fusion";
+                        }
+                        EditorGUILayout.HelpBox(fusionInfo, MessageType.None);
                     }
                 }
                 else
                 {
                     EditorGUILayout.HelpBox(
                         "Photon Fusion not detected.\n" +
-                        "Install com.exitgames.photon.fusion to enable multiplayer components.",
+                        "Install Photon Fusion to enable multiplayer components.",
                         MessageType.None);
                 }
             }
@@ -213,119 +244,88 @@ namespace Pitech.XR.Interactables.Editor
             Undo.SetCurrentGroupName("Make Grabbable");
             int group = Undo.GetCurrentGroup();
 
-            // 1. Collider
+            // 1. Collider (auto-fit BoxCollider if none exists)
             if (_addColliderIfMissing && !_target.GetComponent<Collider>())
             {
                 var box = Undo.AddComponent<BoxCollider>(_target);
-                // Auto-fit to mesh bounds if available
                 FitColliderToBounds(box);
             }
 
             // 2. Rigidbody
             var rb = _target.GetComponent<Rigidbody>();
             if (!rb)
-            {
                 rb = Undo.AddComponent<Rigidbody>(_target);
-            }
             rb.useGravity = _useGravity;
             rb.isKinematic = false;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
             EditorUtility.SetDirty(rb);
 
-            // 3. Pi tech Grabbable marker
-            var grabbable = _target.GetComponent<Grabbable>();
-            if (!grabbable)
-            {
-                grabbable = Undo.AddComponent<Grabbable>(_target);
-            }
-            grabbable.kinematicWhileGrabbed = _kinematicWhileGrabbed;
-            grabbable.snapBackOnRelease = _snapBack;
-            EditorUtility.SetDirty(grabbable);
+            // 3. Pi tech Grabbable (our event hub — works without any VR SDK)
+            var piGrabbable = _target.GetComponent<Grabbable>();
+            if (!piGrabbable)
+                piGrabbable = Undo.AddComponent<Grabbable>(_target);
+            piGrabbable.kinematicWhileGrabbed = _kinematicWhileGrabbed;
+            piGrabbable.snapBackOnRelease = _snapBack;
+            EditorUtility.SetDirty(piGrabbable);
 
-            // 4. Meta Interaction SDK (reflection)
+            // 4. Meta Grabbable on the PARENT (just the Grabbable — not interactables)
             if (_addMeta && s_HasMetaInteraction)
-                ApplyMetaComponents();
+                AddIfMissing(_target, s_MetaGrabbableType);
 
-            // 5. Photon Fusion (reflection)
+            // 5. Fusion networking
             if (_addFusion && s_HasFusion)
-                ApplyFusionComponents();
+            {
+                AddIfMissing(_target, s_NetworkObjectType);
+                AddIfMissing(_target, s_NetworkTransformType);
+
+                // Multiplayer grab bridge (only when BOTH Meta + Fusion are present)
+                if (_addMeta && s_HasMetaInteraction)
+                {
+                    AddIfMissing(_target, s_SharedGrabbableType);
+                    AddIfMissing(_target, s_TransferOwnershipType);
+                }
+            }
 
             Undo.CollapseUndoOperations(group);
 
-            Debug.Log($"[Pi tech] Made '{_target.name}' grabbable." +
-                      (_addMeta && s_HasMetaInteraction ? " +Meta" : "") +
-                      (_addFusion && s_HasFusion ? " +Fusion" : ""));
-        }
+            string summary = $"[Pi tech] Made '{_target.name}' grabbable.";
+            if (_addMeta && s_HasMetaInteraction) summary += " +Meta Grabbable";
+            if (_addFusion && s_HasFusion) summary += " +Fusion";
+            Debug.Log(summary);
 
-        void ApplyMetaComponents()
-        {
-            // Oculus.Interaction.Grabbable
-            if (s_GrabbableType != null && !_target.GetComponent(s_GrabbableType))
-                Undo.AddComponent(_target, s_GrabbableType);
-
-            // Oculus.Interaction.GrabInteractable
-            if (s_GrabInteractableType != null && !_target.GetComponent(s_GrabInteractableType))
+            // 6. Open Meta's Grab Wizard to create the ISDK_HandGrabInteraction child
+            //    This must happen AFTER our window closes so Selection is correct.
+            if (_addMeta && s_HasMetaInteraction)
             {
-                var grabInteractable = Undo.AddComponent(_target, s_GrabInteractableType);
+                // Ensure the target is selected so Meta's wizard targets it
+                Selection.activeGameObject = _target;
 
-                // Wire the Grabbable reference if the field exists
-                WireField(grabInteractable, "Grabbable", _target.GetComponent(s_GrabbableType));
-                WireField(grabInteractable, "_grabbable", _target.GetComponent(s_GrabbableType));
-            }
-
-            // HandGrabInteractable (optional — for hand tracking pinch/palm grabs)
-            if (_addHandGrab && s_HandGrabInteractableType != null && !_target.GetComponent(s_HandGrabInteractableType))
-            {
-                var handGrab = Undo.AddComponent(_target, s_HandGrabInteractableType);
-                WireField(handGrab, "Grabbable", _target.GetComponent(s_GrabbableType));
-                WireField(handGrab, "_grabbable", _target.GetComponent(s_GrabbableType));
-            }
-        }
-
-        void ApplyFusionComponents()
-        {
-            // NetworkObject
-            if (s_NetworkObjectType != null && !_target.GetComponent(s_NetworkObjectType))
-                Undo.AddComponent(_target, s_NetworkObjectType);
-
-            // NetworkRigidbody3D (preferred) or NetworkTransform (fallback)
-            if (s_NetworkRigidbody3DType != null && !_target.GetComponent(s_NetworkRigidbody3DType))
-            {
-                Undo.AddComponent(_target, s_NetworkRigidbody3DType);
-            }
-            else if (s_NetworkTransformType != null && !_target.GetComponent(s_NetworkTransformType))
-            {
-                Undo.AddComponent(_target, s_NetworkTransformType);
+                // Defer one frame so our utility window is fully closed first
+                EditorApplication.delayCall += () =>
+                {
+                    Selection.activeGameObject = _target;
+                    bool executed = EditorApplication.ExecuteMenuItem(META_GRAB_WIZARD_MENU);
+                    if (executed)
+                    {
+                        Debug.Log("[Pi tech] Opened Meta's Grab Wizard — click \"Create\" to add ISDK_HandGrabInteraction.");
+                    }
+                    else
+                    {
+                        Debug.LogWarning(
+                            $"[Pi tech] Could not find menu \"{META_GRAB_WIZARD_MENU}\".\n" +
+                            "You may need to manually right-click > Interaction SDK > Add Grab Interaction.");
+                    }
+                };
             }
         }
 
         // ───────── Helpers ─────────
 
-        static void WireField(Component component, string fieldName, UnityEngine.Object value)
+        static void AddIfMissing(GameObject go, Type type)
         {
-            if (!component || !value) return;
-
-            var type = component.GetType();
-
-            // Try public property
-            var prop = type.GetProperty(fieldName,
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-            if (prop != null && prop.CanWrite && prop.PropertyType.IsInstanceOfType(value))
-            {
-                prop.SetValue(component, value);
-                EditorUtility.SetDirty(component);
-                return;
-            }
-
-            // Try serialized field (private with [SerializeField] or public)
-            var field = type.GetField(fieldName,
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
-            if (field != null && field.FieldType.IsInstanceOfType(value))
-            {
-                field.SetValue(component, value);
-                EditorUtility.SetDirty(component);
-            }
+            if (type == null) return;
+            if (go.GetComponent(type)) return;
+            Undo.AddComponent(go, type);
         }
 
         static void FitColliderToBounds(BoxCollider box)
@@ -337,7 +337,6 @@ namespace Pitech.XR.Interactables.Editor
             for (int i = 1; i < renderers.Length; i++)
                 bounds.Encapsulate(renderers[i].bounds);
 
-            // Convert world bounds to local space
             box.center = box.transform.InverseTransformPoint(bounds.center);
             box.size = box.transform.InverseTransformVector(bounds.size);
             box.size = new Vector3(
