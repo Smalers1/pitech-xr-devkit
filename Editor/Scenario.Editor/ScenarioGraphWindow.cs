@@ -79,12 +79,26 @@ public class ScenarioGraphWindow : EditorWindow
         return null;
     }
 
-    public static bool GroupUsesProxyBranchPorts(GroupStep g) => TryGetGroupProxyBranchChild(g) != null;
+    public static bool GroupUsesProxyBranchPorts(GroupStep g)
+        => TryGetGroupProxyBranchChild(g) != null || GroupUsesMultiConditionPorts(g);
+
+    public static bool GroupUsesMultiConditionPorts(GroupStep g)
+        => g != null && g.completeWhen == GroupStep.CompleteWhen.MultiCondition
+           && g.multiConditionBranches != null && g.multiConditionBranches.Count > 0;
 
     static void AddEdgesFromGroupForLayout(GroupStep g, System.Action<string, string> addEdge)
     {
         if (g == null || string.IsNullOrEmpty(g.guid)) return;
         var from = g.guid;
+
+        if (GroupUsesMultiConditionPorts(g))
+        {
+            foreach (var branch in g.multiConditionBranches)
+                if (branch != null && !string.IsNullOrEmpty(branch.nextGuid))
+                    addEdge(from, branch.nextGuid);
+            return;
+        }
+
         var child = TryGetGroupProxyBranchChild(g);
         if (child is QuestionStep q && q.choices != null)
         {
@@ -384,7 +398,19 @@ public class ScenarioGraphWindow : EditorWindow
 
             if (s is GroupStep grp && nodes.TryGetValue(grp.guid, out var grpNode))
             {
-                if (GroupUsesProxyBranchPorts(grp))
+                if (GroupUsesMultiConditionPorts(grp))
+                {
+                    if (grp.multiConditionBranches != null && grpNode.outChoices != null)
+                    {
+                        for (int mc = 0; mc < grp.multiConditionBranches.Count; mc++)
+                        {
+                            var next = grp.multiConditionBranches[mc]?.nextGuid;
+                            if (!string.IsNullOrEmpty(next) && mc < grpNode.outChoices.Count)
+                                Connect(grpNode.outChoices[mc], next);
+                        }
+                    }
+                }
+                else if (GroupUsesProxyBranchPorts(grp))
                 {
                     var ch = TryGetGroupProxyBranchChild(grp);
                     if (ch is QuestionStep nq && nq.choices != null && grpNode.outChoices != null)
@@ -691,7 +717,25 @@ public class ScenarioGraphWindow : EditorWindow
         float reqW = GetGroupPreferredWidth(count);
         // Make sure the "Nested Steps" preview lines are never clipped.
         // Base + per-line (up to 8 shown) + small buffer.
-        float expandedSettingsH = GroupSettingsApproxH + Mathf.Min(8, count) * 18f + 24f;
+        float mcBranchH = 0f;
+        if (grp.completeWhen == GroupStep.CompleteWhen.MultiCondition &&
+            grp.multiConditionBranches != null && grp.multiConditionBranches.Count > 0)
+        {
+            for (int b = 0; b < grp.multiConditionBranches.Count; b++)
+            {
+                float perBranch = 80f;
+                var branch = grp.multiConditionBranches[b];
+                if (branch != null)
+                {
+                    if (branch.mode == GroupStep.CompleteWhen.RequiredChildrenComplete ||
+                        branch.mode == GroupStep.CompleteWhen.NOfMChildrenComplete)
+                        perBranch += Mathf.Min(8, count) * 18f + 22f;
+                }
+                mcBranchH += perBranch;
+            }
+            mcBranchH += 40f;
+        }
+        float expandedSettingsH = GroupSettingsApproxH + Mathf.Min(8, count) * 18f + 24f + mcBranchH;
         float settingsH = grpNode.GroupSettingsExpanded ? expandedSettingsH : GroupSettingsCollapsedMinH;
         float reqH = Mathf.Max(260f, GroupHeaderH + tilesH + settingsH);
 
@@ -750,6 +794,9 @@ public class ScenarioGraphWindow : EditorWindow
                 return $"Complete: Required ({CountRequiredChildren(g)}/{total})";
             case GroupStep.CompleteWhen.NOfMChildrenComplete:
                 return $"Complete: {Mathf.Clamp(g.requiredCount, 1, Mathf.Max(1, total))} of {total}";
+            case GroupStep.CompleteWhen.MultiCondition:
+                int mc = g.multiConditionBranches != null ? g.multiConditionBranches.Count : 0;
+                return $"Complete: Multi-Condition ({mc} branch{(mc == 1 ? "" : "es")})";
             case GroupStep.CompleteWhen.AllChildrenComplete:
             default:
                 return "Complete: All";
@@ -772,6 +819,157 @@ public class ScenarioGraphWindow : EditorWindow
             }
         }
         g.childRequirements.Add(new GroupStep.ChildRequirement { guid = st.guid, required = required });
+    }
+
+    static void SetBranchChildRequired(GroupStep.MultiConditionBranch branch, Step st, bool required)
+    {
+        if (branch == null || st == null) return;
+        if (branch.childRequirements == null)
+            branch.childRequirements = new List<GroupStep.ChildRequirement>();
+
+        for (int i = 0; i < branch.childRequirements.Count; i++)
+        {
+            var r = branch.childRequirements[i];
+            if (r != null && r.guid == st.guid)
+            {
+                r.required = required;
+                return;
+            }
+        }
+        branch.childRequirements.Add(new GroupStep.ChildRequirement { guid = st.guid, required = required });
+    }
+
+    static void DrawMultiConditionBranchList(GroupStep g)
+    {
+        if (g == null) return;
+        if (g.multiConditionBranches == null)
+            g.multiConditionBranches = new List<GroupStep.MultiConditionBranch>();
+
+        g.EnsureMultiConditionBranchRequirements();
+
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("Conditions (first match wins)", EditorStyles.boldLabel);
+
+        int removeAt = -1;
+        int moveUp = -1;
+        int moveDown = -1;
+        var baseModes = new GroupStep.CompleteWhen[]
+        {
+            GroupStep.CompleteWhen.AllChildrenComplete,
+            GroupStep.CompleteWhen.AnyChildCompletes,
+            GroupStep.CompleteWhen.SpecificChildCompletes,
+            GroupStep.CompleteWhen.RequiredChildrenComplete,
+            GroupStep.CompleteWhen.NOfMChildrenComplete,
+        };
+        string[] baseModeNames = new string[]
+        {
+            "All Children Complete",
+            "Any Child Completes",
+            "Specific Child Completes",
+            "Required Children Complete",
+            "N Of M Children Complete",
+        };
+
+        for (int b = 0; b < g.multiConditionBranches.Count; b++)
+        {
+            var branch = g.multiConditionBranches[b];
+            if (branch == null) continue;
+
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField($"Condition {b + 1}", EditorStyles.boldLabel, GUILayout.Width(120));
+            GUILayout.FlexibleSpace();
+            if (b > 0 && GUILayout.Button("\u25B2", GUILayout.Width(24))) moveUp = b;
+            if (b < g.multiConditionBranches.Count - 1 && GUILayout.Button("\u25BC", GUILayout.Width(24))) moveDown = b;
+            if (GUILayout.Button("X", GUILayout.Width(24))) removeAt = b;
+            EditorGUILayout.EndHorizontal();
+
+            branch.label = EditorGUILayout.TextField("Label", branch.label);
+
+            int curModeIdx = System.Array.IndexOf(baseModes, branch.mode);
+            if (curModeIdx < 0) curModeIdx = 0;
+            int newModeIdx = EditorGUILayout.Popup("Mode", curModeIdx, baseModeNames);
+            branch.mode = baseModes[Mathf.Clamp(newModeIdx, 0, baseModes.Length - 1)];
+
+            int childCount = g.steps != null ? g.steps.Count : 0;
+
+            if (branch.mode == GroupStep.CompleteWhen.NOfMChildrenComplete)
+            {
+                branch.requiredCount = Mathf.Max(1, EditorGUILayout.IntField("Required Count", branch.requiredCount));
+                if (childCount > 0 && branch.requiredCount > childCount)
+                    branch.requiredCount = childCount;
+            }
+            else if (branch.mode == GroupStep.CompleteWhen.SpecificChildCompletes)
+            {
+                if (g.steps != null && g.steps.Count > 0)
+                {
+                    var options = new List<string> { "None" };
+                    var guids = new List<string> { "" };
+                    for (int i = 0; i < g.steps.Count; i++)
+                    {
+                        var st = g.steps[i];
+                        if (st == null || string.IsNullOrEmpty(st.guid)) continue;
+                        options.Add($"{i + 1}. {st.Kind}");
+                        guids.Add(st.guid);
+                    }
+
+                    int cur = 0;
+                    if (!string.IsNullOrEmpty(branch.specificStepGuid))
+                    {
+                        int idx = guids.IndexOf(branch.specificStepGuid);
+                        if (idx >= 0) cur = idx;
+                    }
+
+                    int next = EditorGUILayout.Popup("Specific Step", cur, options.ToArray());
+                    branch.specificStepGuid = guids[Mathf.Clamp(next, 0, guids.Count - 1)];
+                }
+                else
+                {
+                    branch.specificStepGuid = EditorGUILayout.TextField("Specific Step Guid", branch.specificStepGuid);
+                }
+            }
+
+            if (branch.mode == GroupStep.CompleteWhen.RequiredChildrenComplete ||
+                branch.mode == GroupStep.CompleteWhen.NOfMChildrenComplete)
+            {
+                EditorGUILayout.LabelField("Required Children", EditorStyles.miniLabel);
+                if (g.steps != null && g.steps.Count > 0)
+                {
+                    for (int i = 0; i < g.steps.Count; i++)
+                    {
+                        var st = g.steps[i];
+                        if (st == null) continue;
+                        bool req = GroupStep.IsChildRequiredInList(branch.childRequirements, st.guid);
+                        bool nxt = EditorGUILayout.ToggleLeft($"{i + 1}. {st.Kind}", req);
+                        if (nxt != req) SetBranchChildRequired(branch, st, nxt);
+                    }
+                }
+            }
+
+            EditorGUILayout.EndVertical();
+            EditorGUILayout.Space(2);
+        }
+
+        if (removeAt >= 0) g.multiConditionBranches.RemoveAt(removeAt);
+        if (moveUp >= 1)
+        {
+            var tmp = g.multiConditionBranches[moveUp];
+            g.multiConditionBranches[moveUp] = g.multiConditionBranches[moveUp - 1];
+            g.multiConditionBranches[moveUp - 1] = tmp;
+        }
+        if (moveDown >= 0 && moveDown < g.multiConditionBranches.Count - 1)
+        {
+            var tmp = g.multiConditionBranches[moveDown];
+            g.multiConditionBranches[moveDown] = g.multiConditionBranches[moveDown + 1];
+            g.multiConditionBranches[moveDown + 1] = tmp;
+        }
+
+        if (GUILayout.Button("+ Add Condition"))
+        {
+            g.multiConditionBranches.Add(new GroupStep.MultiConditionBranch());
+            g.EnsureMultiConditionBranchRequirements();
+        }
     }
 
     void ScheduleResizeGroup(string groupGuid)
@@ -922,7 +1120,19 @@ public class ScenarioGraphWindow : EditorWindow
         }
         else if (outMeta.owner is GroupStep og)
         {
-            if (og.nextGuid != dstGuid) { og.nextGuid = dstGuid; changed = true; }
+            if (outMeta.choiceIndex >= 0 &&
+                og.completeWhen == GroupStep.CompleteWhen.MultiCondition &&
+                og.multiConditionBranches != null &&
+                outMeta.choiceIndex < og.multiConditionBranches.Count &&
+                og.multiConditionBranches[outMeta.choiceIndex] != null)
+            {
+                var mb = og.multiConditionBranches[outMeta.choiceIndex];
+                if (mb.nextGuid != dstGuid) { mb.nextGuid = dstGuid; changed = true; }
+            }
+            else
+            {
+                if (og.nextGuid != dstGuid) { og.nextGuid = dstGuid; changed = true; }
+            }
         }
         else if (outMeta.owner is QuestionStep oq &&
                  outMeta.choiceIndex >= 0 &&
@@ -1036,7 +1246,19 @@ public class ScenarioGraphWindow : EditorWindow
             }
             else if (outMeta.owner is GroupStep og)
             {
-                if (!string.IsNullOrEmpty(og.nextGuid)) { og.nextGuid = ""; changed = true; }
+                if (outMeta.choiceIndex >= 0 &&
+                    og.completeWhen == GroupStep.CompleteWhen.MultiCondition &&
+                    og.multiConditionBranches != null &&
+                    outMeta.choiceIndex < og.multiConditionBranches.Count &&
+                    og.multiConditionBranches[outMeta.choiceIndex] != null)
+                {
+                    var mb = og.multiConditionBranches[outMeta.choiceIndex];
+                    if (!string.IsNullOrEmpty(mb.nextGuid)) { mb.nextGuid = ""; changed = true; }
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(og.nextGuid)) { og.nextGuid = ""; changed = true; }
+                }
             }
             else if (outMeta.owner is QuestionStep oq &&
                      outMeta.choiceIndex >= 0 &&
@@ -3149,6 +3371,7 @@ public class ScenarioGraphWindow : EditorWindow
                     int beforeCompleteWhen = (int)g.completeWhen;
                     string beforeSpecific = g.specificStepGuid ?? "";
                     bool beforeProxy = GroupUsesProxyBranchPorts(g);
+                    int beforeMcCount = g.multiConditionBranches != null ? g.multiConditionBranches.Count : 0;
 
                     EditorGUI.BeginChangeCheck();
                     g.completeWhen = (GroupStep.CompleteWhen)EditorGUILayout.EnumPopup("Complete When", g.completeWhen);
@@ -3215,6 +3438,11 @@ public class ScenarioGraphWindow : EditorWindow
                         }
                     }
 
+                    if (g.completeWhen == GroupStep.CompleteWhen.MultiCondition)
+                    {
+                        DrawMultiConditionBranchList(g);
+                    }
+
                     g.stopOthersOnComplete = EditorGUILayout.Toggle("Stop Others On Complete", g.stopOthersOnComplete);
 
                     EditorGUILayout.LabelField("Nested Steps", $"{count} step(s)");
@@ -3237,10 +3465,12 @@ public class ScenarioGraphWindow : EditorWindow
                         UpdateGroupSummaryLabel(g);
                         owner?.ScheduleResizeGroup(g.guid);
                         bool afterProxy = GroupUsesProxyBranchPorts(g);
+                        int afterMcCount = g.multiConditionBranches != null ? g.multiConditionBranches.Count : 0;
                         bool topologyChanged =
                             beforeCompleteWhen != (int)g.completeWhen ||
                             beforeSpecific != (g.specificStepGuid ?? "") ||
-                            beforeProxy != afterProxy;
+                            beforeProxy != afterProxy ||
+                            beforeMcCount != afterMcCount;
                         if (topologyChanged)
                         {
                             EditorApplication.delayCall += () =>
@@ -3404,7 +3634,22 @@ public class ScenarioGraphWindow : EditorWindow
             }
             else if (step is GroupStep grp)
             {
-                if (GroupUsesProxyBranchPorts(grp))
+                if (GroupUsesMultiConditionPorts(grp))
+                {
+                    int mcCount = grp.multiConditionBranches != null ? grp.multiConditionBranches.Count : 0;
+                    for (int i = 0; i < Mathf.Min(mcCount, 16); i++)
+                    {
+                        int idx = i;
+                        var branch = grp.multiConditionBranches[i];
+                        string lbl = branch != null && !string.IsNullOrWhiteSpace(branch.label)
+                            ? branch.label
+                            : $"Cond {idx + 1}";
+                        var b = new UIEButton(() => skipRequest?.Invoke(step, idx)) { text = $"{lbl} \u25B6" };
+                        if (i > 0) b.style.marginLeft = 2;
+                        skipRow.Add(b);
+                    }
+                }
+                else if (GroupUsesProxyBranchPorts(grp))
                 {
                     var ch = TryGetGroupProxyBranchChild(grp);
                     if (ch is QuestionStep qq)
@@ -3415,7 +3660,7 @@ public class ScenarioGraphWindow : EditorWindow
                             int idx = i;
                             var b = new UIEButton(() => skipRequest?.Invoke(step, idx))
                             {
-                                text = $"Choice {idx} ▶"
+                                text = $"Choice {idx} \u25B6"
                             };
                             if (i > 0) b.style.marginLeft = 2;
                             skipRow.Add(b);
@@ -3423,13 +3668,13 @@ public class ScenarioGraphWindow : EditorWindow
                     }
                     else if (ch is ConditionsStep cnd)
                     {
-                        var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip (Default) ▶" };
+                        var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip (Default) \u25B6" };
                         skipRow.Add(btn);
                         int cCount = cnd.outcomes != null ? cnd.outcomes.Count : 0;
                         for (int i = 0; i < Mathf.Min(cCount, 16); i++)
                         {
                             int idx = i;
-                            var b = new UIEButton(() => skipRequest?.Invoke(step, idx)) { text = $"Branch {idx} ▶" };
+                            var b = new UIEButton(() => skipRequest?.Invoke(step, idx)) { text = $"Branch {idx} \u25B6" };
                             b.style.marginLeft = 2;
                             skipRow.Add(b);
                         }
@@ -3437,7 +3682,7 @@ public class ScenarioGraphWindow : EditorWindow
                 }
                 else
                 {
-                    var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip ▶" };
+                    var btn = new UIEButton(() => skipRequest?.Invoke(step, -1)) { text = "Skip \u25B6" };
                     skipRow.Add(btn);
                 }
             }
@@ -3553,45 +3798,64 @@ public class ScenarioGraphWindow : EditorWindow
                 outNext = null;
             }
 
-            var branchChild = TryGetGroupProxyBranchChild(g);
-            if (branchChild is QuestionStep nq)
+            if (GroupUsesMultiConditionPorts(g))
             {
                 outChoices = new List<Port>();
-                int n = nq.choices != null ? nq.choices.Count : 0;
-                if (n == 0)
-                    outputContainer.Add(new Label("No choices (edit nested Question)"));
-                else
+                for (int i = 0; i < g.multiConditionBranches.Count; i++)
                 {
-                    for (int c = 0; c < n; c++)
-                    {
-                        var p = MakeProxyPort(nq, Direction.Output, Port.Capacity.Single, $"Choice {c}", c);
-                        outChoices.Add(p);
-                        outputContainer.Add(p);
-                    }
+                    var branch = g.multiConditionBranches[i];
+                    string lbl = branch != null && !string.IsNullOrWhiteSpace(branch.label)
+                        ? branch.label
+                        : $"Cond {i + 1}";
+                    var p = MakeProxyPort(g, Direction.Output, Port.Capacity.Single, lbl, i);
+                    outChoices.Add(p);
+                    outputContainer.Add(p);
                 }
-            }
-            else if (branchChild is ConditionsStep ncnd)
-            {
-                outChoices = new List<Port>();
-                int n = ncnd.outcomes != null ? ncnd.outcomes.Count : 0;
-                if (n == 0)
-                    outputContainer.Add(new Label("No outcomes (edit nested Conditions)"));
-                else
-                {
-                    for (int i = 0; i < n; i++)
-                    {
-                        var b = ncnd.outcomes[i];
-                        string label = b != null && !string.IsNullOrWhiteSpace(b.label) ? b.label : ConditionOutcomeLabel(b, i);
-                        var p = MakeProxyPort(ncnd, Direction.Output, Port.Capacity.Single, label, i);
-                        outChoices.Add(p);
-                        outputContainer.Add(p);
-                    }
-                }
+                if (g.multiConditionBranches.Count == 0)
+                    outputContainer.Add(new Label("No conditions (add in Group Settings)"));
             }
             else
             {
-                outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
-                outputContainer.Add(outNext);
+                var branchChild = TryGetGroupProxyBranchChild(g);
+                if (branchChild is QuestionStep nq)
+                {
+                    outChoices = new List<Port>();
+                    int n = nq.choices != null ? nq.choices.Count : 0;
+                    if (n == 0)
+                        outputContainer.Add(new Label("No choices (edit nested Question)"));
+                    else
+                    {
+                        for (int c = 0; c < n; c++)
+                        {
+                            var p = MakeProxyPort(nq, Direction.Output, Port.Capacity.Single, $"Choice {c}", c);
+                            outChoices.Add(p);
+                            outputContainer.Add(p);
+                        }
+                    }
+                }
+                else if (branchChild is ConditionsStep ncnd)
+                {
+                    outChoices = new List<Port>();
+                    int n = ncnd.outcomes != null ? ncnd.outcomes.Count : 0;
+                    if (n == 0)
+                        outputContainer.Add(new Label("No outcomes (edit nested Conditions)"));
+                    else
+                    {
+                        for (int i = 0; i < n; i++)
+                        {
+                            var b = ncnd.outcomes[i];
+                            string label = b != null && !string.IsNullOrWhiteSpace(b.label) ? b.label : ConditionOutcomeLabel(b, i);
+                            var p = MakeProxyPort(ncnd, Direction.Output, Port.Capacity.Single, label, i);
+                            outChoices.Add(p);
+                            outputContainer.Add(p);
+                        }
+                    }
+                }
+                else
+                {
+                    outNext = MakePort(Direction.Output, Port.Capacity.Single, "Next", -1);
+                    outputContainer.Add(outNext);
+                }
             }
 
             RefreshPorts();
@@ -4525,6 +4789,13 @@ sealed class StepEditWindow : EditorWindow
             EditorGUILayout.LabelField("Required Children", EditorStyles.boldLabel);
             EnsureGroupRequirements(stepsProp, reqProp);
             DrawRequiredChildrenList(stepsProp, reqProp);
+        }
+
+        if (mode == (int)GroupStep.CompleteWhen.MultiCondition)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Multi-Condition Branches", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("multiConditionBranches"), includeChildren: true);
         }
 
         EditorGUILayout.PropertyField(stepProp.FindPropertyRelative("stopOthersOnComplete"));

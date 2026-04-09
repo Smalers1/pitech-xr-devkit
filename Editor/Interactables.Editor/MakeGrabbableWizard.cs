@@ -3,8 +3,6 @@ using System;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
-using Pitech.XR.Interactables;
-
 namespace Pitech.XR.Interactables.Editor
 {
     /// <summary>
@@ -122,7 +120,7 @@ namespace Pitech.XR.Interactables.Editor
             var win = GetWindow<MakeGrabbableWindow>(utility: true, "Make Grabbable");
             win._target = target;
             win._addMeta = s_HasMetaInteraction;
-            win._addFusion = false; // opt-in
+            win._addFusion = s_HasFusion; // default on when available
             win.minSize = new Vector2(380, 300);
             win.maxSize = new Vector2(420, 480);
             win.ShowUtility();
@@ -260,15 +258,7 @@ namespace Pitech.XR.Interactables.Editor
             rb.interpolation = RigidbodyInterpolation.Interpolate;
             EditorUtility.SetDirty(rb);
 
-            // 3. Pi tech Grabbable (our event hub — works without any VR SDK)
-            var piGrabbable = _target.GetComponent<Grabbable>();
-            if (!piGrabbable)
-                piGrabbable = Undo.AddComponent<Grabbable>(_target);
-            piGrabbable.kinematicWhileGrabbed = _kinematicWhileGrabbed;
-            piGrabbable.snapBackOnRelease = _snapBack;
-            EditorUtility.SetDirty(piGrabbable);
-
-            // 4. Meta Grabbable on the PARENT (just the Grabbable — not interactables)
+            // 3. Meta Grabbable on the PARENT (just the Grabbable — not interactables)
             if (_addMeta && s_HasMetaInteraction)
                 AddIfMissing(_target, s_MetaGrabbableType);
 

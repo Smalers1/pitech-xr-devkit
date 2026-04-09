@@ -1674,6 +1674,8 @@ namespace Pitech.XR.Scenario
                         return requiredTotal == 0 || requiredCompleted >= requiredTotal;
                     case GroupStep.CompleteWhen.NOfMChildrenComplete:
                         return completed >= Mathf.Clamp(g.requiredCount, 1, total);
+                    case GroupStep.CompleteWhen.MultiCondition:
+                        return EvalMultiConditionBranches(g, handles);
                     case GroupStep.CompleteWhen.AllChildrenComplete:
                     default:
                         return completed >= total;
@@ -1736,9 +1738,95 @@ namespace Pitech.XR.Scenario
                 }
             }
 
+            // Multi-Condition editor skip: resolve the branch at _editorSkipBranchIndex.
+            if (_editorSkip &&
+                g.completeWhen == GroupStep.CompleteWhen.MultiCondition &&
+                g.multiConditionBranches != null &&
+                _editorSkipBranchIndex >= 0 &&
+                _editorSkipBranchIndex < g.multiConditionBranches.Count)
+            {
+                var branch = g.multiConditionBranches[_editorSkipBranchIndex];
+                if (branch != null)
+                {
+                    _groupExitBranchResolved = true;
+                    _groupExitNextGuid = FallbackGuid(branch.nextGuid);
+                }
+            }
+
             // Reset skip flag after group ends (like any other step).
             _editorSkip = false;
             _editorSkipBranchIndex = 0;
+        }
+
+        bool EvalMultiConditionBranches(GroupStep g, List<GroupChildHandle> handles)
+        {
+            if (g.multiConditionBranches == null || g.multiConditionBranches.Count == 0)
+                return false;
+
+            int total = handles.Count;
+            if (total == 0) return true;
+
+            int completed = 0;
+            for (int i = 0; i < handles.Count; i++)
+                if (handles[i] != null && handles[i].completed) completed++;
+
+            for (int b = 0; b < g.multiConditionBranches.Count; b++)
+            {
+                var branch = g.multiConditionBranches[b];
+                if (branch == null) continue;
+
+                bool satisfied = false;
+                switch (branch.mode)
+                {
+                    case GroupStep.CompleteWhen.AllChildrenComplete:
+                        satisfied = completed >= total;
+                        break;
+
+                    case GroupStep.CompleteWhen.AnyChildCompletes:
+                        satisfied = completed > 0;
+                        break;
+
+                    case GroupStep.CompleteWhen.SpecificChildCompletes:
+                        if (!string.IsNullOrEmpty(branch.specificStepGuid))
+                        {
+                            for (int i = 0; i < handles.Count; i++)
+                            {
+                                var h = handles[i];
+                                if (h != null && h.completed && h.guid == branch.specificStepGuid)
+                                { satisfied = true; break; }
+                            }
+                        }
+                        break;
+
+                    case GroupStep.CompleteWhen.RequiredChildrenComplete:
+                    {
+                        int reqTotal = 0, reqDone = 0;
+                        for (int i = 0; i < handles.Count; i++)
+                        {
+                            var h = handles[i];
+                            if (h == null) continue;
+                            bool req = GroupStep.IsChildRequiredInList(branch.childRequirements, h.guid);
+                            if (req) reqTotal++;
+                            if (req && h.completed) reqDone++;
+                        }
+                        satisfied = reqTotal == 0 || reqDone >= reqTotal;
+                        break;
+                    }
+
+                    case GroupStep.CompleteWhen.NOfMChildrenComplete:
+                        satisfied = completed >= Mathf.Clamp(branch.requiredCount, 1, total);
+                        break;
+                }
+
+                if (satisfied)
+                {
+                    _groupExitBranchResolved = true;
+                    _groupExitNextGuid = FallbackGuid(branch.nextGuid);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         GroupChildHandle StartGroupChild(Step st, GroupCancelToken token, GroupStep parentGroup)
