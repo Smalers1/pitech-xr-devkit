@@ -84,7 +84,8 @@ namespace Pitech.XR.Scenario.Editor
                     for (int i = 0; i < batch.Count; i++)
                     {
                         string path = batch[i];
-                        if (!DevKitYamlScriptGuidRepair.IsEligibleUserContentAssetPath(path) || !File.Exists(path))
+                        if (!DevKitYamlScriptGuidRepair.IsEligibleUserContentAssetPath(path) ||
+                            !DevKitYamlScriptGuidRepair.AssetPathExistsOnDisk(path))
                         {
                             continue;
                         }

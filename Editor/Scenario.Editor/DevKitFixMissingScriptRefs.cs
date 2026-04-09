@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEditor;
 using UnityEngine;
 using Pitech.XR.Scenario;
@@ -288,6 +289,23 @@ namespace Pitech.XR.Scenario.Editor
 
         internal static MonoScript FindMonoScript(Type behaviourType)
         {
+            if (behaviourType == null)
+            {
+                return null;
+            }
+
+            MonoScript byDb = FindMonoScriptViaAssetDatabase(behaviourType);
+            if (byDb != null)
+            {
+                return byDb;
+            }
+
+            MonoScript byKnownPath = FindMonoScriptByDevKitSourcePath(behaviourType);
+            if (byKnownPath != null)
+            {
+                return byKnownPath;
+            }
+
             var scripts = Resources.FindObjectsOfTypeAll<MonoScript>();
             for (int i = 0; i < scripts.Length; i++)
             {
@@ -301,6 +319,77 @@ namespace Pitech.XR.Scenario.Editor
                 {
                     return s;
                 }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves <see cref="MonoScript"/> by compiled type. Fails when <see cref="MonoScript.GetClass"/> is null
+        /// (compile errors or script reload window).
+        /// </summary>
+        static MonoScript FindMonoScriptViaAssetDatabase(Type behaviourType)
+        {
+            string[] guids = AssetDatabase.FindAssets("t:MonoScript");
+            for (int i = 0; i < guids.Length; i++)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+                if (string.IsNullOrEmpty(path))
+                {
+                    continue;
+                }
+
+                MonoScript ms = AssetDatabase.LoadAssetAtPath<MonoScript>(path);
+                if (ms == null)
+                {
+                    continue;
+                }
+
+                if (ms.GetClass() == behaviourType)
+                {
+                    return ms;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// When runtime scripts do not compile, <see cref="MonoScript.GetClass"/> is null but the asset (and .meta GUID)
+        /// still exist. YAML repair only needs the script file GUID, so match known DevKit paths under any package root.
+        /// </summary>
+        static MonoScript FindMonoScriptByDevKitSourcePath(Type behaviourType)
+        {
+            string pathSuffix = null;
+            if (behaviourType == typeof(Scenario))
+            {
+                pathSuffix = "Scenario/Scenario.cs";
+            }
+            else if (behaviourType == typeof(SceneManager))
+            {
+                pathSuffix = "Scenario/SceneManager.cs";
+            }
+            else
+            {
+                return null;
+            }
+
+            string[] guids = AssetDatabase.FindAssets("t:MonoScript");
+            for (int i = 0; i < guids.Length; i++)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+                if (string.IsNullOrEmpty(path))
+                {
+                    continue;
+                }
+
+                string normalized = path.Replace('\\', '/');
+                if (!normalized.EndsWith(pathSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return AssetDatabase.LoadAssetAtPath<MonoScript>(path);
             }
 
             return null;

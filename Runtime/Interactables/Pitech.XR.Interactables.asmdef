@@ -13,6 +13,17 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.meta.xr.sdk.interaction",
+            "expression": "",
+            "define": "PITECH_HAS_META_INTERACTION"
+        },
+        {
+            "name": "com.exitgames.photon.fusion",
+            "expression": "",
+            "define": "PITECH_HAS_FUSION"
+        }
+    ],
     "noEngineReferences": false
 }

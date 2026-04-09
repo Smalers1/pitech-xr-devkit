@@ -27,6 +27,57 @@ namespace Pitech.XR.Scenario.Editor
             @"m_Script:\s*\{fileID:\s*0\}",
             RegexOptions.Compiled);
 
+        /// <summary>SceneManager YAML fields may use 2+ spaces indent depending on nesting / Unity version.</summary>
+        static readonly Regex YamlSmScenarioFileId = new Regex(
+            @"^\s+scenario\s*:\s*\{fileID:",
+            RegexOptions.Multiline | RegexOptions.Compiled);
+
+        static readonly Regex YamlSmAutoStart = new Regex(
+            @"^\s+autoStart\s*:",
+            RegexOptions.Multiline | RegexOptions.Compiled);
+
+        static readonly Regex YamlSmStatsUi = new Regex(
+            @"^\s+statsUI\s*:",
+            RegexOptions.Multiline | RegexOptions.Compiled);
+
+        static readonly Regex YamlSmStatsConfig = new Regex(
+            @"^\s+statsConfig\s*:",
+            RegexOptions.Multiline | RegexOptions.Compiled);
+
+        /// <summary>
+        /// Resolves <paramref name="assetPath"/> (e.g. <c>Assets/Scenes/Lab.unity</c>) to an absolute path for I/O.
+        /// Relative paths depend on the process cwd; using the project root avoids silent no-ops on Windows.
+        /// </summary>
+        static string ToProjectFilesystemPath(string assetPath)
+        {
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                return null;
+            }
+
+            if (Path.IsPathRooted(assetPath))
+            {
+                return File.Exists(assetPath) ? Path.GetFullPath(assetPath) : null;
+            }
+
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
+            if (string.IsNullOrEmpty(projectRoot))
+            {
+                return null;
+            }
+
+            string combined = Path.GetFullPath(
+                Path.Combine(projectRoot, assetPath.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar)));
+            return combined;
+        }
+
+        /// <summary>True if <paramref name="assetPath"/> exists on disk (uses project root, not process cwd).</summary>
+        public static bool AssetPathExistsOnDisk(string assetPath)
+        {
+            string fsPath = ToProjectFilesystemPath(assetPath);
+            return !string.IsNullOrEmpty(fsPath) && File.Exists(fsPath);
+        }
+
         /// <summary>
         /// Cheap filter before a full YAML parse. Reduces work for unrelated prefabs/scenes.
         /// </summary>
@@ -57,6 +108,13 @@ namespace Pitech.XR.Scenario.Editor
                 (text.IndexOf("autoStart:", StringComparison.Ordinal) >= 0 ||
                  text.IndexOf("statsUI:", StringComparison.Ordinal) >= 0 ||
                  text.IndexOf("statsConfig:", StringComparison.Ordinal) >= 0))
+            {
+                return true;
+            }
+
+            // Looser SceneManager fingerprint (indent / line ending differences vs strict "\n  scenario:" above).
+            if (YamlSmScenarioFileId.IsMatch(text) &&
+                (YamlSmAutoStart.IsMatch(text) || YamlSmStatsUi.IsMatch(text) || YamlSmStatsConfig.IsMatch(text)))
             {
                 return true;
             }
@@ -98,7 +156,8 @@ namespace Pitech.XR.Scenario.Editor
                 return 0;
             }
 
-            if (!File.Exists(assetPath))
+            string fsPath = ToProjectFilesystemPath(assetPath);
+            if (string.IsNullOrEmpty(fsPath) || !File.Exists(fsPath))
             {
                 return 0;
             }
@@ -107,7 +166,20 @@ namespace Pitech.XR.Scenario.Editor
             MonoScript sceneManagerMs = DevKitFixMissingScriptRefs.FindMonoScript(typeof(SceneManager));
             if (scenarioMs == null || sceneManagerMs == null)
             {
-                Debug.LogError("[DevKit] YAML script repair: could not resolve MonoScript for Scenario or SceneManager.");
+                if (EditorApplication.isCompiling)
+                {
+                    Debug.LogWarning(
+                        "[DevKit] YAML script repair skipped: Scenario/SceneManager MonoScript not resolved while scripts are compiling. " +
+                        "It will retry on the next import after compilation finishes.");
+                }
+                else
+                {
+                    Debug.LogError(
+                        "[DevKit] YAML script repair: could not resolve MonoScript for Scenario or SceneManager. " +
+                        "Usually the Pitech.XR.Scenario assembly has compile errors (check Console), the devkit package is incomplete, " +
+                        "or you have a duplicate Scenario.cs/SceneManager.cs path that hides the package scripts.");
+                }
+
                 return 0;
             }
 
@@ -119,7 +191,7 @@ namespace Pitech.XR.Scenario.Editor
                 return 0;
             }
 
-            string text = File.ReadAllText(assetPath);
+            string text = File.ReadAllText(fsPath);
             if (!MightContainRepairableDevKitBlocks(text))
             {
                 return 0;
@@ -153,7 +225,7 @@ namespace Pitech.XR.Scenario.Editor
                 return 0;
             }
 
-            File.WriteAllText(assetPath, sb.ToString(), new UTF8Encoding(false));
+            File.WriteAllText(fsPath, sb.ToString(), new UTF8Encoding(false));
             AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
             return fixes;
         }
@@ -208,19 +280,14 @@ namespace Pitech.XR.Scenario.Editor
                 return false;
             }
 
-            bool hasScenarioField = section.IndexOf("\n  scenario: {fileID:", StringComparison.Ordinal) >= 0 ||
-                                    section.IndexOf("\r\n  scenario: {fileID:", StringComparison.Ordinal) >= 0;
-            if (!hasScenarioField)
+            if (!YamlSmScenarioFileId.IsMatch(section))
             {
                 return false;
             }
 
-            return section.IndexOf("\n  autoStart:", StringComparison.Ordinal) >= 0 ||
-                   section.IndexOf("\r\n  autoStart:", StringComparison.Ordinal) >= 0 ||
-                   section.IndexOf("\n  statsUI:", StringComparison.Ordinal) >= 0 ||
-                   section.IndexOf("\r\n  statsUI:", StringComparison.Ordinal) >= 0 ||
-                   section.IndexOf("\n  statsConfig:", StringComparison.Ordinal) >= 0 ||
-                   section.IndexOf("\r\n  statsConfig:", StringComparison.Ordinal) >= 0;
+            return YamlSmAutoStart.IsMatch(section) ||
+                   YamlSmStatsUi.IsMatch(section) ||
+                   YamlSmStatsConfig.IsMatch(section);
         }
 
         /// <summary>Scenario serializes <c>title</c> and usually <c>steps</c> (SerializeReference list may omit <c>steps:</c> when empty).</summary>
