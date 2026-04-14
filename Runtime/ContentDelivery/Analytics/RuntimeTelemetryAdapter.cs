@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -54,6 +54,9 @@ namespace Pitech.XR.ContentDelivery
         public string idempotency_key = string.Empty;
         public string lab_id = string.Empty;
         public string lab_version_id = string.Empty;
+        public string scenario_id = string.Empty;
+        public string scenario_schema_version = string.Empty;
+        public string scenario_config_hash = string.Empty;
         public string started_at = string.Empty;
         public string completed_at = string.Empty;
         public int duration_seconds;
@@ -69,7 +72,7 @@ namespace Pitech.XR.ContentDelivery
     [Serializable]
     public sealed class RuntimeTelemetryBatchPayload
     {
-        public string contractVersion = "1.1.0";
+        public string contractVersion = "1.2.0";
         public RuntimeTelemetryAttemptPayload[] attempts = new RuntimeTelemetryAttemptPayload[0];
         public RuntimeTelemetryStepEventPayload[] step_events = new RuntimeTelemetryStepEventPayload[0];
     }
@@ -102,6 +105,16 @@ namespace Pitech.XR.ContentDelivery
 
         [Tooltip("Device type value stamped in attempt payloads.")]
         public string deviceType = "unity_runtime";
+
+        [Header("Scenario Config (parameterized labs)")]
+        [Tooltip("Deterministic hash or identifier for the ScenarioConfig used in this attempt. Set by lab code for parameterized scenarios.")]
+        public string scenarioId = string.Empty;
+
+        [Tooltip("Version of the ScenarioConfig schema (e.g. '1.0', '2.1'). Set by lab code or resolved from cohort pinning.")]
+        public string scenarioSchemaVersion = string.Empty;
+
+        [Tooltip("Hash of the full ScenarioConfig payload for change detection. Set by lab code.")]
+        public string scenarioConfigHash = string.Empty;
 
         [Tooltip("Optional Scenario runner (auto-detected when empty) for automatic step telemetry.")]
         public MonoBehaviour scenarioRunner;
@@ -386,6 +399,9 @@ namespace Pitech.XR.ContentDelivery
                 idempotency_key = context.idempotencyKey,
                 lab_id = context.labId,
                 lab_version_id = context.resolvedVersionId,
+                scenario_id = FirstNonEmpty(scenarioId),
+                scenario_schema_version = FirstNonEmpty(scenarioSchemaVersion),
+                scenario_config_hash = FirstNonEmpty(scenarioConfigHash),
                 started_at = FirstNonEmpty(context.requestedAt, completedAt),
                 completed_at = completedAt,
                 duration_seconds = durationSeconds,
@@ -404,6 +420,11 @@ namespace Pitech.XR.ContentDelivery
                     critical_error_count = criticalErrorCount,
                 },
             };
+
+            if (!LaunchContextValidation.TryValidateAttemptPayload(attempt, out string attemptValidationError))
+            {
+                Debug.LogWarning($"[Analytics] Attempt payload failed validation: {attemptValidationError}", this);
+            }
 
             EmitBatch(
                 new[] { attempt },
@@ -465,7 +486,7 @@ namespace Pitech.XR.ContentDelivery
         {
             RuntimeTelemetryBatchPayload payload = new RuntimeTelemetryBatchPayload
             {
-                contractVersion = "1.1.0",
+                contractVersion = "1.2.0",
                 attempts = attempts ?? new RuntimeTelemetryAttemptPayload[0],
                 step_events = stepEvents ?? new RuntimeTelemetryStepEventPayload[0],
             };

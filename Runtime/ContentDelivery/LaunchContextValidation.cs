@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace Pitech.XR.ContentDelivery
 {
@@ -102,6 +102,67 @@ namespace Pitech.XR.ContentDelivery
         public static bool RequiresRuntimeUrl(LaunchContext context)
         {
             return IsExternalOnlineLaunch(context) && (context == null || !context.launchedFromCache);
+        }
+
+        /// <summary>
+        /// Validates a <see cref="RuntimeTelemetryAttemptPayload"/> against the
+        /// PRD minimum required fields before it is emitted.  Returns false with
+        /// a human-readable reason when a required field is missing.
+        /// </summary>
+        public static bool TryValidateAttemptPayload(
+            RuntimeTelemetryAttemptPayload payload,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (payload == null)
+            {
+                reason = "attempt payload is null";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(payload.attempt_id))
+            {
+                reason = "attempt_id is required";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(payload.idempotency_key))
+            {
+                reason = "idempotency_key is required";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(payload.lab_id))
+            {
+                reason = "lab_id is required";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(payload.completion_status))
+            {
+                reason = "completion_status is required";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(payload.lab_version_id))
+            {
+                reason = "lab_version_id (resolvedVersionId) is required for completed attempts";
+                return false;
+            }
+
+            if (payload.duration_seconds < 0)
+            {
+                reason = "duration_seconds must be >= 0";
+                return false;
+            }
+
+            if (payload.critical_error_count < 0)
+            {
+                reason = "critical_error_count must be >= 0";
+                return false;
+            }
+
+            return true;
         }
 
         private static string Safe(string value)
