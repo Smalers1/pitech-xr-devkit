@@ -55,7 +55,7 @@ namespace Pitech.XR.Interactables
         [Tooltip("Ray length for screen-point selection (set large for AR meters).")]
         public float rayLength = 10000f;
 
-        [Tooltip("If set, rays originate from this camera (assign ARCamera). If null, uses Camera.main.")]
+        [Tooltip("Optional. Scene-reference fields on addressable prefabs don't serialize — leave this empty for addressable use. At runtime the camera is resolved via: Camera.main → Camera.allCameras[0] → any Camera in the loaded scene(s).")]
         public Camera rayCamera;
 
         [Header("Visuals (fallback)")]
@@ -73,7 +73,29 @@ namespace Pitech.XR.Interactables
         MaterialPropertyBlock _mpb;
         Camera _cam;
 
-        Camera Cam => rayCamera ? rayCamera : (_cam ? _cam : (_cam = Camera.main));
+        Camera Cam
+        {
+            get
+            {
+                if (rayCamera) return rayCamera;
+                if (_cam) return _cam;
+                _cam = ResolveSceneCamera();
+                return _cam;
+            }
+        }
+
+        // Addressable-safe: scene-reference fields on bundled prefabs don't serialize,
+        // so fall back to the active scene's camera at runtime.
+        static Camera ResolveSceneCamera()
+        {
+            var main = Camera.main;
+            if (main) return main;
+
+            var all = Camera.allCameras;
+            if (all != null && all.Length > 0) return all[0];
+
+            return FindObjectOfType<Camera>(true);
+        }
 
         bool IsVR
         {
@@ -115,7 +137,7 @@ namespace Pitech.XR.Interactables
         void Awake()
         {
             _mpb = new MaterialPropertyBlock();
-            _cam = rayCamera ? rayCamera : Camera.main;
+            _cam = rayCamera ? rayCamera : ResolveSceneCamera();
 
             if (autoCollectInChildren && collectRoot)
                 CollectFromChildren();
