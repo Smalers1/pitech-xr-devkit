@@ -70,6 +70,24 @@ namespace Pitech.XR.ContentDelivery
         public bool allowOlderCachedSameLab = true;
         public bool networkRequiredIfCacheMiss = true;
 
+        [Tooltip(
+            "When enabled, DevKit rewrites Addressables bundle URLs at runtime so that bundles referenced by a loaded catalog " +
+            "are fetched from the SAME CCD release whose catalog URL arrived in the LaunchContext. " +
+            "This decouples builds from `release_by_badge/latest` (which is mutable and breaks cohort pinning) and from any " +
+            "specific `releases/<id>` baked at build time. Only URLs matching the Unity CCD client_api pattern are rewritten; " +
+            "everything else passes through unchanged.")]
+        public bool rewriteRemoteBundleUrls = true;
+
+        [Header("Addressables Build")]
+        [Tooltip(
+            "Pin the Addressables content catalog filename by forcing AddressableAssetSettings.OverridePlayerVersion to this " +
+            "string before every Addressables content build initiated through the DevKit. " +
+            "Leaving empty means the DevKit does NOT touch OverridePlayerVersion, and Addressables will default to " +
+            "PlayerSettings.bundleVersion (which causes catalog filenames to drift whenever someone bumps the bundle version). " +
+            "Recommended: set to a stable token like `healthonxr` so the catalog is always `catalog_healthonxr.json` — " +
+            "the portal field then never needs to change between builds.")]
+        public string playerVersionOverride = string.Empty;
+
         [Header("Local Output")]
         [Tooltip("Project-relative root for local output (Addressables bundles + report JSON). Recommended outside Assets.")]
         public string localWorkspaceRoot = "Build/ContentDelivery";

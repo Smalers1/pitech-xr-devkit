@@ -69,6 +69,21 @@ namespace Pitech.XR.ContentDelivery.Editor
             result.outputPath = resolvedUploadPath;
 
             settings.activeProfileId = profileId;
+
+            string pinnedVersion = config != null && !string.IsNullOrWhiteSpace(config.playerVersionOverride)
+                ? config.playerVersionOverride.Trim()
+                : null;
+            if (pinnedVersion != null && !string.Equals(settings.OverridePlayerVersion, pinnedVersion, StringComparison.Ordinal))
+            {
+                settings.OverridePlayerVersion = pinnedVersion;
+                EditorUtility.SetDirty(settings);
+                result.notes.Add($"OverridePlayerVersion pinned to '{pinnedVersion}' — catalog will be catalog_{pinnedVersion}.json.");
+            }
+            else if (pinnedVersion == null && !string.IsNullOrWhiteSpace(settings.OverridePlayerVersion))
+            {
+                result.notes.Add($"OverridePlayerVersion is '{settings.OverridePlayerVersion}' (not pinned via DevKit — set AddressablesModuleConfig.playerVersionOverride to lock it).");
+            }
+
             if (dryRun)
             {
                 result.success = true;

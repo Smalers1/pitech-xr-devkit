@@ -42,6 +42,7 @@ namespace Pitech.XR.ContentDelivery
 
         public void Shutdown()
         {
+            AddressablesRemoteUrlRewriter.Clear();
             isReady = false;
             currentContext = null;
         }
@@ -72,6 +73,11 @@ namespace Pitech.XR.ContentDelivery
             {
                 Debug.LogError($"[ContentDelivery] Launch context REJECTED: {validationError}");
                 return;
+            }
+
+            if (config != null && config.rewriteRemoteBundleUrls)
+            {
+                AddressablesRemoteUrlRewriter.ApplyFrom(context);
             }
 
             currentContext = context;

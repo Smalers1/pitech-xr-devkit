@@ -108,11 +108,13 @@ namespace Pitech.XR.Core.Editor
             AddAddressablesProperty("remoteLoadPathTemplate");
             AddAddressablesProperty("ccdRemoteLoadPathTemplate");
             AddAddressablesProperty("remoteCatalogUrlTemplate");
+            AddAddressablesProperty("playerVersionOverride");
             AddAddressablesProperty("localWorkspaceRoot");
             AddAddressablesProperty("localReportsFolder");
             AddAddressablesProperty("allowOfflineCacheLaunch");
             AddAddressablesProperty("allowOlderCachedSameLab");
             AddAddressablesProperty("networkRequiredIfCacheMiss");
+            AddAddressablesProperty("rewriteRemoteBundleUrls");
             AddAddressablesProperty("adapterTypeName");
         }
 
