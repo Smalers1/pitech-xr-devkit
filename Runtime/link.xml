@@ -1,0 +1,8 @@
+<linker>
+  <assembly fullname="Pitech.XR.Core" preserve="all"/>
+  <assembly fullname="Pitech.XR.ContentDelivery" preserve="all"/>
+  <assembly fullname="Pitech.XR.Scenario" preserve="all"/>
+  <assembly fullname="Pitech.XR.Interactables" preserve="all"/>
+  <assembly fullname="Pitech.XR.Stats" preserve="all"/>
+  <assembly fullname="Pitech.XR.Quiz" preserve="all"/>
+</linker>
