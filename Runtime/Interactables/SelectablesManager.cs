@@ -1,11 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
-
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 namespace Pitech.XR.Interactables
 {
@@ -31,7 +27,7 @@ namespace Pitech.XR.Interactables
         public PlatformMode mode = PlatformMode.Auto;
 
         [Header("Platform Safeguards")]
-        [Tooltip("On Android/iOS always use screen-tap picking, never VR events.")]
+        [Tooltip("On Android/iOS always use EventSystem pointer picking, never VR events.")]
         public bool forceDesktopOnMobile = true;
 
         [Tooltip("Treat XR as VR only if Meta Interactors exist in the scene.")]
@@ -42,21 +38,7 @@ namespace Pitech.XR.Interactables
         public Transform collectRoot;
         public bool autoCollectInChildren = true;
         public LayerMask selectableLayers = ~0;
-        public QueryTriggerInteraction triggerHits = QueryTriggerInteraction.Collide;
         public List<Entry> items = new();
-
-        [Header("Desktop/Mobile Picking")]
-        [Tooltip("Used only in Desktop/Mobile/AR mode. In VR we rely on Meta events.")]
-        public bool pickingEnabled = true;
-
-        [Tooltip("If true, taps/clicks over UI are ignored (EventSystem).")]
-        public bool ignoreUI = true;
-
-        [Tooltip("Ray length for screen-point selection (set large for AR meters).")]
-        public float rayLength = 10000f;
-
-        [Tooltip("Optional. Scene-reference fields on addressable prefabs don't serialize — leave this empty for addressable use. At runtime the camera is resolved via: Camera.main → Camera.allCameras[0] → any Camera in the loaded scene(s).")]
-        public Camera rayCamera;
 
         [Header("Visuals (fallback)")]
         public bool tintSelected = true;
@@ -68,34 +50,9 @@ namespace Pitech.XR.Interactables
         // state
         readonly HashSet<int> _selected = new();
         readonly Dictionary<int, int> _indexById = new();            // colliderID -> items index
-        readonly Dictionary<int, Renderer[]> _renderersById = new();  // colliderID -> renderers
+        readonly Dictionary<int, Renderer[]> _renderersById = new(); // colliderID -> renderers
 
         MaterialPropertyBlock _mpb;
-        Camera _cam;
-
-        Camera Cam
-        {
-            get
-            {
-                if (rayCamera) return rayCamera;
-                if (_cam) return _cam;
-                _cam = ResolveSceneCamera();
-                return _cam;
-            }
-        }
-
-        // Addressable-safe: scene-reference fields on bundled prefabs don't serialize,
-        // so fall back to the active scene's camera at runtime.
-        static Camera ResolveSceneCamera()
-        {
-            var main = Camera.main;
-            if (main) return main;
-
-            var all = Camera.allCameras;
-            if (all != null && all.Length > 0) return all[0];
-
-            return FindObjectOfType<Camera>(true);
-        }
 
         bool IsVR
         {
@@ -137,14 +94,43 @@ namespace Pitech.XR.Interactables
         void Awake()
         {
             _mpb = new MaterialPropertyBlock();
-            _cam = rayCamera ? rayCamera : ResolveSceneCamera();
 
             if (autoCollectInChildren && collectRoot)
                 CollectFromChildren();
 
             RebuildIndex();
             CacheRenderers();
+            EnsureSelectableTargets();
             SetAll(false); // visuals off at start
+        }
+
+        void Start()
+        {
+            if (IsVR) return;
+
+            // Runtime sanity check: the desktop/AR path relies on EventSystem +
+            // a PhysicsRaycaster (typically on the ARCamera). Warn rather than
+            // silently fail when either is missing, so integration bugs are
+            // caught at scene load instead of reported as "interactions broken".
+            if (EventSystem.current == null)
+            {
+                Debug.LogWarning(
+                    "[SelectablesManager] No EventSystem in the loaded scenes. " +
+                    "Selectable colliders will not receive pointer events.", this);
+            }
+
+#if UNITY_2023_1_OR_NEWER
+            var raycaster = UnityEngine.Object.FindFirstObjectByType<PhysicsRaycaster>();
+#else
+            var raycaster = UnityEngine.Object.FindObjectOfType<PhysicsRaycaster>();
+#endif
+            if (raycaster == null)
+            {
+                Debug.LogWarning(
+                    "[SelectablesManager] No PhysicsRaycaster found in the scene. " +
+                    "Add one to your ARCamera (or main Camera) — IPointerDownHandler " +
+                    "will not dispatch to 3D colliders without it.", this);
+            }
         }
 
         public void CollectFromChildren()
@@ -159,6 +145,7 @@ namespace Pitech.XR.Interactables
             }
             RebuildIndex();
             CacheRenderers();
+            EnsureSelectableTargets();
         }
 
         void RebuildIndex()
@@ -185,87 +172,38 @@ namespace Pitech.XR.Interactables
             }
         }
 
-        void Update()
+        /// <summary>
+        /// Ensure every selectable collider has a SelectableTarget component
+        /// so EventSystem can route IPointerDownHandler back to this manager.
+        /// Idempotent: safe to call multiple times (Awake + CollectFromChildren).
+        /// </summary>
+        void EnsureSelectableTargets()
         {
-            // In VR we don't read input here; we wait for Meta events.
-            if (IsVR) return;
-            if (!pickingEnabled) return;
+            for (int i = 0; i < items.Count; i++)
+            {
+                var col = items[i]?.collider;
+                if (!col) continue;
 
-            HandleDesktopOrARInputThisFrame();
+                var go = col.gameObject;
+                var target = go.GetComponent<SelectableTarget>();
+                if (!target) target = go.AddComponent<SelectableTarget>();
+                target.manager = this;
+            }
         }
 
-        // -------- robust desktop/AR input (Input System & Legacy) --------
-        void HandleDesktopOrARInputThisFrame()
+        // ===================== Desktop/Mobile/AR entry =====================
+
+        /// <summary>
+        /// Called by SelectableTarget.OnPointerDown. EventSystem + PhysicsRaycaster
+        /// has already resolved the correct collider and accounts for UI blocking
+        /// via GraphicRaycaster ordering.
+        /// </summary>
+        public void HandlePointerDown(Collider col)
         {
-#if ENABLE_INPUT_SYSTEM
-            // 1) Mouse click (editor/desktop)
-            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
-            {
-                var pos = Mouse.current.position.ReadValue();
-                if (!IsOverUI_Mouse()) TriggerWithScreenPoint(pos);
-            }
-
-            // 2) Touch taps (AR/mobile). Loop ALL touches; primaryTouch can be unreliable.
-            var ts = Touchscreen.current;
-            if (ts != null)
-            {
-                foreach (var t in ts.touches)
-                {
-                    if (!t.press.wasPressedThisFrame) continue;
-
-                    var pos = t.position.ReadValue();
-                    var pointerId = t.touchId.ReadValue(); // needed for UI blocking per touch
-
-                    if (ignoreUI && EventSystem.current != null &&
-                        EventSystem.current.IsPointerOverGameObject(pointerId))
-                        continue;
-
-                    TriggerWithScreenPoint(pos);
-                    // break; // uncomment if you want only one selection per frame
-                }
-            }
-#else
-            // Legacy Input: mouse
-            if (Input.GetMouseButtonDown(0))
-            {
-                if (!IsOverUI_Mouse()) TriggerWithScreenPoint(Input.mousePosition);
-            }
-
-            // Legacy Input: touch
-            for (int i = 0; i < Input.touchCount; i++)
-            {
-                var touch = Input.GetTouch(i);
-                if (touch.phase != UnityEngine.TouchPhase.Began) continue;
-
-                if (ignoreUI && EventSystem.current != null &&
-                    EventSystem.current.IsPointerOverGameObject(touch.fingerId))
-                    continue;
-
-                TriggerWithScreenPoint(touch.position);
-                // break;
-            }
-#endif
-        }
-
-        bool IsOverUI_Mouse()
-        {
-            if (!ignoreUI || EventSystem.current == null) return false;
-            return EventSystem.current.IsPointerOverGameObject();
-        }
-
-        void TriggerWithScreenPoint(Vector2 screenPos)
-        {
-            var cam = Cam;
-            if (!cam) return;
-
-            var ray = cam.ScreenPointToRay(new Vector3(screenPos.x, screenPos.y, 0f));
-            float maxDist = rayLength > 0 ? rayLength : Mathf.Infinity;
-
-            if (Physics.Raycast(ray, out var hit, maxDist, selectableLayers, triggerHits))
-            {
-                Toggle(hit.collider);
-                SelectionChanged?.Invoke();
-            }
+            if (IsVR) return; // VR uses MetaSelect instead
+            if (!col) return;
+            Toggle(col);
+            SelectionChanged?.Invoke();
         }
 
         // ========================= VR (Meta) API =========================
