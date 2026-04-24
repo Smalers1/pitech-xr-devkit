@@ -13,13 +13,11 @@ namespace Pitech.XR.ContentDelivery.Editor
     {
         public bool success;
         public string summary = string.Empty;
-        public string assetPath = string.Empty;
         public string jsonPath = string.Empty;
     }
 
     public sealed class PublishReportService
     {
-        private const string ReportsAssetFolder = "Assets/Settings/ContentDelivery/Reports";
         private const string DefaultWorkspaceRoot = "Build/ContentDelivery";
 
         public PublishTransactionReportData CreateDraft(
@@ -181,15 +179,9 @@ namespace Pitech.XR.ContentDelivery.Editor
                 return result;
             }
 
-            EnsureFolder("Assets/Settings");
-            EnsureFolder("Assets/Settings/ContentDelivery");
-            EnsureFolder(ReportsAssetFolder);
-            PruneBrokenReportAssets();
-
             string safeId = string.IsNullOrWhiteSpace(report.transactionId)
                 ? Guid.NewGuid().ToString()
                 : report.transactionId;
-            string assetPath = $"{ReportsAssetFolder}/PublishTransaction_{safeId}.asset";
 
             string labId = report.lab != null ? Safe(report.lab.labId) : string.Empty;
             string labVersionId = report.lab != null ? Safe(report.lab.labVersionId) : string.Empty;
@@ -200,89 +192,22 @@ namespace Pitech.XR.ContentDelivery.Editor
             string jsonAbsolutePath = Path.Combine(jsonAbsoluteFolder, $"{readableBaseName}_{safeId}.json");
             string jsonPath = ToProjectRelativePath(jsonAbsolutePath);
 
-            PublishTransactionReportAsset asset =
-                AssetDatabase.LoadAssetAtPath<PublishTransactionReportAsset>(assetPath);
-            if (asset == null)
-            {
-                // If an older/broken asset exists with missing script metadata, recreate it.
-                if (File.Exists(Path.GetFullPath(assetPath)))
-                {
-                    AssetDatabase.DeleteAsset(assetPath);
-                    AssetDatabase.Refresh();
-                }
-
-                asset = ScriptableObject.CreateInstance<PublishTransactionReportAsset>();
-                asset.Replace(report);
-                AssetDatabase.CreateAsset(asset, assetPath);
-            }
-            else
-            {
-                asset.Replace(report);
-                EditorUtility.SetDirty(asset);
-            }
-
             report.artifacts.reportJsonPath = jsonPath;
             PublishPipelineReportJson pipelineReport = BuildPipelineReportJson(report, jsonPath);
             File.WriteAllText(jsonAbsolutePath, JsonUtility.ToJson(pipelineReport, prettyPrint: true));
 
-            AssetDatabase.SaveAssets();
+            // Only import into AssetDatabase if the caller explicitly configured
+            // reports to live inside Assets/. Default is out-of-tree (Build/...)
+            // so there's nothing for Unity to index.
             if (jsonPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
             {
                 AssetDatabase.ImportAsset(jsonPath, ImportAssetOptions.ForceSynchronousImport);
             }
 
             result.success = true;
-            result.assetPath = assetPath;
             result.jsonPath = jsonPath;
-            result.summary = "Report asset and JSON saved.";
+            result.summary = "Report saved.";
             return result;
-        }
-
-        private static void EnsureFolder(string path)
-        {
-            if (AssetDatabase.IsValidFolder(path))
-            {
-                return;
-            }
-
-            string parent = Path.GetDirectoryName(path)?.Replace("\\", "/");
-            string name = Path.GetFileName(path);
-            if (!string.IsNullOrWhiteSpace(parent) && !AssetDatabase.IsValidFolder(parent))
-            {
-                EnsureFolder(parent);
-            }
-
-            if (!string.IsNullOrWhiteSpace(parent) && !string.IsNullOrWhiteSpace(name))
-            {
-                AssetDatabase.CreateFolder(parent, name);
-            }
-        }
-
-        private static void PruneBrokenReportAssets()
-        {
-            string reportsAbsolute = Path.GetFullPath(ReportsAssetFolder);
-            if (!Directory.Exists(reportsAbsolute))
-            {
-                return;
-            }
-
-            string projectRoot = Path.GetFullPath(".").Replace("\\", "/");
-            string[] files = Directory.GetFiles(reportsAbsolute, "PublishTransaction_*.asset", SearchOption.TopDirectoryOnly);
-            for (int i = 0; i < files.Length; i++)
-            {
-                string abs = files[i].Replace("\\", "/");
-                if (!abs.StartsWith(projectRoot + "/", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                string assetPath = abs.Substring(projectRoot.Length + 1);
-                PublishTransactionReportAsset typed = AssetDatabase.LoadAssetAtPath<PublishTransactionReportAsset>(assetPath);
-                if (typed == null)
-                {
-                    AssetDatabase.DeleteAsset(assetPath);
-                }
-            }
         }
 
         private static string ResolveReportJsonFolder(
