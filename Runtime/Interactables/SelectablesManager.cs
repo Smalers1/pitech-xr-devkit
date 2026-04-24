@@ -40,6 +40,10 @@ namespace Pitech.XR.Interactables
         public LayerMask selectableLayers = ~0;
         public List<Entry> items = new();
 
+        [Header("Runtime Gating")]
+        [Tooltip("When false, HandlePointerDown ignores events. Used by SelectionLists / SceneManager to enable picking only while a question is active.")]
+        public bool pickingEnabled = true;
+
         [Header("Visuals (fallback)")]
         public bool tintSelected = true;
         public Color tintColor = new Color(1f, 0.85f, 0.1f, 1f);
@@ -200,6 +204,7 @@ namespace Pitech.XR.Interactables
         /// </summary>
         public void HandlePointerDown(Collider col)
         {
+            if (!pickingEnabled) return; // gated by SelectionLists / SceneManager during quiz flow
             if (IsVR) return; // VR uses MetaSelect instead
             if (!col) return;
             Toggle(col);
