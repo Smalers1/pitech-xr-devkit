@@ -35,6 +35,7 @@ namespace Pitech.XR.Core.Editor
         private TextField ccdBucketIdField;
         private TextField ccdFullUrlOverrideField;
         private ObjectField prefabField;
+        private ObjectField sceneField;
         private Label groupPreviewValueLabel;
         private Label keyPreviewValueLabel;
         private Label ccdPreviewValueLabel;
@@ -172,9 +173,18 @@ private void OnEnable()
             prefabField = new ObjectField("Prefab to include")
             {
                 objectType = typeof(GameObject),
-                allowSceneObjects = false
+                allowSceneObjects = false,
+                tooltip = "AR / UaaL pattern: a single prefab spawned into a host scene at launch. Leave empty if mapping a Scene instead."
             };
             section.Add(prefabField);
+
+            sceneField = new ObjectField("Scene to include (VR)")
+            {
+                objectType = typeof(SceneAsset),
+                allowSceneObjects = false,
+                tooltip = "VR Shell pattern: the entire lab is one Addressable scene loaded via Addressables.LoadSceneAsync. If both Prefab and Scene are set, Scene wins."
+            };
+            section.Add(sceneField);
 
             section.Add(CreateReadOnlyPreviewRow("Group preview", out groupPreviewValueLabel));
             section.Add(CreateReadOnlyPreviewRow("Address key preview", out keyPreviewValueLabel));
@@ -248,6 +258,12 @@ private void OnEnable()
                 RefreshStepState();
             });
             prefabField.RegisterValueChangedCallback(_ =>
+            {
+                validationPassed = false;
+                mappingIsValid = false;
+                RefreshMappingPreview();
+            });
+            sceneField.RegisterValueChangedCallback(_ =>
             {
                 validationPassed = false;
                 mappingIsValid = false;
@@ -616,6 +632,11 @@ private void OnEnable()
                 prefabField.SetValueWithoutNotify(p.prefab);
             }
 
+            if (sceneField != null)
+            {
+                sceneField.SetValueWithoutNotify(p.sceneAsset);
+            }
+
             suppressPresetPopupCallback = false;
             validationPassed = false;
             mappingIsValid = false;
@@ -653,6 +674,11 @@ private void OnEnable()
             if (prefabField != null)
             {
                 prefabField.SetValueWithoutNotify(null);
+            }
+
+            if (sceneField != null)
+            {
+                sceneField.SetValueWithoutNotify(null);
             }
 
             suppressPresetPopupCallback = false;
@@ -725,6 +751,7 @@ private void OnEnable()
             p.labVersionId = labVersionField != null ? labVersionField.value : string.Empty;
             p.ccdBucketId = ccdBucketIdField != null ? ccdBucketIdField.value : string.Empty;
             p.prefab = prefabField != null ? prefabField.value as GameObject : null;
+            p.sceneAsset = sceneField != null ? sceneField.value as SceneAsset : null;
             EditorUtility.SetDirty(catalog);
             AssetDatabase.SaveAssets();
             feedbackLabel.text = $"Saved selection: {lab}";
@@ -790,26 +817,45 @@ private void OnEnable()
 
             var config = EnsureSelectedConfig();
             var prefab = prefabField != null ? prefabField.value as GameObject : null;
+            var scene = sceneField != null ? sceneField.value as SceneAsset : null;
             string resolvedLabId = ResolveLabId();
 
             IAddressablesConventionAdapter adapter = AddressablesAdapterResolver.Resolve(config);
             groupPreviewValueLabel.text = adapter.BuildGroupName(config, resolvedLabId);
 
-            if (prefab == null)
+            if (prefab == null && scene == null)
             {
-                keyPreviewValueLabel.text = "Select a prefab to preview key.";
+                keyPreviewValueLabel.text = "Select a Prefab or a Scene to preview key.";
                 if (mappingStatusLabel != null)
                 {
-                    mappingStatusLabel.text = "Mapping status: select prefab first.";
+                    mappingStatusLabel.text = "Mapping status: select Prefab or Scene first.";
                 }
                 mappingIsValid = false;
                 RefreshStepState();
                 return;
             }
 
-            AddressablesMarkPrefabResult preview = setupService.MarkPrefabAddressable(config, resolvedLabId, prefab, dryRun: true);
-            keyPreviewValueLabel.text = preview != null ? preview.addressKey : string.Empty;
-            bool mapped = setupService.IsPrefabMapped(config, resolvedLabId, prefab, out string mappedGroup, out string mappedKey);
+            // Scene wins if both are set.
+            bool isSceneTarget = scene != null;
+            string mappedGroup;
+            string mappedKey;
+            bool mapped;
+            string previewKey;
+
+            if (isSceneTarget)
+            {
+                AddressablesMarkPrefabResult preview = setupService.MarkSceneAddressable(config, resolvedLabId, scene, dryRun: true);
+                previewKey = preview != null ? preview.addressKey : string.Empty;
+                mapped = setupService.IsSceneMapped(config, resolvedLabId, scene, out mappedGroup, out mappedKey);
+            }
+            else
+            {
+                AddressablesMarkPrefabResult preview = setupService.MarkPrefabAddressable(config, resolvedLabId, prefab, dryRun: true);
+                previewKey = preview != null ? preview.addressKey : string.Empty;
+                mapped = setupService.IsPrefabMapped(config, resolvedLabId, prefab, out mappedGroup, out mappedKey);
+            }
+
+            keyPreviewValueLabel.text = previewKey;
             mappingIsValid = mapped;
             if (mapped)
             {
@@ -819,9 +865,11 @@ private void OnEnable()
 
             if (mappingStatusLabel != null)
             {
+                string assetWord = isSceneTarget ? "scene" : "prefab";
+                string mapButtonWord = isSceneTarget ? "Map Scene" : "Map Prefab";
                 mappingStatusLabel.text = mapped
-                    ? "Mapping status: prefab is mapped to the expected lab group."
-                    : "Mapping status: prefab not mapped yet. Click 2) Map Prefab.";
+                    ? $"Mapping status: {assetWord} is mapped to the expected lab group."
+                    : $"Mapping status: {assetWord} not mapped yet. Click 2) {mapButtonWord}.";
             }
 
             RefreshCcdPreview();
@@ -833,6 +881,9 @@ private void OnEnable()
         {
             bool hasSetup = setupService.HasInitializedAddressablesSettings();
             bool hasPrefab = prefabField != null && prefabField.value is GameObject;
+            bool hasScene = sceneField != null && sceneField.value is SceneAsset;
+            bool hasAsset = hasPrefab || hasScene;
+            bool isSceneTarget = hasScene;
             bool requireValidationGate = validationGateToggle != null && validationGateToggle.value;
 
             bool hasLabVersion = HasLabVersionId();
@@ -844,7 +895,8 @@ private void OnEnable()
 
             if (mapPrefabButton != null)
             {
-                mapPrefabButton.SetEnabled(hasSetup && hasPrefab);
+                mapPrefabButton.text = isSceneTarget ? "2) Map Scene" : "2) Map Prefab";
+                mapPrefabButton.SetEnabled(hasSetup && hasAsset);
             }
 
             if (validateButton != null)
@@ -861,7 +913,7 @@ private void OnEnable()
 
             if (oneMinuteBuildButton != null)
             {
-                oneMinuteBuildButton.SetEnabled(hasPrefab && hasLabVersion);
+                oneMinuteBuildButton.SetEnabled(hasAsset && hasLabVersion);
             }
 
             if (openUploadFolderButton != null)
@@ -886,15 +938,15 @@ private void OnEnable()
                 return;
             }
 
-            if (!hasPrefab)
+            if (!hasAsset)
             {
-                nextStepLabel.text = "Next step: choose `Prefab to include`.";
+                nextStepLabel.text = "Next step: choose `Prefab to include` or `Scene to include (VR)`.";
                 return;
             }
 
             if (!mappingIsValid)
             {
-                nextStepLabel.text = "Next step: 2) Map Prefab";
+                nextStepLabel.text = isSceneTarget ? "Next step: 2) Map Scene" : "Next step: 2) Map Prefab";
                 return;
             }
 
@@ -931,7 +983,11 @@ private void OnEnable()
         {
             var config = EnsureSelectedConfig();
             var prefab = prefabField != null ? prefabField.value as GameObject : null;
-            AddressablesMarkPrefabResult map = setupService.MarkPrefabAddressable(config, ResolveLabId(), prefab, dryRun: false);
+            var scene = sceneField != null ? sceneField.value as SceneAsset : null;
+            // Scene wins if both are set (matches RefreshMappingPreview).
+            AddressablesMarkPrefabResult map = scene != null
+                ? setupService.MarkSceneAddressable(config, ResolveLabId(), scene, dryRun: false)
+                : setupService.MarkPrefabAddressable(config, ResolveLabId(), prefab, dryRun: false);
             RefreshMappingPreview();
 
             if (!map.success && showDialogOnFailure)

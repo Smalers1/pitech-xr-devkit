@@ -483,6 +483,179 @@ namespace Pitech.XR.ContentDelivery.Editor
             return result;
         }
 
+        /// <summary>
+        /// Maps a Scene asset into the lab's remote group with the canonical scene address key
+        /// (<c>lab/&lt;id&gt;/scene/main</c>). VR Shell pattern: full lab is one Addressable scene
+        /// rather than a prefab spawned into a host scene.
+        /// </summary>
+        public AddressablesMarkPrefabResult MarkSceneAddressable(
+            AddressablesModuleConfig config,
+            string labIdHint,
+            SceneAsset sceneAsset,
+            bool dryRun)
+        {
+            AddressablesMarkPrefabResult result = new AddressablesMarkPrefabResult
+            {
+                dryRun = dryRun
+            };
+
+            if (!ContentDeliveryCapability.HasAddressablesPackage)
+            {
+                result.success = false;
+                result.summary = "Addressables package not installed.";
+                return result;
+            }
+
+#if PITECH_ADDR
+            if (sceneAsset == null)
+            {
+                result.success = false;
+                result.summary = "Scene asset is missing.";
+                return result;
+            }
+
+            string assetPath = AssetDatabase.GetAssetPath(sceneAsset);
+            if (string.IsNullOrWhiteSpace(assetPath))
+            {
+                result.success = false;
+                result.summary = "Scene asset path could not be resolved.";
+                return result;
+            }
+
+            string guid = AssetDatabase.AssetPathToGUID(assetPath);
+            if (string.IsNullOrWhiteSpace(guid))
+            {
+                result.success = false;
+                result.summary = "Scene GUID could not be resolved.";
+                return result;
+            }
+
+            string resolvedLabId = string.IsNullOrWhiteSpace(labIdHint) ? "default" : labIdHint.Trim();
+            IAddressablesConventionAdapter adapter = AddressablesAdapterResolver.Resolve(config);
+            string groupName = adapter.BuildGroupName(config, resolvedLabId);
+            string addressKey = ComputeSceneAddressKey(resolvedLabId);
+            result.prefabAssetPath = assetPath;
+            result.prefabGuid = guid;
+            result.groupName = groupName;
+            result.addressKey = addressKey;
+
+            AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.GetSettings(!dryRun);
+            if (settings == null)
+            {
+                if (dryRun)
+                {
+                    result.success = true;
+                    result.summary = "Preview key is ready. Run Setup to initialize Addressables settings.";
+                    return result;
+                }
+
+                result.success = false;
+                result.summary = "Addressables settings are not available. Run Setup first.";
+                return result;
+            }
+
+            AddressableAssetGroup group = settings.FindGroup(groupName);
+            bool createdGroup = false;
+            if (group == null)
+            {
+                if (dryRun)
+                {
+                    createdGroup = true;
+                }
+                else
+                {
+                    createdGroup = EnsureRemoteGroup(settings, groupName);
+                    group = settings.FindGroup(groupName);
+                    if (group == null)
+                    {
+                        result.success = false;
+                        result.summary = $"Could not create/find group '{groupName}'.";
+                        return result;
+                    }
+                }
+            }
+
+            if (!dryRun)
+            {
+                AddressableAssetEntry entry = settings.CreateOrMoveEntry(guid, group, readOnly: false, postEvent: false);
+                if (entry == null)
+                {
+                    result.success = false;
+                    result.summary = "Could not create or move Addressables entry for scene.";
+                    return result;
+                }
+
+                entry.address = addressKey;
+                EditorUtility.SetDirty(settings);
+                AssetDatabase.SaveAssets();
+            }
+
+            result.success = true;
+            result.createdRemoteGroup = createdGroup;
+            result.summary = dryRun
+                ? "Scene mapping preview is ready."
+                : "Scene was mapped as lab addressable.";
+#else
+            result.success = false;
+            result.summary = "PITECH_ADDR define is unavailable. Reimport scripts.";
+#endif
+
+            return result;
+        }
+
+        public bool IsSceneMapped(
+            AddressablesModuleConfig config,
+            string labIdHint,
+            SceneAsset sceneAsset,
+            out string groupName,
+            out string addressKey)
+        {
+            groupName = string.Empty;
+            addressKey = string.Empty;
+
+            if (!ContentDeliveryCapability.HasAddressablesPackage || sceneAsset == null)
+            {
+                return false;
+            }
+
+#if PITECH_ADDR
+            string assetPath = AssetDatabase.GetAssetPath(sceneAsset);
+            if (string.IsNullOrWhiteSpace(assetPath))
+            {
+                return false;
+            }
+
+            string guid = AssetDatabase.AssetPathToGUID(assetPath);
+            if (string.IsNullOrWhiteSpace(guid))
+            {
+                return false;
+            }
+
+            string resolvedLabId = string.IsNullOrWhiteSpace(labIdHint) ? "default" : labIdHint.Trim();
+            IAddressablesConventionAdapter adapter = AddressablesAdapterResolver.Resolve(config);
+            groupName = adapter.BuildGroupName(config, resolvedLabId);
+            addressKey = ComputeSceneAddressKey(resolvedLabId);
+
+            AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.Settings;
+            if (settings == null)
+            {
+                return false;
+            }
+
+            AddressableAssetEntry entry = settings.FindAssetEntry(guid);
+            if (entry == null || entry.parentGroup == null)
+            {
+                return false;
+            }
+
+            bool groupMatches = string.Equals(entry.parentGroup.Name, groupName, StringComparison.Ordinal);
+            bool keyMatches = string.Equals(entry.address, addressKey, StringComparison.Ordinal);
+            return groupMatches && keyMatches;
+#else
+            return false;
+#endif
+        }
+
         public bool IsPrefabMapped(
             AddressablesModuleConfig config,
             string labIdHint,
@@ -623,6 +796,16 @@ namespace Pitech.XR.ContentDelivery.Editor
         {
             string normalizedLabId = NormalizeKeySegment(labId, "default");
             return $"lab/{normalizedLabId}/prefab/main".ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Canonical Addressables address key for a lab's main scene (VR Shell pattern).
+        /// Matches the convention <c>lab_builds.address_key</c> stores in Supabase for VR rows.
+        /// </summary>
+        public static string ComputeSceneAddressKey(string labId)
+        {
+            string normalizedLabId = NormalizeKeySegment(labId, "default");
+            return $"lab/{normalizedLabId}/scene/main".ToLowerInvariant();
         }
 
         private static string BuildDefaultPrefabAddressKey(string labId, string prefabName)

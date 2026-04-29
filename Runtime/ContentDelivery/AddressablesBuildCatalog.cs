@@ -5,7 +5,9 @@ using UnityEngine;
 namespace Pitech.XR.ContentDelivery
 {
     /// <summary>
-    /// Saved authoring preset for Addressables Builder (lab id, version, CCD bucket id, prefab).
+    /// Saved authoring preset for Addressables Builder (lab id, version, CCD bucket id, asset).
+    /// Either <see cref="prefab"/> (AR / UaaL pattern) or <see cref="sceneAsset"/> (VR Shell pattern)
+    /// is set per preset; the Builder picks whichever is non-null, scene wins if both are set.
     /// </summary>
     [Serializable]
     public sealed class AddressablesBuildPreset
@@ -15,6 +17,9 @@ namespace Pitech.XR.ContentDelivery
         public string labVersionId = string.Empty;
         public string ccdBucketId = string.Empty;
         public GameObject prefab;
+#if UNITY_EDITOR
+        public UnityEditor.SceneAsset sceneAsset;
+#endif
     }
 
     /// <summary>
