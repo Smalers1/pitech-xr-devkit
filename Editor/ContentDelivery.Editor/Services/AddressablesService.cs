@@ -1029,6 +1029,11 @@ namespace Pitech.XR.ContentDelivery.Editor
             bundled.BuildPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteBuildPath);
             bundled.LoadPath.SetVariableByName(settings, AddressableAssetSettings.kRemoteLoadPath);
 
+            // Auto-evict the previous bundle version once a newer one loads, so updating a lab
+            // does not leave stale bundles accumulating in the on-device Addressables cache.
+            bundled.AssetBundledCacheClearBehavior =
+                BundledAssetGroupSchema.CacheClearBehavior.ClearWhenWhenNewVersionLoaded;
+
             ContentUpdateGroupSchema contentUpdate = group.GetSchema<ContentUpdateGroupSchema>();
             if (contentUpdate == null)
             {
